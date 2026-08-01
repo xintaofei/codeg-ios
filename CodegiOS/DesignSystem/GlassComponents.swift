@@ -13,13 +13,16 @@ extension View {
                 self.glassEffect(.regular, in: shape)
             }
         } else {
-            self
-                .background(Theme.bgElevated, in: shape)
-                .overlay {
+            self.background {
+                ZStack {
+                    shape.fill(Theme.bgElevated)
+
                     if let tint {
                         shape.fill(tint)
                     }
                 }
+                .allowsHitTesting(false)
+            }
         }
     }
 
