@@ -376,7 +376,7 @@ private struct AgentOptionsSheet: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .codegGlassEffect(in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         .hairlineBorder(Theme.Radius.md)
     }
 
@@ -387,7 +387,7 @@ private struct AgentOptionsSheet: View {
                 .foregroundStyle(Theme.danger)
                 .fixedSize(horizontal: false, vertical: true)
             Button("Try Again") { options.load() }
-                .buttonStyle(.glass)
+                .codegGlassButtonStyle()
                 .tint(Theme.accent)
         }
         .padding(14)
@@ -511,7 +511,7 @@ struct OptionSection<Content: View>: View {
                 .foregroundStyle(Theme.textTertiary)
                 .padding(.horizontal, 4)
             VStack(spacing: 0) { content() }
-                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                .codegGlassEffect(in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
                 .hairlineBorder(Theme.Radius.md)
         }
     }

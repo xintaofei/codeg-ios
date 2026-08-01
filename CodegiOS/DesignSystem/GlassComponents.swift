@@ -1,5 +1,68 @@
 import SwiftUI
 
+/// Keeps Liquid Glass call sites buildable on the app's iOS 18 deployment
+/// target. iOS 26 uses the native effect; earlier systems receive a flat,
+/// tinted surface that preserves contrast and shape.
+extension View {
+    @ViewBuilder
+    func codegGlassEffect<S: Shape>(tint: Color? = nil, in shape: S) -> some View {
+        if #available(iOS 26.0, *) {
+            if let tint {
+                self.glassEffect(.regular.tint(tint), in: shape)
+            } else {
+                self.glassEffect(.regular, in: shape)
+            }
+        } else {
+            self.background {
+                ZStack {
+                    shape.fill(Theme.bgElevated)
+
+                    if let tint {
+                        shape.fill(tint)
+                    }
+                }
+                .allowsHitTesting(false)
+            }
+        }
+    }
+
+    /// Uses native glass button styles on iOS 26 and the closest system button
+    /// styles on iOS 18–25.
+    @ViewBuilder
+    func codegGlassButtonStyle(prominent: Bool = false) -> some View {
+        if #available(iOS 26.0, *) {
+            if prominent {
+                self.buttonStyle(.glassProminent)
+            } else {
+                self.buttonStyle(.glass)
+            }
+        } else if prominent {
+            self.buttonStyle(.borderedProminent)
+        } else {
+            self.buttonStyle(.bordered)
+        }
+    }
+}
+
+/// On iOS 26 this groups neighboring glass shapes so they can blend together.
+/// Earlier systems do not have an equivalent container, so content is rendered
+/// unchanged.
+struct CodegGlassEffectContainer<Content: View>: View {
+    var spacing: CGFloat?
+    @ViewBuilder var content: () -> Content
+
+    @ViewBuilder
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) {
+                content()
+            }
+        } else {
+            content()
+        }
+    }
+}
+
 /// A Liquid Glass surface for cards and rows, with a faint hairline for
 /// definition on the dark backdrop.
 struct GlassCard<Content: View>: View {
@@ -10,7 +73,7 @@ struct GlassCard<Content: View>: View {
     var body: some View {
         content()
             .padding(padding)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .codegGlassEffect(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .hairlineBorder(cornerRadius)
     }
 }
@@ -93,8 +156,8 @@ struct GlassRow<Content: View>: View {
         content()
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .glassEffect(
-                isSelected ? .regular.tint(Theme.accent.opacity(0.22)) : .regular,
+            .codegGlassEffect(
+                tint: isSelected ? Theme.accent.opacity(0.22) : nil,
                 in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             )
             .hairlineBorder(cornerRadius, color: isSelected ? Theme.accent.opacity(0.45) : Theme.surfaceStroke)
@@ -247,7 +310,7 @@ struct PrimaryGlassButton: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
         }
-        .buttonStyle(.glassProminent)
+        .codegGlassButtonStyle(prominent: true)
         .tint(tint)
         .disabled(isLoading)
     }

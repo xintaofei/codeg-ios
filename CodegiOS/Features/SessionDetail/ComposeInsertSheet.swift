@@ -174,7 +174,7 @@ struct ComposeInsertSheet: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Try Again") { model.load(source) }
-                    .buttonStyle(.glass)
+                    .codegGlassButtonStyle()
                     .tint(Theme.accent)
             }
             .padding(.horizontal, 32)

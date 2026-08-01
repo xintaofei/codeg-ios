@@ -3,8 +3,8 @@
 A native, universal (iPhone + iPad) SwiftUI client for the [codeg](https://github.com/xintaofei/codeg)
 multi-agent coding server. Manage your codeg servers, browse their sessions, read
 the full transcript, and reply to the agent with the response streaming back in
-real time. Built for iOS 26 with Apple's **Liquid Glass** design language and a
-dark, developer-focused aesthetic.
+real time. Supports iOS 18 and later, adopting Apple's **Liquid Glass** design
+language on iOS 26 with system-style fallbacks on earlier releases.
 
 The app is a **pure API client** — all agent and conversation logic lives on the
 codeg backend; the app only calls its HTTP + WebSocket API.
@@ -23,6 +23,7 @@ codeg backend; the app only calls its HTTP + WebSocket API.
 ## Requirements
 
 - Xcode 26 / iOS 26 SDK
+- iOS 18 or later
 - [XcodeGen](https://github.com/yonyz/XcodeGen) (`brew install xcodegen`) — the
   Xcode project is generated from `project.yml`
 

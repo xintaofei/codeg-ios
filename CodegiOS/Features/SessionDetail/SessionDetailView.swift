@@ -295,7 +295,7 @@ private struct JumpToLatestButton: View {
                 .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(Theme.accent)
                 .frame(width: 40, height: 40)
-                .glassEffect(.regular, in: Circle())
+                .codegGlassEffect(in: Circle())
                 .hairlineBorder(20)
                 // An explicit hit shape so the whole disc is tappable (and the
                 // tap can't slip past its edge into the transcript underneath).

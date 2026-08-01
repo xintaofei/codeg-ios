@@ -60,7 +60,7 @@ struct DirectoryBrowserView: View {
                 Image(systemName: "chevron.up")
                     .font(.body.weight(.semibold))
             }
-            .buttonStyle(.glass)
+            .codegGlassButtonStyle()
             .tint(Theme.accent)
             .disabled(isRoot || isLoading)
             .accessibilityLabel("Up")

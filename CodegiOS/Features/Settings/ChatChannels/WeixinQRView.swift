@@ -87,7 +87,7 @@ struct WeixinQRView: View {
         Button { attempt += 1 } label: {
             Label("Refresh QR Code", systemImage: "arrow.clockwise")
         }
-        .buttonStyle(.glass)
+        .codegGlassButtonStyle()
         .tint(Theme.accent)
     }
 

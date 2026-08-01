@@ -16,7 +16,7 @@
 2. **最高价值的「等待审批」态，在 app 级数据层根本看不见**。它不是 `ConversationStatus` 的一个 case；只活在**已打开会话**的 `SessionDetailViewModel` 里。app 级的轮询/列表层区分不了"在跑"和"卡着等你批"。要暴露它，得先有 M4 `SessionHub`（app 级持久连接）或服务端新增字段。
 3. **「可操作」审批同样受 server 可达性约束**：即便推送把"等审批"送到锁屏，**按下 Approve 真正生效仍需手机能连回 server**。局域网 server + 人在外面 = 看得到、点不动。
 
-**好消息**：地基比想象的近 —— 传输层 `EventStream` 已经会说 attach/snapshot/replay 协议，`LiveSessionSnapshot` 天然就是一份 ContentState，token 在 Keychain 且后台可读，部署目标 iOS 26 让 ActivityKit 全量可用，`codeg://` 深链已就位。
+**好消息**：地基比想象的近 —— 传输层 `EventStream` 已经会说 attach/snapshot/replay 协议，`LiveSessionSnapshot` 天然就是一份 ContentState，token 在 Keychain 且后台可读，部署目标 iOS 18 已覆盖所规划的 ActivityKit 能力，`codeg://` 深链已就位。
 
 **建议**：Live Activity 不该现在单独上，它是 M4（持久连接）/ M5（推送）的**下游**。分三阶段（§8）：阶段 0 零服务端改动、只做前台可见的骨架用来验证 UI；真正的锁屏审批价值必须等推送基础设施。
 
@@ -147,7 +147,7 @@ Live Activity 要在后台/锁屏发光，需要一个"app 不在前台也能拿
 1. **传输层已会说持久协议** —— `EventStream` 就是 `/ws/events` firehose，已实现 attach/snapshot/replay：`WSClientMessage.attach(subscriptionId, connectionId, sinceSeq)`（`EventStream.swift:8-35`）、`WSServerMessage.snapshot/replay/event/detached`（`:40-69`）、`Frame` 枚举（`:78-86`）。M4 `SessionHub` 是"把它包成一条 app 级持久连接 + 加 `scenePhase` 生命周期"，**不是从零造协议**。
 2. **ContentState 源现成** —— `LiveSessionSnapshot`（§2.2）+ `AcpEvent` 流已归约出 status / 活动工具 / 待审批标志 / token 用量。
 3. **token 后台可读** —— `Keychain.swift:13,39`：service `com.codeg.ios.server-token`，`kSecAttrAccessibleAfterFirstUnlock`（首次解锁后后台可读，正是扩展所需）。**但**：keychain sharing（access group）当前**未配置**（无 entitlements）——扩展要读 token，需加 App Group + keychain 共享组。
-4. **平台就绪** —— 部署目标 iOS 26（`project.yml:5,37`），ActivityKit 全量可用。
+4. **平台就绪** —— 部署目标 iOS 18（`project.yml:5,40`），所规划的 ActivityKit 能力均可用。
 5. **深链已就位** —— `codeg://`（`CFBundleURLTypes`）+ `Route` 枚举，Live Activity 点击回 app 落到 `Route.conversation(id)` 是现成的。
 
 ### 需要新增的工程要件（落地清单）

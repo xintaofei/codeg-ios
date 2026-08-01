@@ -146,7 +146,7 @@ struct KimiConfigSection: View {
                     else { Label("Fetch", systemImage: "arrow.clockwise").labelStyle(.titleAndIcon) }
                 }
                 .font(.subheadline.weight(.medium))
-                .buttonStyle(.glass).tint(Theme.accent)
+                .codegGlassButtonStyle().tint(Theme.accent)
                 .disabled(saving || fetchingModels)
             }
         }
@@ -168,7 +168,7 @@ struct KimiConfigSection: View {
             Image(systemName: "list.bullet")
                 .font(.body.weight(.medium)).frame(width: 34, height: 30)
         }
-        .buttonStyle(.glass).tint(Theme.textSecondary)
+        .codegGlassButtonStyle().tint(Theme.textSecondary)
         .accessibilityLabel("Choose a fetched model")
     }
 
@@ -246,9 +246,9 @@ struct KimiConfigSection: View {
         HStack {
             Spacer(minLength: 0)
             if prominent {
-                saveButton(title, action).buttonStyle(.glassProminent).tint(Theme.accent).disabled(saving)
+                saveButton(title, action).codegGlassButtonStyle(prominent: true).tint(Theme.accent).disabled(saving)
             } else {
-                saveButton(title, action).buttonStyle(.glass).tint(Theme.accent).disabled(saving)
+                saveButton(title, action).codegGlassButtonStyle().tint(Theme.accent).disabled(saving)
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 12)

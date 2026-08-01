@@ -101,7 +101,7 @@ struct CloneRepoView: View {
                     } label: {
                         Image(systemName: "folder")
                     }
-                    .buttonStyle(.glass)
+                    .codegGlassButtonStyle()
                     .tint(Theme.accent)
                     .disabled(cloning)
                     .accessibilityLabel("Browse")
