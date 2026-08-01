@@ -26,7 +26,7 @@ struct EmptyStateView: View {
             }
             if let actionTitle, let action {
                 Button(actionTitle, action: action)
-                    .buttonStyle(.glass)
+                    .codegGlassButtonStyle()
                     .tint(Theme.accent)
                     .padding(.top, 4)
             }
@@ -83,8 +83,8 @@ struct RefreshErrorBanner: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
-        .glassEffect(
-            .regular.tint(Theme.danger.opacity(0.16)),
+        .codegGlassEffect(
+            tint: Theme.danger.opacity(0.16),
             in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
         )
         .hairlineBorder(Theme.Radius.md, color: Theme.danger.opacity(0.35))
@@ -110,7 +110,7 @@ struct InlineErrorView: View {
                 .multilineTextAlignment(.center)
             if let retry {
                 Button("Try Again", action: retry)
-                    .buttonStyle(.glass)
+                    .codegGlassButtonStyle()
                     .tint(Theme.accent)
                     .padding(.top, 4)
             }

@@ -308,7 +308,7 @@ struct AgentDetailView: View {
                     Text(primary.label).fontWeight(.semibold)
                         .padding(.horizontal, 18).padding(.vertical, 5)
                 }
-                .buttonStyle(.glassProminent).tint(Theme.accent)
+                .codegGlassButtonStyle(prominent: true).tint(Theme.accent)
                 .disabled(isInstalling || primary.disabled)
                 Spacer(minLength: 0)
                 if !secondary.isEmpty { versionMenu(secondary, iconOnly: true) }
@@ -334,7 +334,7 @@ struct AgentDetailView: View {
                     .font(.subheadline.weight(.medium)).padding(.horizontal, 16).padding(.vertical, 7)
             }
         }
-        .buttonStyle(.glass).tint(iconOnly ? Theme.textSecondary : Theme.accent)
+        .codegGlassButtonStyle().tint(iconOnly ? Theme.textSecondary : Theme.accent)
         .accessibilityLabel(iconOnly ? "More version actions" : "Manage version")
         .disabled(isInstalling)
     }
@@ -499,7 +499,7 @@ struct AgentDetailView: View {
         } label: {
             Label("Clear Binary Cache", systemImage: "trash").frame(maxWidth: .infinity).padding(.vertical, 4)
         }
-        .buttonStyle(.glass)
+        .codegGlassButtonStyle()
         .tint(Theme.danger)
         .disabled(isInstalling)
     }
@@ -643,7 +643,7 @@ private struct FlowFixButtons: View {
                 Button { onTap(fix) } label: {
                     Text(fix.label).font(.caption.weight(.medium)).padding(.horizontal, 10).padding(.vertical, 5)
                 }
-                .buttonStyle(.glass)
+                .codegGlassButtonStyle()
                 .tint(Theme.accent)
                 .disabled(disabled)
             }

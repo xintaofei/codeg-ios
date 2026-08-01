@@ -143,7 +143,7 @@ struct SystemSettingsView: View {
                             Text("Test")
                         }
                     }
-                    .buttonStyle(.glass).tint(Theme.accent)
+                    .codegGlassButtonStyle().tint(Theme.accent)
                     .disabled(model.probing || model.customShellPath.trimmingCharacters(in: .whitespaces).isEmpty)
                     if let probe = model.probeResult {
                         Label(probe ? "Executable found" : "Not found", systemImage: probe ? "checkmark.circle" : "xmark.circle")
@@ -223,7 +223,7 @@ struct SystemSettingsView: View {
                 .foregroundStyle(Theme.textPrimary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 16).padding(.vertical, 11)
-                .glassEffect(.regular.tint(Theme.accent.opacity(0.18)), in: Capsule())
+                .codegGlassEffect(tint: Theme.accent.opacity(0.18), in: Capsule())
                 .padding(.horizontal, 24).padding(.bottom, 18)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .task(id: toast) {

@@ -81,7 +81,7 @@ targets:
   CodegActivityKit:
     type: framework
     platform: iOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "18.0"
     sources: [CodegActivityKit]
     settings:
       base:
@@ -104,7 +104,7 @@ targets:
   CodegWidgets:
     type: app-extension
     platform: iOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "18.0"
     sources: [CodegWidgets]
     dependencies:
       - target: CodegActivityKit

@@ -2,7 +2,7 @@ name: CodegiOS
 options:
   bundleIdPrefix: com.codeg
   deploymentTarget:
-    iOS: "26.0"
+    iOS: "18.0"
   createIntermediateGroups: true
   groupSortPosition: top
   developmentLanguage: en
@@ -37,7 +37,7 @@ targets:
   CodegiOS:
     type: application
     platform: iOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "18.0"
     sources:
       - path: CodegiOS
     dependencies:

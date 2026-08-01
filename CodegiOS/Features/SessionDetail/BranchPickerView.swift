@@ -158,7 +158,7 @@ struct BranchPickerView: View {
                 }
             }
             .padding(14)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+            .codegGlassEffect(in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
             .hairlineBorder(Theme.Radius.md)
         } else {
             Button { showNewBranch = true } label: {
@@ -175,7 +175,7 @@ struct BranchPickerView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+            .codegGlassEffect(in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
             .hairlineBorder(Theme.Radius.md)
         }
     }

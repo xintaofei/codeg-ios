@@ -131,10 +131,10 @@ struct VersionControlSettingsView: View {
                         Text("Test")
                     }
                 }
-                .buttonStyle(.glass).tint(Theme.accent)
+                .codegGlassButtonStyle().tint(Theme.accent)
                 .disabled(model.testing || model.customPath.trimmingCharacters(in: .whitespaces).isEmpty)
                 Button("Save Path") { Task { await model.saveCustomPath() } }
-                    .buttonStyle(.glassProminent).tint(Theme.accent)
+                    .codegGlassButtonStyle(prominent: true).tint(Theme.accent)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 16).padding(.vertical, 11)
@@ -182,7 +182,7 @@ struct VersionControlSettingsView: View {
                 .foregroundStyle(Theme.textPrimary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 16).padding(.vertical, 11)
-                .glassEffect(.regular.tint(Theme.accent.opacity(0.18)), in: Capsule())
+                .codegGlassEffect(tint: Theme.accent.opacity(0.18), in: Capsule())
                 .padding(.horizontal, 24).padding(.bottom, 18)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .task(id: toast) {
