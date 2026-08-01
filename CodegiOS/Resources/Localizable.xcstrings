@@ -1,6 +1,1624 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Cursor Configuration" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor 配置"
+          }
+        }
+      }
+    },
+    "Both methods sign in to Cursor’s own backend — cursor-agent has no custom-endpoint support, so there is no API URL to set." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "两种方式都登录 Cursor 自己的后端——cursor-agent 不支持自定义接入点，因此无需填写 API 地址。"
+          }
+        }
+      }
+    },
+    "Authentication Method" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "认证方式"
+          }
+        }
+      }
+    },
+    "Cursor API Key" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor API 密钥"
+          }
+        }
+      }
+    },
+    "Sign in with your Cursor account in a terminal. No credential is stored here." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在终端中使用你的 Cursor 账号登录，此处不保存任何凭据。"
+          }
+        }
+      }
+    },
+    "A Cursor Dashboard account key for headless or server machines — an alternative to signing in." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "供无界面或服务器环境使用的 Cursor Dashboard 账号密钥，可替代浏览器登录。"
+          }
+        }
+      }
+    },
+    "Account" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "账号"
+          }
+        }
+      }
+    },
+    "Create one in the Cursor Dashboard under Integrations." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可在 Cursor Dashboard 的 Integrations 中创建。"
+          }
+        }
+      }
+    },
+    "Sign in to load the model list." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "登录后才能加载模型列表。"
+          }
+        }
+      }
+    },
+    "cursor-agent isn’t installed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未安装 cursor-agent"
+          }
+        }
+      }
+    },
+    "Not signed in" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未登录"
+          }
+        }
+      }
+    },
+    "Signed in" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已登录"
+          }
+        }
+      }
+    },
+    "Run this on the machine hosting codeg, then refresh:" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在运行 codeg 的机器上执行以下命令，然后点击刷新："
+          }
+        }
+      }
+    },
+    "Passed to cursor-agent as its --model flag. Leave unset to use the account default." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作为 --model 参数传给 cursor-agent。留空则使用账号默认模型。"
+          }
+        }
+      }
+    },
+    "Default Model" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认模型"
+          }
+        }
+      }
+    },
+    "Account default" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "账号默认"
+          }
+        }
+      }
+    },
+    "Loading models…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载模型…"
+          }
+        }
+      }
+    },
+    "Permissions" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "权限"
+          }
+        }
+      }
+    },
+    "Rules and sandbox merge into ~/.cursor/cli-config.json, preserving keys the Cursor CLI wrote. Running sessions pick them up after a restart." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "规则与沙盒会合并进 ~/.cursor/cli-config.json，并保留 Cursor CLI 自己写入的其它键。运行中的会话需重启后生效。"
+          }
+        }
+      }
+    },
+    "Run Everything" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部放行"
+          }
+        }
+      }
+    },
+    "Cursor runs commands without asking. Deny rules below still apply." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor 执行命令时不再询问，下方的拒绝规则仍然生效。"
+          }
+        }
+      }
+    },
+    "Cursor asks before running commands." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor 执行命令前会先询问。"
+          }
+        }
+      }
+    },
+    "Sandbox" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙盒"
+          }
+        }
+      }
+    },
+    "Disabled" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已禁用"
+          }
+        }
+      }
+    },
+    "Allow Rules" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许规则"
+          }
+        }
+      }
+    },
+    "Deny Rules" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拒绝规则"
+          }
+        }
+      }
+    },
+    "Add allow rule" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加允许规则"
+          }
+        }
+      }
+    },
+    "Add deny rule" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加拒绝规则"
+          }
+        }
+      }
+    },
+    "Enter your Cursor API key, or switch to Official Subscription." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请填写 Cursor API 密钥，或切换为官方订阅。"
+          }
+        }
+      }
+    },
+    "Compacting context…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在压缩上下文…"
+          }
+        }
+      }
+    },
+    "Context compacted" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文已压缩"
+          }
+        }
+      }
+    },
+    "Context compacted · %@ → %@ tokens" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文已压缩 · %1$@ → %2$@ tokens"
+          }
+        }
+      }
+    },
+    "Plan ready for review" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "计划已就绪，待确认"
+          }
+        }
+      }
+    },
+    "Approve to start building, or send notes to have the plan revised." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批准后开始实施，或提交修改意见让其重新调整计划。"
+          }
+        }
+      }
+    },
+    "The agent didn’t include a plan." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该智能体没有给出计划内容。"
+          }
+        }
+      }
+    },
+    "What should change?" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要修改什么？"
+          }
+        }
+      }
+    },
+    "Send Notes" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送意见"
+          }
+        }
+      }
+    },
+    "Request Changes" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要求修改"
+          }
+        }
+      }
+    },
+    "Approve & Build" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批准并实施"
+          }
+        }
+      }
+    },
+    "Abandon Plan" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放弃计划"
+          }
+        }
+      }
+    },
+    "Entered plan mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已进入计划模式"
+          }
+        }
+      }
+    },
+    "Plan ready" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "计划已就绪"
+          }
+        }
+      }
+    },
+    "Switched mode" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已切换模式"
+          }
+        }
+      }
+    },
+    "Grok Configuration" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grok 配置"
+          }
+        }
+      }
+    },
+    "The controls below merge into ~/.grok/config.toml, preserving your other keys and comments. Other keys stay editable under Advanced." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下面的控件会合并写入 ~/.grok/config.toml，保留你的其它键与注释。其它键可在「高级」中编辑。"
+          }
+        }
+      }
+    },
+    "Permission Mode" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "权限模式"
+          }
+        }
+      }
+    },
+    "Use default" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用默认"
+          }
+        }
+      }
+    },
+    "Ask every time" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每次询问"
+          }
+        }
+      }
+    },
+    "Always approve" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "始终允许"
+          }
+        }
+      }
+    },
+    "Low (faster)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "低（更快）"
+          }
+        }
+      }
+    },
+    "Medium (balanced)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中（均衡）"
+          }
+        }
+      }
+    },
+    "Max" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最高"
+          }
+        }
+      }
+    },
+    "XAI_API_KEY is configured." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已配置 XAI_API_KEY。"
+          }
+        }
+      }
+    },
+    "No XAI_API_KEY set." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未设置 XAI_API_KEY。"
+          }
+        }
+      }
+    },
+    "Saved as XAI_API_KEY for this agent, or run “grok login” in a terminal for subscription sign-in (SuperGrok / X Premium+)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已保存为该 agent 的 XAI_API_KEY，或在终端运行“grok login”进行订阅登录（SuperGrok / X Premium+）。"
+          }
+        }
+      }
+    },
+    "CodeBuddy Configuration" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CodeBuddy 配置"
+          }
+        }
+      }
+    },
+    "CodeBuddy authenticates with an API key. Mainland China builds also require the environment set to “China (internal)”; iOA builds use “iOA”. The overseas build leaves it unset." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CodeBuddy 使用 API 密钥认证。中国大陆版还需将环境设为“中国（内网）”，iOA 版使用“iOA”，海外版则保持未设置。"
+          }
+        }
+      }
+    },
+    "Saved as CODEBUDDY_API_KEY for this agent. Use the key issued by your private deployment." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作为 CODEBUDDY_API_KEY 保存到该智能体。请使用你的私有化部署所签发的密钥。"
+          }
+        }
+      }
+    },
+    "Saved as CODEBUDDY_API_KEY for this agent. Alternatively, sign in with the CodeBuddy CLI in a terminal." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作为 CODEBUDDY_API_KEY 保存到该智能体。也可以在终端用 CodeBuddy CLI 登录。"
+          }
+        }
+      }
+    },
+    "Environment" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "环境"
+          }
+        }
+      }
+    },
+    "Overseas (default)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "海外（默认）"
+          }
+        }
+      }
+    },
+    "China (internal)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中国（内网）"
+          }
+        }
+      }
+    },
+    "iOA" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iOA"
+          }
+        }
+      }
+    },
+    "Self-hosted (private deployment)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自托管（私有化部署）"
+          }
+        }
+      }
+    },
+    "Deployment URL" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部署地址"
+          }
+        }
+      }
+    },
+    "Enter a valid http(s) URL." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入有效的 http(s) 地址。"
+          }
+        }
+      }
+    },
+    "Saved as CODEBUDDY_BASE_URL and points CodeBuddy at your private endpoint. The region setting is left unset for self-hosted deployments." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作为 CODEBUDDY_BASE_URL 保存，将 CodeBuddy 指向你的私有端点。自托管部署下区域设置保持未设置。"
+          }
+        }
+      }
+    },
+    "Sets CODEBUDDY_INTERNET_ENVIRONMENT. Mainland China must use “China (internal)”; the overseas build leaves it unset." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置 CODEBUDDY_INTERNET_ENVIRONMENT。中国大陆须使用“中国（内网）”，海外版保持未设置。"
+          }
+        }
+      }
+    },
+    "No API key? Run “codebuddy” in a terminal to sign in with your Tencent account instead." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有 API 密钥？可在终端运行“codebuddy”改用腾讯账号登录。"
+          }
+        }
+      }
+    },
+    "Enter a valid http(s) URL for the self-hosted deployment." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请为自托管部署输入有效的 http(s) 地址。"
+          }
+        }
+      }
+    },
+    "Kimi Code Configuration" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kimi Code 配置"
+          }
+        }
+      }
+    },
+    "`kimi acp` only authenticates with a stored login token and rejects API keys on their own. To use an API key, codeg writes a managed ~/.kimi-code/config.toml provider AND seeds a local gate token so the session opens — inference still runs on your key." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "`kimi acp` 只认可已存储的登录令牌，单独的 API 密钥会被拒绝。为支持 API 密钥，codeg 会写入受管的 ~/.kimi-code/config.toml 供应商，并植入一个本地闸门令牌以打开会话——推理仍走你的密钥。"
+          }
+        }
+      }
+    },
+    "Authentication method" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "认证方式"
+          }
+        }
+      }
+    },
+    "Kimi account login (subscription)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kimi 账号登录（订阅）"
+          }
+        }
+      }
+    },
+    "“API key” writes a codeg-managed config.toml provider and seeds a gate token. “Login” clears that and uses a real `kimi login` session (requires a Kimi subscription)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“API 密钥”会写入由 codeg 管理的 config.toml 供应商并植入闸门令牌。“登录”会清除它，改用真正的 `kimi login` 会话（需要 Kimi 订阅）。"
+          }
+        }
+      }
+    },
+    "Run `kimi login` in a terminal to sign in with a Kimi subscription account (device-code OAuth). codeg stores nothing and reuses Kimi’s own login. Saving here removes codeg’s API-key gate token." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在终端运行 `kimi login`，用 Kimi 订阅账号登录（设备码 OAuth）。codeg 不存储任何内容，复用 Kimi 自己的登录。在此保存会移除 codeg 的 API 密钥闸门令牌。"
+          }
+        }
+      }
+    },
+    "Save Kimi Code Config" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存 Kimi Code 配置"
+          }
+        }
+      }
+    },
+    "Provider type" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "供应商类型"
+          }
+        }
+      }
+    },
+    "The provider protocol Kimi speaks (config.toml `type`). Use Kimi / Moonshot for a Moonshot / platform.kimi.com key." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kimi 使用的供应商协议（config.toml 的 `type`）。使用 Moonshot / platform.kimi.com 密钥时选 Kimi / Moonshot。"
+          }
+        }
+      }
+    },
+    "International (api.moonshot.ai)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "国际（api.moonshot.ai）"
+          }
+        }
+      }
+    },
+    "China (api.moonshot.cn)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中国（api.moonshot.cn）"
+          }
+        }
+      }
+    },
+    "Custom (OpenAI-compatible)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自定义（OpenAI 兼容）"
+          }
+        }
+      }
+    },
+    "International = api.moonshot.ai; China (platform.kimi.com keys) = api.moonshot.cn. Custom points at any OpenAI-compatible endpoint." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "国际 = api.moonshot.ai；中国（platform.kimi.com 密钥）= api.moonshot.cn。自定义可指向任意 OpenAI 兼容端点。"
+          }
+        }
+      }
+    },
+    "Leave blank to use the provider SDK default." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "留空则使用供应商 SDK 的默认值。"
+          }
+        }
+      }
+    },
+    "Written to ~/.kimi-code/config.toml and used for inference. From platform.kimi.com or platform.kimi.ai." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写入 ~/.kimi-code/config.toml 并用于推理。来自 platform.kimi.com 或 platform.kimi.ai。"
+          }
+        }
+      }
+    },
+    "Advanced: credential placement" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高级：凭据写入位置"
+          }
+        }
+      }
+    },
+    "Inline api_key" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内联 api_key"
+          }
+        }
+      }
+    },
+    "Provider env sub-table" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "供应商 env 子表"
+          }
+        }
+      }
+    },
+    "Where the API key is written inside config.toml." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API 密钥在 config.toml 中的写入位置。"
+          }
+        }
+      }
+    },
+    "GCP project (GOOGLE_CLOUD_PROJECT)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GCP 项目（GOOGLE_CLOUD_PROJECT）"
+          }
+        }
+      }
+    },
+    "GCP location (GOOGLE_CLOUD_LOCATION)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GCP 区域（GOOGLE_CLOUD_LOCATION）"
+          }
+        }
+      }
+    },
+    "Vertex AI uses Google Application Default Credentials — run `gcloud auth application-default login` (no API key)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vertex AI 使用 Google 应用默认凭据——请运行 `gcloud auth application-default login`（无需 API 密钥）。"
+          }
+        }
+      }
+    },
+    "The model id to use. Click Fetch to list the models your key can access (e.g. kimi-k2.7-code) — avoids “model not found” errors." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要使用的模型 id。点“获取”可列出你的密钥能访问的模型（如 kimi-k2.7-code）——避免“找不到模型”的错误。"
+          }
+        }
+      }
+    },
+    "Max context size (optional)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最大上下文长度（可选）"
+          }
+        }
+      }
+    },
+    "Tokens, e.g. 262144. Leave blank to use the model default." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以 token 计，如 262144。留空则使用模型默认值。"
+          }
+        }
+      }
+    },
+    "Advanced: edit config.toml directly" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高级：直接编辑 config.toml"
+          }
+        }
+      }
+    },
+    "Written verbatim (comments preserved) and validated as TOML. codeg also seeds the gate token so the session opens." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原样写入（保留注释）并按 TOML 校验。codeg 还会植入闸门令牌以打开会话。"
+          }
+        }
+      }
+    },
+    "Save config.toml" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存 config.toml"
+          }
+        }
+      }
+    },
+    "Authenticated via a Kimi account login." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已通过 Kimi 账号登录认证。"
+          }
+        }
+      }
+    },
+    "Authenticated via API key (codeg seeded the local gate token)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已通过 API 密钥认证（codeg 已植入本地闸门令牌）。"
+          }
+        }
+      }
+    },
+    "Not authenticated yet — save an API key below (or sign in) to open Kimi sessions." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未认证——请在下方保存 API 密钥（或登录）以打开 Kimi 会话。"
+          }
+        }
+      }
+    },
+    "Enter a model id (Kimi requires one for API-key mode)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入模型 id（API 密钥模式下 Kimi 必须指定）。"
+          }
+        }
+      }
+    },
+    "Kimi Code config saved" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kimi Code 配置已保存"
+          }
+        }
+      }
+    },
+    "Enter an API key and endpoint first" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先输入 API 密钥和端点"
+          }
+        }
+      }
+    },
+    "Key works, but no models were returned" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "密钥有效，但未返回任何模型"
+          }
+        }
+      }
+    },
+    "Couldn’t list models — check the key and endpoint" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法列出模型——请检查密钥和端点"
+          }
+        }
+      }
+    },
+    "Runtime" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "运行时"
+          }
+        }
+      }
+    },
+    "Choose which pi binary runs. Use the default, or point at your own pi build." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择运行哪个 pi 可执行文件。使用默认值，或指向你自己的 pi 构建。"
+          }
+        }
+      }
+    },
+    "Default pi" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认 pi"
+          }
+        }
+      }
+    },
+    "Custom pi" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自定义 pi"
+          }
+        }
+      }
+    },
+    "Use the bundled pi-acp adapter with the pi on your PATH. Install pi with: npm install -g @earendil-works/pi-coding-agent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用内置的 pi-acp 适配器和 PATH 中的 pi。安装 pi：npm install -g @earendil-works/pi-coding-agent"
+          }
+        }
+      }
+    },
+    "Run your own pi build, install, or wrapper." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "运行你自己的 pi 构建、安装或包装脚本。"
+          }
+        }
+      }
+    },
+    "Enter a pi command to save" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入 pi 命令后再保存"
+          }
+        }
+      }
+    },
+    "Save Runtime" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存运行时"
+          }
+        }
+      }
+    },
+    "Recheck" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新检查"
+          }
+        }
+      }
+    },
+    "Install pi" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装 pi"
+          }
+        }
+      }
+    },
+    "pi command or path" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pi 命令或路径"
+          }
+        }
+      }
+    },
+    "Validate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "校验"
+          }
+        }
+      }
+    },
+    "Command not found" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "找不到命令"
+          }
+        }
+      }
+    },
+    "An absolute path, a command name on PATH, or a wrapper script (e.g. a monorepo ./pi-test.sh)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "绝对路径、PATH 中的命令名，或包装脚本（如 monorepo 里的 ./pi-test.sh）。"
+          }
+        }
+      }
+    },
+    "Config directory (PI_CODING_AGENT_DIR)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配置目录（PI_CODING_AGENT_DIR）"
+          }
+        }
+      }
+    },
+    "With a custom config directory, the Skills, Experts, and Office tools managed in Settings won’t apply to this pi — manage its skills in that folder directly." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用自定义配置目录后，设置中管理的技能、专家和 Office 工具将不适用于此 pi——请直接在该目录中管理其技能。"
+          }
+        }
+      }
+    },
+    "Sessions directory (PI_CODING_AGENT_SESSION_DIR)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会话目录（PI_CODING_AGENT_SESSION_DIR）"
+          }
+        }
+      }
+    },
+    "Custom pi flags (--approve, -e, …) aren’t forwarded by pi-acp — wrap pi in a script and point the command at it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自定义 pi 参数（--approve、-e 等）不会被 pi-acp 转发——请将 pi 包进脚本并把命令指向该脚本。"
+          }
+        }
+      }
+    },
+    "Pi Configuration" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pi 配置"
+          }
+        }
+      }
+    },
+    "Pi authenticates with your model provider’s API key. The key is written to ~/.pi/agent/auth.json and the model selection to settings.json." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pi 使用你的模型供应商 API 密钥认证。密钥写入 ~/.pi/agent/auth.json，模型选择写入 settings.json。"
+          }
+        }
+      }
+    },
+    "Custom provider…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自定义供应商……"
+          }
+        }
+      }
+    },
+    "Select a provider" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个供应商"
+          }
+        }
+      }
+    },
+    "Thinking" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "思考强度"
+          }
+        }
+      }
+    },
+    "Off" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭"
+          }
+        }
+      }
+    },
+    "Minimal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最小"
+          }
+        }
+      }
+    },
+    "Extra high" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "超高"
+          }
+        }
+      }
+    },
+    "•••••• (saved — leave blank to keep)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "••••••（已保存——留空则保持不变）"
+          }
+        }
+      }
+    },
+    "Stored in ~/.pi/agent/auth.json for the selected provider." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "为所选供应商保存到 ~/.pi/agent/auth.json。"
+          }
+        }
+      }
+    },
+    "Save Pi Config" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存 Pi 配置"
+          }
+        }
+      }
+    },
+    "Provider ID" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "供应商 ID"
+          }
+        }
+      }
+    },
+    "API protocol" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API 协议"
+          }
+        }
+      }
+    },
+    "API endpoint (Base URL)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API 端点（Base URL）"
+          }
+        }
+      }
+    },
+    "Defines a provider in ~/.pi/agent/models.json at your endpoint. Most self-hosted or proxy servers use openai-completions." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 ~/.pi/agent/models.json 中按你的端点定义一个供应商。多数自托管或代理服务器使用 openai-completions。"
+          }
+        }
+      }
+    },
+    "Auto-trust opened workspaces" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动信任已打开的工作区"
+          }
+        }
+      }
+    },
+    "When codeg connects pi to a folder, mark that folder trusted so pi loads the project’s local config and skills without a separate prompt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当 codeg 将 pi 连接到某文件夹时，把该文件夹标记为受信任，使 pi 无需额外提示即可加载项目的本地配置和技能。"
+          }
+        }
+      }
+    },
+    "Only folders you open here are trusted, never your whole machine — and this affects config loading only, not what pi is allowed to run." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有你在此打开的文件夹会被信任，绝不会信任整台机器——且这只影响配置加载，不影响 pi 被允许执行的操作。"
+          }
+        }
+      }
+    },
+    "Provider and model are required" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "供应商和模型为必填项"
+          }
+        }
+      }
+    },
+    "API endpoint (Base URL) is required" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API 端点（Base URL）为必填项"
+          }
+        }
+      }
+    },
+    "Pi runtime saved" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pi 运行时已保存"
+          }
+        }
+      }
+    },
+    "Pi config saved" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pi 配置已保存"
+          }
+        }
+      }
+    },
+    "pi installed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pi 已安装"
+          }
+        }
+      }
+    },
+    "Failed to install pi" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装 pi 失败"
+          }
+        }
+      }
+    },
+    "pi uninstalled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pi 已卸载"
+          }
+        }
+      }
+    },
+    "Failed to uninstall pi" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "卸载 pi 失败"
+          }
+        }
+      }
+    },
+    "Failed to save workspace trust" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存工作区信任失败"
+          }
+        }
+      }
+    },
     "… file truncated at %@ lines" : {
 
     },
@@ -24,17 +1642,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "“%@” 将被永久删除。此操作无法撤销。"
-          }
-        }
-      }
-    },
-    "“API key” writes a codeg-managed config.toml provider and seeds a gate token. “Login” clears that and uses a real `kimi login` session (requires a Kimi subscription)." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "“API 密钥”会写入由 codeg 管理的 config.toml 供应商并植入闸门令牌。“登录”会清除它，改用真正的 `kimi login` 会话（需要 Kimi 订阅）。"
           }
         }
       }
@@ -269,28 +1876,6 @@
         }
       }
     },
-    "•••••• (saved — leave blank to keep)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "••••••（已保存——留空则保持不变）"
-          }
-        }
-      }
-    },
-    "`kimi acp` only authenticates with a stored login token and rejects API keys on their own. To use an API key, codeg writes a managed ~/.kimi-code/config.toml provider AND seeds a local gate token so the session opens — inference still runs on your key." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "`kimi acp` 只认可已存储的登录令牌，单独的 API 密钥会被拒绝。为支持 API 密钥，codeg 会写入受管的 ~/.kimi-code/config.toml 供应商，并植入一个本地闸门令牌以打开会话——推理仍走你的密钥。"
-          }
-        }
-      }
-    },
     "+%@" : {
 
     },
@@ -319,17 +1904,6 @@
         }
       }
     },
-    "A Cursor Dashboard account key for headless or server machines — an alternative to signing in." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "供无界面或服务器环境使用的 Cursor Dashboard 账号密钥，可替代浏览器登录。"
-          }
-        }
-      }
-    },
     "A token with repo scope. We validate it before saving." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -348,16 +1922,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "该 MCP 服务器的唯一 ID。"
-          }
-        }
-      }
-    },
-    "Abandon Plan" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "放弃计划"
           }
         }
       }
@@ -389,28 +1953,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "强调色文本和图标"
-          }
-        }
-      }
-    },
-    "Account" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "账号"
-          }
-        }
-      }
-    },
-    "Account default" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "账号默认"
           }
         }
       }
@@ -503,17 +2045,6 @@
         }
       }
     },
-    "Add allow rule" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "添加允许规则"
-          }
-        }
-      }
-    },
     "Add Channel" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -521,17 +2052,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加渠道"
-          }
-        }
-      }
-    },
-    "Add deny rule" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "添加拒绝规则"
           }
         }
       }
@@ -722,28 +2242,6 @@
         }
       }
     },
-    "Advanced: credential placement" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "高级：凭据写入位置"
-          }
-        }
-      }
-    },
-    "Advanced: edit config.toml directly" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "高级：直接编辑 config.toml"
-          }
-        }
-      }
-    },
     "Agent" : {
       "localizations" : {
         "zh-Hans" : {
@@ -852,17 +2350,6 @@
         }
       }
     },
-    "Allow Rules" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "允许规则"
-          }
-        }
-      }
-    },
     "Allowed actions" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -885,28 +2372,6 @@
         }
       }
     },
-    "Always approve" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "始终允许"
-          }
-        }
-      }
-    },
-    "An absolute path, a command name on PATH, or a wrapper script (e.g. a monorepo ./pi-test.sh)." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "绝对路径、PATH 中的命令名，或包装脚本（如 monorepo 里的 ./pi-test.sh）。"
-          }
-        }
-      }
-    },
     "Answer below, then submit. You can skip anytime." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -924,28 +2389,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已回答："
-          }
-        }
-      }
-    },
-    "API endpoint (Base URL)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "API 端点（Base URL）"
-          }
-        }
-      }
-    },
-    "API endpoint (Base URL) is required" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "API 端点（Base URL）为必填项"
           }
         }
       }
@@ -979,17 +2422,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "API 密钥保存在 ~/.hermes/.env。留空以保留已存储的密钥。"
-          }
-        }
-      }
-    },
-    "API protocol" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "API 协议"
           }
         }
       }
@@ -1038,26 +2470,6 @@
         }
       }
     },
-    "Approve & Build" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "批准并实施"
-          }
-        }
-      }
-    },
-    "Approve to start building, or send notes to have the plan revised." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "批准后开始实施，或提交修改意见让其重新调整计划。"
-          }
-        }
-      }
-    },
     "Args" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1065,17 +2477,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "参数"
-          }
-        }
-      }
-    },
-    "Ask every time" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "每次询问"
           }
         }
       }
@@ -1135,28 +2536,6 @@
         }
       }
     },
-    "Authenticated via a Kimi account login." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已通过 Kimi 账号登录认证。"
-          }
-        }
-      }
-    },
-    "Authenticated via API key (codeg seeded the local gate token)." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已通过 API 密钥认证（codeg 已植入本地闸门令牌）。"
-          }
-        }
-      }
-    },
     "Authentication" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1178,28 +2557,6 @@
         }
       }
     },
-    "Authentication method" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "认证方式"
-          }
-        }
-      }
-    },
-    "Authentication Method" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "认证方式"
-          }
-        }
-      }
-    },
     "Authentication required." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1207,17 +2564,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "需要身份验证。"
-          }
-        }
-      }
-    },
-    "Auto-trust opened workspaces" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自动信任已打开的工作区"
           }
         }
       }
@@ -1251,17 +2597,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "机器人令牌"
-          }
-        }
-      }
-    },
-    "Both methods sign in to Cursor’s own backend — cursor-agent has no custom-endpoint support, so there is no API URL to set." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "两种方式都登录 Cursor 自己的后端——cursor-agent 不支持自定义接入点，因此无需填写 API 地址。"
           }
         }
       }
@@ -1528,28 +2863,6 @@
         }
       }
     },
-    "China (api.moonshot.cn)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "中国（api.moonshot.cn）"
-          }
-        }
-      }
-    },
-    "China (internal)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "中国（内网）"
-          }
-        }
-      }
-    },
     "Choose a folder" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1615,17 +2928,6 @@
         }
       }
     },
-    "Choose which pi binary runs. Use the default, or point at your own pi build." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择运行哪个 pi 可执行文件。使用默认值，或指向你自己的 pi 构建。"
-          }
-        }
-      }
-    },
     "Clear" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1681,28 +2983,6 @@
         }
       }
     },
-    "CodeBuddy authenticates with an API key. Mainland China builds also require the environment set to “China (internal)”; iOA builds use “iOA”. The overseas build leaves it unset." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "CodeBuddy 使用 API 密钥认证。中国大陆版还需将环境设为“中国（内网）”，iOA 版使用“iOA”，海外版则保持未设置。"
-          }
-        }
-      }
-    },
-    "CodeBuddy Configuration" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "CodeBuddy 配置"
-          }
-        }
-      }
-    },
     "Codeg" : {
 
     },
@@ -1744,17 +3024,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "命令"
-          }
-        }
-      }
-    },
-    "Command not found" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "找不到命令"
           }
         }
       }
@@ -1856,16 +3125,6 @@
         }
       }
     },
-    "Compacting context…" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在压缩上下文…"
-          }
-        }
-      }
-    },
     "Completed-result cache" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1883,17 +3142,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "配置"
-          }
-        }
-      }
-    },
-    "Config directory (PI_CODING_AGENT_DIR)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "配置目录（PI_CODING_AGENT_DIR）"
           }
         }
       }
@@ -1996,26 +3244,6 @@
         }
       }
     },
-    "Context compacted" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "上下文已压缩"
-          }
-        }
-      }
-    },
-    "Context compacted · %@ → %@ tokens" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "上下文已压缩 · %1$@ → %2$@ tokens"
-          }
-        }
-      }
-    },
     "Conversation Tools" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2056,17 +3284,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "复制文件内容"
-          }
-        }
-      }
-    },
-    "Couldn’t list models — check the key and endpoint" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法列出模型——请检查密钥和端点"
           }
         }
       }
@@ -2181,17 +3398,6 @@
         }
       }
     },
-    "Create one in the Cursor Dashboard under Integrations." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "可在 Cursor Dashboard 的 Integrations 中创建。"
-          }
-        }
-      }
-    },
     "Create reusable message templates to drop into the chat composer." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2231,72 +3437,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前版本 %@"
-          }
-        }
-      }
-    },
-    "Cursor API Key" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cursor API 密钥"
-          }
-        }
-      }
-    },
-    "Cursor asks before running commands." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cursor 执行命令前会先询问。"
-          }
-        }
-      }
-    },
-    "Cursor Configuration" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cursor 配置"
-          }
-        }
-      }
-    },
-    "Cursor runs commands without asking. Deny rules below still apply." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cursor 执行命令时不再询问，下方的拒绝规则仍然生效。"
-          }
-        }
-      }
-    },
-    "cursor-agent isn’t installed" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "尚未安装 cursor-agent"
-          }
-        }
-      }
-    },
-    "Custom (OpenAI-compatible)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自定义（OpenAI 兼容）"
           }
         }
       }
@@ -2341,39 +3481,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "自定义路径"
-          }
-        }
-      }
-    },
-    "Custom pi" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自定义 pi"
-          }
-        }
-      }
-    },
-    "Custom pi flags (--approve, -e, …) aren’t forwarded by pi-acp — wrap pi in a script and point the command at it." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自定义 pi 参数（--approve、-e 等）不会被 pi-acp 转发——请将 pi 包进脚本并把命令指向该脚本。"
-          }
-        }
-      }
-    },
-    "Custom provider…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自定义供应商……"
           }
         }
       }
@@ -2474,17 +3581,6 @@
         }
       }
     },
-    "Default Model" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "默认模型"
-          }
-        }
-      }
-    },
     "Default Models by Tier" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2502,17 +3598,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认 Opus 模型"
-          }
-        }
-      }
-    },
-    "Default pi" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "默认 pi"
           }
         }
       }
@@ -2535,17 +3620,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认 Sonnet 模型"
-          }
-        }
-      }
-    },
-    "Defines a provider in ~/.pi/agent/models.json at your endpoint. Most self-hosted or proxy servers use openai-completions." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在 ~/.pi/agent/models.json 中按你的端点定义一个供应商。多数自托管或代理服务器使用 openai-completions。"
           }
         }
       }
@@ -2746,28 +3820,6 @@
         }
       }
     },
-    "Deny Rules" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "拒绝规则"
-          }
-        }
-      }
-    },
-    "Deployment URL" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "部署地址"
-          }
-        }
-      }
-    },
     "Depth limit" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -2830,17 +3882,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "目录"
-          }
-        }
-      }
-    },
-    "Disabled" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已禁用"
           }
         }
       }
@@ -3181,100 +4222,12 @@
         }
       }
     },
-    "Enter a model id (Kimi requires one for API-key mode)." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请输入模型 id（API 密钥模式下 Kimi 必须指定）。"
-          }
-        }
-      }
-    },
     "Enter a new name for this session." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "为此会话输入一个新名称。"
-          }
-        }
-      }
-    },
-    "Enter a pi command to save" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请输入 pi 命令后再保存"
-          }
-        }
-      }
-    },
-    "Enter a valid http(s) URL for the self-hosted deployment." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请为自托管部署输入有效的 http(s) 地址。"
-          }
-        }
-      }
-    },
-    "Enter a valid http(s) URL." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请输入有效的 http(s) 地址。"
-          }
-        }
-      }
-    },
-    "Enter an API key and endpoint first" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请先输入 API 密钥和端点"
-          }
-        }
-      }
-    },
-    "Enter your Cursor API key, or switch to Official Subscription." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请填写 Cursor API 密钥，或切换为官方订阅。"
-          }
-        }
-      }
-    },
-    "Entered plan mode" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已进入计划模式"
-          }
-        }
-      }
-    },
-    "Environment" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "环境"
           }
         }
       }
@@ -3376,17 +4329,6 @@
         }
       }
     },
-    "Extra high" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "超高"
-          }
-        }
-      }
-    },
     "Extra High" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3415,39 +4357,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "失败"
-          }
-        }
-      }
-    },
-    "Failed to install pi" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "安装 pi 失败"
-          }
-        }
-      }
-    },
-    "Failed to save workspace trust" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存工作区信任失败"
-          }
-        }
-      }
-    },
-    "Failed to uninstall pi" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "卸载 pi 失败"
           }
         }
       }
@@ -3670,28 +4579,6 @@
         }
       }
     },
-    "GCP location (GOOGLE_CLOUD_LOCATION)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "GCP 区域（GOOGLE_CLOUD_LOCATION）"
-          }
-        }
-      }
-    },
-    "GCP project (GOOGLE_CLOUD_PROJECT)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "GCP 项目（GOOGLE_CLOUD_PROJECT）"
-          }
-        }
-      }
-    },
     "Gemini API Key" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3790,17 +4677,6 @@
         }
       }
     },
-    "Grok Configuration" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Grok 配置"
-          }
-        }
-      }
-    },
     "Hide" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3876,17 +4752,6 @@
         }
       }
     },
-    "Inline api_key" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "内联 api_key"
-          }
-        }
-      }
-    },
     "Insert" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3931,17 +4796,6 @@
         }
       }
     },
-    "Install pi" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "安装 pi"
-          }
-        }
-      }
-    },
     "Installed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3960,28 +4814,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "集成"
-          }
-        }
-      }
-    },
-    "International (api.moonshot.ai)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "国际（api.moonshot.ai）"
-          }
-        }
-      }
-    },
-    "International = api.moonshot.ai; China (platform.kimi.com keys) = api.moonshot.cn. Custom points at any OpenAI-compatible endpoint." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "国际 = api.moonshot.ai；中国（platform.kimi.com 密钥）= api.moonshot.cn。自定义可指向任意 OpenAI 兼容端点。"
           }
         }
       }
@@ -4015,17 +4847,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "令牌无效。"
-          }
-        }
-      }
-    },
-    "iOA" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "iOA"
           }
         }
       }
@@ -4085,17 +4906,6 @@
         }
       }
     },
-    "Key works, but no models were returned" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "密钥有效，但未返回任何模型"
-          }
-        }
-      }
-    },
     "Kick off tasks in any folder with your preferred agent." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -4103,39 +4913,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "用你偏好的智能体在任意文件夹中启动任务。"
-          }
-        }
-      }
-    },
-    "Kimi account login (subscription)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kimi 账号登录（订阅）"
-          }
-        }
-      }
-    },
-    "Kimi Code config saved" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kimi Code 配置已保存"
-          }
-        }
-      }
-    },
-    "Kimi Code Configuration" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kimi Code 配置"
           }
         }
       }
@@ -4235,17 +5012,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "留空以保留已存储的令牌。"
-          }
-        }
-      }
-    },
-    "Leave blank to use the provider SDK default." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "留空则使用供应商 SDK 的默认值。"
           }
         }
       }
@@ -4459,17 +5225,6 @@
         }
       }
     },
-    "Loading models…" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在加载模型…"
-          }
-        }
-      }
-    },
     "Loading options…" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -4578,17 +5333,6 @@
         }
       }
     },
-    "Low (faster)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "低（更快）"
-          }
-        }
-      }
-    },
     "Main" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -4675,28 +5419,6 @@
         }
       }
     },
-    "Max" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "最高"
-          }
-        }
-      }
-    },
-    "Max context size (optional)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "最大上下文长度（可选）"
-          }
-        }
-      }
-    },
     "Max tokens" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -4752,17 +5474,6 @@
         }
       }
     },
-    "Medium (balanced)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "中（均衡）"
-          }
-        }
-      }
-    },
     "Message" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -4802,17 +5513,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "消息"
-          }
-        }
-      }
-    },
-    "Minimal" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "最小"
           }
         }
       }
@@ -5083,17 +5783,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "该服务器上没有可用的智能体。"
-          }
-        }
-      }
-    },
-    "No API key? Run “codebuddy” in a terminal to sign in with your Tencent account instead." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "没有 API 密钥？可在终端运行“codebuddy”改用腾讯账号登录。"
           }
         }
       }
@@ -5487,17 +6176,6 @@
         }
       }
     },
-    "No XAI_API_KEY set." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未设置 XAI_API_KEY。"
-          }
-        }
-      }
-    },
     "Not a Git Repository" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -5516,17 +6194,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未分配给任何应用"
-          }
-        }
-      }
-    },
-    "Not authenticated yet — save an API key below (or sign in) to open Kimi sessions." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "尚未认证——请在下方保存 API 密钥（或登录）以打开 Kimi 会话。"
           }
         }
       }
@@ -5571,17 +6238,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未推送"
-          }
-        }
-      }
-    },
-    "Not signed in" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未登录"
           }
         }
       }
@@ -5641,17 +6297,6 @@
         }
       }
     },
-    "Off" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "关闭"
-          }
-        }
-      }
-    },
     "Official Subscription" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -5703,17 +6348,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在线，版本 %@"
-          }
-        }
-      }
-    },
-    "Only folders you open here are trusted, never your whole machine — and this affects config loading only, not what pi is allowed to run." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "只有你在此打开的文件夹会被信任，绝不会信任整台机器——且这只影响配置加载，不影响 pi 被允许执行的操作。"
           }
         }
       }
@@ -5845,17 +6479,6 @@
         }
       }
     },
-    "Overseas (default)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "海外（默认）"
-          }
-        }
-      }
-    },
     "Parent Directory" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -5863,17 +6486,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上级目录"
-          }
-        }
-      }
-    },
-    "Passed to cursor-agent as its --model flag. Leave unset to use the account default." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "作为 --model 参数传给 cursor-agent。留空则使用账号默认模型。"
           }
         }
       }
@@ -5922,17 +6534,6 @@
         }
       }
     },
-    "Permission Mode" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "权限模式"
-          }
-        }
-      }
-    },
     "Permission requests" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5940,17 +6541,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "权限请求"
-          }
-        }
-      }
-    },
-    "Permissions" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "权限"
           }
         }
       }
@@ -5984,83 +6574,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "照片图库"
-          }
-        }
-      }
-    },
-    "Pi authenticates with your model provider’s API key. The key is written to ~/.pi/agent/auth.json and the model selection to settings.json." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pi 使用你的模型供应商 API 密钥认证。密钥写入 ~/.pi/agent/auth.json，模型选择写入 settings.json。"
-          }
-        }
-      }
-    },
-    "pi command or path" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "pi 命令或路径"
-          }
-        }
-      }
-    },
-    "Pi config saved" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pi 配置已保存"
-          }
-        }
-      }
-    },
-    "Pi Configuration" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pi 配置"
-          }
-        }
-      }
-    },
-    "pi installed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "pi 已安装"
-          }
-        }
-      }
-    },
-    "Pi runtime saved" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pi 运行时已保存"
-          }
-        }
-      }
-    },
-    "pi uninstalled" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "pi 已卸载"
           }
         }
       }
@@ -6138,27 +6651,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "计划"
-          }
-        }
-      }
-    },
-    "Plan ready" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "计划已就绪"
-          }
-        }
-      }
-    },
-    "Plan ready for review" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "计划已就绪，待确认"
           }
         }
       }
@@ -6258,50 +6750,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "供应商"
-          }
-        }
-      }
-    },
-    "Provider and model are required" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "供应商和模型为必填项"
-          }
-        }
-      }
-    },
-    "Provider env sub-table" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "供应商 env 子表"
-          }
-        }
-      }
-    },
-    "Provider ID" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "供应商 ID"
-          }
-        }
-      }
-    },
-    "Provider type" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "供应商类型"
           }
         }
       }
@@ -6594,17 +7042,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "最近消息"
-          }
-        }
-      }
-    },
-    "Recheck" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重新检查"
           }
         }
       }
@@ -6913,17 +7350,6 @@
         }
       }
     },
-    "Request Changes" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "要求修改"
-          }
-        }
-      }
-    },
     "Restart" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -6968,45 +7394,12 @@
         }
       }
     },
-    "Rules and sandbox merge into ~/.cursor/cli-config.json, preserving keys the Cursor CLI wrote. Running sessions pick them up after a restart." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "规则与沙盒会合并进 ~/.cursor/cli-config.json，并保留 Cursor CLI 自己写入的其它键。运行中的会话需重启后生效。"
-          }
-        }
-      }
-    },
     "Run `gemini` once on the server to complete Google OAuth." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "在服务器上运行一次 `gemini` 以完成 Google OAuth。"
-          }
-        }
-      }
-    },
-    "Run `kimi login` in a terminal to sign in with a Kimi subscription account (device-code OAuth). codeg stores nothing and reuses Kimi’s own login. Saving here removes codeg’s API-key gate token." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在终端运行 `kimi login`，用 Kimi 订阅账号登录（设备码 OAuth）。codeg 不存储任何内容，复用 Kimi 自己的登录。在此保存会移除 codeg 的 API 密钥闸门令牌。"
-          }
-        }
-      }
-    },
-    "Run Everything" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "全部放行"
           }
         }
       }
@@ -7021,27 +7414,6 @@
         }
       }
     },
-    "Run this on the machine hosting codeg, then refresh:" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在运行 codeg 的机器上执行以下命令，然后点击刷新："
-          }
-        }
-      }
-    },
-    "Run your own pi build, install, or wrapper." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "运行你自己的 pi 构建、安装或包装脚本。"
-          }
-        }
-      }
-    },
     "Running" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -7049,28 +7421,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "运行中"
-          }
-        }
-      }
-    },
-    "Runtime" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "运行时"
-          }
-        }
-      }
-    },
-    "Sandbox" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "沙盒"
           }
         }
       }
@@ -7097,34 +7447,12 @@
         }
       }
     },
-    "Save config.toml" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存 config.toml"
-          }
-        }
-      }
-    },
     "Save for future operations" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存以便后续操作"
-          }
-        }
-      }
-    },
-    "Save Kimi Code Config" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存 Kimi Code 配置"
           }
         }
       }
@@ -7136,72 +7464,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存路径"
-          }
-        }
-      }
-    },
-    "Save Pi Config" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存 Pi 配置"
-          }
-        }
-      }
-    },
-    "Save Runtime" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保存运行时"
-          }
-        }
-      }
-    },
-    "Saved as CODEBUDDY_API_KEY for this agent. Alternatively, sign in with the CodeBuddy CLI in a terminal." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "作为 CODEBUDDY_API_KEY 保存到该智能体。也可以在终端用 CodeBuddy CLI 登录。"
-          }
-        }
-      }
-    },
-    "Saved as CODEBUDDY_API_KEY for this agent. Use the key issued by your private deployment." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "作为 CODEBUDDY_API_KEY 保存到该智能体。请使用你的私有化部署所签发的密钥。"
-          }
-        }
-      }
-    },
-    "Saved as CODEBUDDY_BASE_URL and points CodeBuddy at your private endpoint. The region setting is left unset for self-hosted deployments." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "作为 CODEBUDDY_BASE_URL 保存，将 CodeBuddy 指向你的私有端点。自托管部署下区域设置保持未设置。"
-          }
-        }
-      }
-    },
-    "Saved as XAI_API_KEY for this agent, or run “grok login” in a terminal for subscription sign-in (SuperGrok / X Premium+)." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已保存为该 agent 的 XAI_API_KEY，或在终端运行“grok login”进行订阅登录（SuperGrok / X Premium+）。"
           }
         }
       }
@@ -7318,17 +7580,6 @@
         }
       }
     },
-    "Select a provider" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择一个供应商"
-          }
-        }
-      }
-    },
     "Select a Session" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -7395,17 +7646,6 @@
         }
       }
     },
-    "Self-hosted (private deployment)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自托管（私有化部署）"
-          }
-        }
-      }
-    },
     "Send" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -7446,17 +7686,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "发送失败"
-          }
-        }
-      }
-    },
-    "Send Notes" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "发送意见"
           }
         }
       }
@@ -7603,17 +7832,6 @@
         }
       }
     },
-    "Sessions directory (PI_CODING_AGENT_SESSION_DIR)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "会话目录（PI_CODING_AGENT_SESSION_DIR）"
-          }
-        }
-      }
-    },
     "Set as Default" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -7621,17 +7839,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "设为默认"
-          }
-        }
-      }
-    },
-    "Sets CODEBUDDY_INTERNET_ENVIRONMENT. Mainland China must use “China (internal)”; the overseas build leaves it unset." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "设置 CODEBUDDY_INTERNET_ENVIRONMENT。中国大陆须使用“中国（内网）”，海外版保持未设置。"
           }
         }
       }
@@ -7746,28 +7953,6 @@
         }
       }
     },
-    "Sign in to load the model list." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "登录后才能加载模型列表。"
-          }
-        }
-      }
-    },
-    "Sign in with your Cursor account in a terminal. No credential is stored here." : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在终端中使用你的 Cursor 账号登录，此处不保存任何凭据。"
-          }
-        }
-      }
-    },
     "Sign-in" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -7775,17 +7960,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "登录"
-          }
-        }
-      }
-    },
-    "Signed in" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已登录"
           }
         }
       }
@@ -8072,17 +8246,6 @@
         }
       }
     },
-    "Stored in ~/.pi/agent/auth.json for the selected provider." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "为所选供应商保存到 ~/.pi/agent/auth.json。"
-          }
-        }
-      }
-    },
     "Sub-agent" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -8145,17 +8308,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "切换到 API 密钥"
-          }
-        }
-      }
-    },
-    "Switched mode" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已切换模式"
           }
         }
       }
@@ -8334,16 +8486,6 @@
         }
       }
     },
-    "The agent didn’t include a plan." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "该智能体没有给出计划内容。"
-          }
-        }
-      }
-    },
     "The agent needs permission to continue." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8420,17 +8562,6 @@
         }
       }
     },
-    "The controls below merge into ~/.grok/config.toml, preserving your other keys and comments. Other keys stay editable under Advanced." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "下面的控件会合并写入 ~/.grok/config.toml，保留你的其它键与注释。其它键可在「高级」中编辑。"
-          }
-        }
-      }
-    },
     "The language the bot replies in." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -8438,28 +8569,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "机器人回复所使用的语言。"
-          }
-        }
-      }
-    },
-    "The model id to use. Click Fetch to list the models your key can access (e.g. kimi-k2.7-code) — avoids “model not found” errors." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "要使用的模型 id。点“获取”可列出你的密钥能访问的模型（如 kimi-k2.7-code）——避免“找不到模型”的错误。"
-          }
-        }
-      }
-    },
-    "The provider protocol Kimi speaks (config.toml `type`). Use Kimi / Moonshot for a Moonshot / platform.kimi.com key." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kimi 使用的供应商协议（config.toml 的 `type`）。使用 Moonshot / platform.kimi.com 密钥时选 Kimi / Moonshot。"
           }
         }
       }
@@ -8515,17 +8624,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "主题"
-          }
-        }
-      }
-    },
-    "Thinking" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "思考强度"
           }
         }
       }
@@ -8774,17 +8872,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "令牌"
-          }
-        }
-      }
-    },
-    "Tokens, e.g. 262144. Leave blank to use the model default." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "以 token 计，如 262144。留空则使用模型默认值。"
           }
         }
       }
@@ -9102,28 +9189,6 @@
         }
       }
     },
-    "Use default" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用默认"
-          }
-        }
-      }
-    },
-    "Use the bundled pi-acp adapter with the pi on your PATH. Install pi with: npm install -g @earendil-works/pi-coding-agent" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用内置的 pi-acp 适配器和 PATH 中的 pi。安装 pi：npm install -g @earendil-works/pi-coding-agent"
-          }
-        }
-      }
-    },
     "User prompts" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9178,17 +9243,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "有效的 JSON 对象"
-          }
-        }
-      }
-    },
-    "Validate" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "校验"
           }
         }
       }
@@ -9266,17 +9320,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Vertex AI API 密钥"
-          }
-        }
-      }
-    },
-    "Vertex AI uses Google Application Default Credentials — run `gcloud auth application-default login` (no API key)." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vertex AI 使用 Google 应用默认凭据——请运行 `gcloud auth application-default login`（无需 API 密钥）。"
           }
         }
       }
@@ -9402,28 +9445,6 @@
         }
       }
     },
-    "What should change?" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需要修改什么？"
-          }
-        }
-      }
-    },
-    "When codeg connects pi to a folder, mark that folder trusted so pi loads the project’s local config and skills without a separate prompt." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "当 codeg 将 pi 连接到某文件夹时，把该文件夹标记为受信任，使 pi 无需额外提示即可加载项目的本地配置和技能。"
-          }
-        }
-      }
-    },
     "When off, the delegate_to_agent tool is hidden from the agent’s catalog." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9431,17 +9452,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "关闭后，delegate_to_agent 工具将从智能体的工具目录中隐藏。"
-          }
-        }
-      }
-    },
-    "Where the API key is written inside config.toml." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "API 密钥在 config.toml 中的写入位置。"
           }
         }
       }
@@ -9479,17 +9489,6 @@
         }
       }
     },
-    "With a custom config directory, the Skills, Experts, and Office tools managed in Settings won’t apply to this pi — manage its skills in that folder directly." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用自定义配置目录后，设置中管理的技能、专家和 Office 工具将不适用于此 pi——请直接在该目录中管理其技能。"
-          }
-        }
-      }
-    },
     "Working Tree Clean" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -9519,39 +9518,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工作区"
-          }
-        }
-      }
-    },
-    "Written to ~/.kimi-code/config.toml and used for inference. From platform.kimi.com or platform.kimi.ai." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "写入 ~/.kimi-code/config.toml 并用于推理。来自 platform.kimi.com 或 platform.kimi.ai。"
-          }
-        }
-      }
-    },
-    "Written verbatim (comments preserved) and validated as TOML. codeg also seeds the gate token so the session opens." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "原样写入（保留注释）并按 TOML 校验。codeg 还会植入闸门令牌以打开会话。"
-          }
-        }
-      }
-    },
-    "XAI_API_KEY is configured." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已配置 XAI_API_KEY。"
           }
         }
       }
