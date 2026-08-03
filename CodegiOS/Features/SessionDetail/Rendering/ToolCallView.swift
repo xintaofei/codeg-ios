@@ -64,13 +64,26 @@ struct ToolGroupCard: View {
 enum ToolGroupSummary {
     static func text(_ items: [ToolCallVM]) -> String {
         var counts: [ToolKindBucket: Int] = [:]
-        for it in items { counts[it.bucket, default: 0] += 1 }
+        for it in items { counts[tally(it.bucket), default: 0] += 1 }
         let order: [ToolKindBucket] = [.read, .edit, .search, .execute, .web, .todo, .task, .taskMgmt, .other]
         let phrases = order.compactMap { b -> String? in
             guard let c = counts[b], c > 0 else { return nil }
             return phrase(b, c)
         }
         return phrases.isEmpty ? "\(items.count) tools" : phrases.joined(separator: " · ")
+    }
+
+    /// Buckets that exist for RENDERING but not for counting. A `wait` continues
+    /// a background shell an earlier `exec_command` started, so it belongs with
+    /// the commands in the tally (as web `classifyToolKind` has it); an
+    /// undecomposable code-mode script is just another tool. Neither deserves a
+    /// phrase of its own in a one-line summary.
+    private static func tally(_ b: ToolKindBucket) -> ToolKindBucket {
+        switch b {
+        case .session: return .execute
+        case .script: return .other
+        default: return b
+        }
     }
 
     private static func phrase(_ b: ToolKindBucket, _ c: Int) -> String {
@@ -86,7 +99,8 @@ enum ToolGroupSummary {
         // Task-management calls never enter a generic group (they form their own
         // `taskGroup`); this keeps the switch exhaustive.
         case .taskMgmt: return "\(c) task update\(s ? "s" : "")"
-        case .other: return "\(c) tool\(s ? "s" : "")"
+        // Folded into `.execute` / `.other` by `tally(_:)` before counting.
+        case .session, .script, .other: return "\(c) tool\(s ? "s" : "")"
         }
     }
 }
@@ -145,6 +159,9 @@ struct ToolCallCard: View {
                 .minimumScaleFactor(0.85)
             ToolStateIndicator(state: vm.state)
             Spacer(minLength: 4)
+            if let session = vm.announcedSessionId {
+                MetaBadge(text: "cell \(session)")
+            }
             diffStat
             if hasBody {
                 Image(systemName: "chevron.right")
@@ -190,6 +207,12 @@ struct ToolCallCard: View {
     private var outputBody: some View {
         if vm.bucket == .read, !vm.isError, let file = ReadOutputFormat.parse(vm.trimmedOutput) {
             FileBodyView(file: file)
+        } else if let results = vm.searchResultText {
+            // Grouped, line-numbered results, on the envelope-unwrapped text.
+            // `searchResultText` is nil for anything this shouldn't claim — a
+            // search still running, a genuine failure, a non-search tool — so
+            // those fall through to the generic renderer below.
+            SearchResultsView(text: results, query: vm.searchQuery)
         } else if vm.hasOutput {
             ToolOutputBody(output: vm.trimmedOutput, isError: vm.isError, isCommand: vm.isCommand)
         }
@@ -203,6 +226,8 @@ struct ToolCallCard: View {
         case .search: SearchInputBody(vm: vm)
         case .todo: TodoInputBody(vm: vm)
         case .web: WebInputBody(vm: vm)
+        case .session: ShellSessionInputBody(vm: vm)
+        case .script: CodexScriptInputBody(vm: vm)
         default: GenericInputBody(vm: vm)
         }
     }
@@ -354,6 +379,78 @@ private struct BashInputBody: View {
         if let t = args?["timeout"] { out.append("timeout \(t)") }
         if let cwd = strArg(args, ["cwd", "working_dir", "workdir"]) { out.append(PathFormat.short(cwd)) }
         return out
+    }
+}
+
+/// A codex unified-exec session tool (`wait` / `write_stdin`). Its arguments
+/// carry a session id, not a command, so the Terminal body had nothing to show —
+/// this names the command whose session is being addressed (resolved by the
+/// history parser as `session_command`) and the keystrokes, if any, being sent.
+private struct ShellSessionInputBody: View {
+    let vm: ToolCallVM
+
+    var body: some View {
+        if let call = ShellSessionCall.parse(input: vm.input) {
+            VStack(alignment: .leading, spacing: 6) {
+                if let command = call.command {
+                    // Labeled, because this card did NOT run the command — it is
+                    // polling the shell an earlier `exec_command` left running.
+                    // (The web omits it entirely, relying on its wider header;
+                    // here the title is one middle-truncated line, so a long
+                    // command would otherwise be unreadable.)
+                    Text("Session command")
+                        .font(Theme.Typography.microLabel)
+                        .textCase(.uppercase)
+                        .tracking(0.5)
+                        .foregroundStyle(Theme.textTertiary)
+                    CodeBlockView(code: command, language: "bash")
+                }
+                let chips = chips(call)
+                if !chips.isEmpty {
+                    HStack(spacing: 6) { ForEach(chips, id: \.self) { MetaBadge(text: $0) } }
+                }
+                if !call.chars.isEmpty {
+                    // The literal keystrokes, control characters made visible.
+                    HStack(spacing: 6) {
+                        Image(systemName: "keyboard").font(.system(size: 10))
+                            .foregroundStyle(Theme.textTertiary)
+                        Text(verbatim: ShellSessionFormat.describeStdin(call.chars, maxLen: 200))
+                            .font(.mono(11)).foregroundStyle(Theme.textSecondary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+        } else {
+            GenericInputBody(vm: vm)
+        }
+    }
+
+    private func chips(_ call: ShellSessionCall) -> [String] {
+        var out: [String] = []
+        // The id is what pairs this poll with the command that started the
+        // session — worth showing even when the command itself resolved.
+        if let id = call.sessionId { out.append("cell \(id)") }
+        if call.terminate { out.append("terminate") }
+        return out
+    }
+}
+
+/// A codex code-mode script the history parser could not decompose into the
+/// individual `tools.*` calls it makes. Its input is the JS source itself.
+private struct CodexScriptInputBody: View {
+    let vm: ToolCallVM
+
+    var body: some View {
+        if let card = CodexScriptCard.parse(input: vm.input) {
+            VStack(alignment: .leading, spacing: 6) {
+                CodeBlockView(code: card.source, language: "javascript")
+                if card.callCount > 0 {
+                    MetaBadge(text: card.callCount == 1 ? "1 tool call" : "\(card.callCount) tool calls")
+                }
+            }
+        } else {
+            GenericInputBody(vm: vm)
+        }
     }
 }
 

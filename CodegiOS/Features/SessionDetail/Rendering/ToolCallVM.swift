@@ -15,6 +15,14 @@ enum ToolCallState {
 /// buckets.
 enum ToolKindBucket {
     case read, edit, search, execute, web, todo, task, taskMgmt, other
+    /// codex's unified-exec session tools (`wait` / `write_stdin`). Kept out of
+    /// `.execute`: their arguments carry a session id, not a command, so the
+    /// Terminal card's title derivation came up empty and every one of them
+    /// rendered as a bare "Bash" over a parameter dump.
+    case session
+    /// codex code mode's undecomposable script (`codex_script`) — JS source, not
+    /// a shell command.
+    case script
 }
 
 /// A unified, view-ready model for one tool call. Both the persisted path
@@ -48,42 +56,112 @@ struct ToolCallVM: Identifiable {
     let companion: CompanionKind?
     let icon: String
     let diffFiles: [DiffFile]?
+    /// The background shell this command left running, when its own script
+    /// echoed the id. One session is polled by any number of later `wait` cards,
+    /// and the ones this echo comes with are exactly the ones the history parser
+    /// could NOT title by a command — so naming the session here is what ties
+    /// those "Wait cell 17983" cards back to the command that started it.
+    let announcedSessionId: String?
+    /// Set when this call was identified as a codex-acp command action, i.e. its
+    /// name, arguments and bucket were all recovered from its title.
+    let commandAction: CodexCommandAction.Resolved?
 
     init(id: String, rawName: String, kind: String, state: ToolCallState,
          input: String?, output: String?, content: String?, isError: Bool,
          meta: AnyJSON? = nil, transcript: [SubAgentRun] = []) {
+        // A codex-acp command action (`createCommandActionEvent`) has no tool
+        // name and NO input — only a human title, which arrives here as
+        // `rawName`. Its identity, its query and its path all have to be read
+        // back out of that title; the synthesized input below is what the
+        // desktop's runtime writes onto the tool-use block, so every derivation
+        // downstream sees an ordinary Grep/Glob call.
+        //
+        // Gated on there being no input at all, which is the shape codex sends:
+        // a tool carrying real arguments must never be re-identified by its
+        // title. (Same gate as the web's `inferLiveToolName`.)
+        let action = (input?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            ? CodexCommandAction.resolve(title: rawName)
+            : nil
         // Grok's plan-mode tools carry their authoritative identity in
         // `_meta["x.ai/tool"].kind`, while the `title` we're handed as `rawName`
         // MUTATES across the lifecycle (`enter_plan_mode` → "Plan: Enter" → "Plan
         // mode entered"). Resolve them to the canonical name up front so the live
         // stream lands on the same identity the persisted path reads from
         // `x.ai/tool.name` — and so the card's title stops changing mid-stream.
-        let resolvedName = ToolDerive.grokPlanModeName(meta) ?? rawName
+        let resolvedName = ToolDerive.grokPlanModeName(meta) ?? action?.name ?? rawName
+        let resolvedInput = input ?? action?.input
         self.id = id
         self.rawName = resolvedName
         self.kind = kind
         self.state = state
-        self.input = input
+        self.input = resolvedInput
         self.output = output
         self.content = content
         self.isError = isError
         self.meta = meta
         self.transcript = transcript
+        self.commandAction = action
 
-        let parsed = ToolDerive.parseJSON(input)
-        let b = ToolDerive.bucket(name: resolvedName, kind: kind)
-        let comp = CompanionDetect.kind(name: resolvedName, input: input, parsed: parsed)
+        let parsed = ToolDerive.parseJSON(resolvedInput)
+        // A command action's bucket comes from its resolved name ALONE, never
+        // the ACP `kind`: codex labels `List files in 'src'` as kind "read",
+        // which would route it to the file-read body and dump the raw envelope.
+        // (The web classifies on the name only; iOS's kind-first rule is an
+        // addition, and it has to yield here.)
+        let b = action != nil ? .search : ToolDerive.bucket(name: resolvedName, kind: kind)
+        let comp = CompanionDetect.kind(name: resolvedName, input: resolvedInput, parsed: parsed)
         self.bucket = b
         self.companion = comp
-        self.displayTitle = ToolDerive.title(name: resolvedName, bucket: b, input: input, parsed: parsed)
-        self.icon = comp.map(ToolDerive.companionIcon) ?? ToolDerive.icon(bucket: b, name: resolvedName)
-        self.diffFiles = ToolDerive.diff(bucket: b, input: input, output: output, content: content, parsed: parsed)
+        self.displayTitle = ToolDerive.title(name: resolvedName, bucket: b, input: resolvedInput, parsed: parsed)
+        self.icon = comp.map(ToolDerive.companionIcon)
+            ?? ToolDerive.icon(bucket: b, name: resolvedName, input: resolvedInput)
+        self.diffFiles = ToolDerive.diff(bucket: b, input: resolvedInput, output: output, content: content, parsed: parsed)
+        self.announcedSessionId = ToolDerive.announcedSession(name: resolvedName, output: output)
+    }
+
+    /// The pattern a search-shaped call looked for, highlighted in its results.
+    var searchQuery: String? {
+        guard bucket == .search else { return nil }
+        let args = ToolDerive.effectiveArgs(ToolDerive.parseJSON(input))
+        for key in ["pattern", "query", "regex", "q"] {
+            if let v = args?[key] as? String, !v.isEmpty { return v }
+        }
+        return nil
+    }
+
+    /// The text a search-shaped call should render as grouped results, or nil to
+    /// fall through to the generic output renderer. Mirrors the web's
+    /// `searchOutput` memo, including its error-channel special case.
+    var searchResultText: String? {
+        guard bucket == .search else { return nil }
+        if isError {
+            // codex derives the tool status from the exit code, so an rg/grep
+            // "no matches" (exit 1, no output) arrives as a FAILED call and
+            // lands on the error channel. Recognise exactly that shape as an
+            // empty result instead of a red envelope dump. Scoped to grep-likes:
+            // exit 1 means "nothing selected" only for those — for the list
+            // commands that classify as `glob` it is a genuine failure, and a
+            // successful empty listing already arrives with exit 0. A real grep
+            // failure (exit ≥ 2, or any stderr text) keeps the error rendering.
+            guard commandAction?.isGrepLike ?? (ToolDerive.isGrepName(rawName)) else { return nil }
+            guard let envelope = CodexCommandEnvelope.parse(output), envelope.exitCode == 1,
+                  envelope.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return nil }
+            return ""
+        }
+        guard let output else { return nil }
+        // The STRICT envelope parse (both `formatted_output` and `exit_code`):
+        // the looser `ToolOutputFormat.commandOutput` would treat a legitimate
+        // JSON search result as an envelope and flatten it to empty text.
+        return CodexCommandEnvelope.parse(output)?.output ?? output
     }
 
     var trimmedOutput: String { (output ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
     var hasOutput: Bool { !trimmedOutput.isEmpty }
-    /// Bash/shell output renders in a terminal-ish code block.
-    var isCommand: Bool { bucket == .execute }
+    /// Bash/shell output renders in a terminal-ish code block. Session polls are
+    /// included: what a `wait` returns IS the background shell's stdout, wrapped
+    /// in the same `{formatted_output, exit_code}` envelope a command result uses.
+    var isCommand: Bool { bucket == .execute || bucket == .session }
     /// A plan-*mode* transition (Claude's `EnterPlanMode`/`ExitPlanMode`, Grok's
     /// `enter_plan_mode`/`exit_plan_mode`, Cline's `switch_mode`). A mode signal,
     /// not a work tool, so it renders standalone instead of folding into a group.
@@ -450,6 +528,35 @@ enum ToolDerive {
         // still feeds the gutter marker / accessibility.
         if bucket == .taskMgmt { return taskMgmtTitle(name: name, args: args) }
 
+        // codex code-mode script: title from the first command the parser could
+        // read out of the JS, else a plain label.
+        if bucket == .script {
+            if let t = CodexScriptCard.parse(input: input)?.title,
+               let firstLine = simplifyCommand(t).components(separatedBy: "\n").first,
+               !firstLine.isEmpty {
+                return truncate(firstLine, 80)
+            }
+            return "Script"
+        }
+
+        // codex unified-exec session tools: title by the command whose session
+        // they address (resolved by the history parser), falling back to the
+        // session id. Neither carries a command of its own, so without this the
+        // header read a bare "Bash" / the raw tool name.
+        if bucket == .session {
+            guard let call = ShellSessionCall.parse(input: input) else { return display(name) }
+            if !call.chars.isEmpty { return "Stdin \(ShellSessionFormat.describeStdin(call.chars))" }
+            let verb = (codexBuiltin(name) == ShellSessionCall.waitName && call.terminate)
+                ? "Terminate" : "Wait"
+            if let command = call.command,
+               let firstLine = simplifyCommand(command).components(separatedBy: "\n").first,
+               !firstLine.isEmpty {
+                return truncate("\(verb) \(firstLine)", 80)
+            }
+            if let id = call.sessionId { return "\(verb) cell \(id)" }
+            return verb
+        }
+
         switch n {
         case "read", "read_file", "readfile", "cat", "view":
             if let p = str(["file_path", "path", "filename", "file", "target_file"]) { return "Read \(PathFormat.short(p))" }
@@ -514,7 +621,7 @@ enum ToolDerive {
     ]
     private static let executeNames: Set<String> = [
         "bash", "shell", "sh", "exec", "exec_command", "execute", "execute_command",
-        "run_command", "command", "run_terminal_cmd", "terminal", "write_stdin",
+        "run_command", "command", "run_terminal_cmd", "terminal",
     ]
     private static let webNames: Set<String> = [
         "webfetch", "web_fetch", "fetch", "websearch", "web_search", "browser", "browser_action",
@@ -536,6 +643,14 @@ enum ToolDerive {
     ]
 
     static func bucket(name: String, kind: String) -> ToolKindBucket {
+        // These two win over the ACP `kind` hint below. codex announces both as
+        // execute-kind tools — truthfully, they do run a shell — but neither
+        // carries a command, so the Terminal card has nothing to show and the
+        // header falls back to a bare "Bash". Their own bodies read the session
+        // id / JS source the arguments actually carry.
+        let builtin = codexBuiltin(name)
+        if ShellSessionCall.isSessionToolName(builtin) { return .session }
+        if builtin == CodexScriptCard.toolName { return .script }
         // The ACP `kind` hint (live tools carry an authoritative category) wins.
         switch kind.lowercased() {
         case "read": return .read
@@ -555,6 +670,13 @@ enum ToolDerive {
         if executeNames.contains(n) { return .execute }
         if webNames.contains(n) { return .web }
         return .other
+    }
+
+    /// A grep-like search (as opposed to a `glob`/`ls` listing), for which an
+    /// exit code of 1 means "no matches" rather than a failure.
+    static func isGrepName(_ name: String) -> Bool {
+        ["grep", "ripgrep", "grep_search", "search_files", "search", "searchtext", "search_text"]
+            .contains(canonical(name))
     }
 
     /// Grok stamps the authoritative tool identity in `_meta["x.ai/tool"]`
@@ -581,7 +703,7 @@ enum ToolDerive {
         }
     }
 
-    static func icon(bucket: ToolKindBucket, name: String) -> String {
+    static func icon(bucket: ToolKindBucket, name: String, input: String?) -> String {
         // A mode signal, not a work tool — same checklist glyph the plan node uses.
         if isPlanModeName(name) { return "checklist" }
         switch bucket {
@@ -593,8 +715,29 @@ enum ToolDerive {
         case .todo: return "checklist"
         case .task: return "person.2"
         case .taskMgmt: return "checklist"
+        case .script: return "curlybraces"
+        case .session:
+            // Sending keystrokes reads as input; everything else (including the
+            // 99% of `write_stdin` calls that send nothing) is a poll on a
+            // running session.
+            let sendsInput = !(ShellSessionCall.parse(input: input)?.chars.isEmpty ?? true)
+            return sendsInput ? "keyboard" : "timer"
         case .other: return "wrench.and.screwdriver"
         }
+    }
+
+    /// The session id an `exec_command`'s own output announced. Scoped to that
+    /// one tool: the echo is a code-mode script's, and matching it anywhere else
+    /// would badge unrelated cards that merely printed the words.
+    static func announcedSession(name: String, output: String?) -> String? {
+        guard codexBuiltin(name) == "exec_command", let output else { return nil }
+        // The JSON envelope is unwrapped but the CLI header is deliberately NOT
+        // stripped: `parseCliEnvelope` drops everything above the `Output:` line
+        // — the announcement included. (The Rust parser reads it in the same
+        // order, before its own clean.) The persisted path is already plain
+        // text, so the unwrap is only for a live `{formatted_output, …}` result.
+        let body = ToolOutputFormat.commandOutput(fromJSON: output) ?? output
+        return ShellSessionFormat.announcedSessionId(in: body)
     }
 
     /// Gutter / card icon for a codeg-mcp companion tool.
@@ -626,6 +769,18 @@ enum ToolDerive {
     }
 
     // MARK: helpers
+
+    /// codex's own built-in tool names, matched WITHOUT the `__`-prefix strip
+    /// `canonical(_:)` applies. Those names are codex's alone and never arrive
+    /// MCP-namespaced, whereas `canonical("mcp__docs__wait")` is `"wait"` — so
+    /// canonicalizing here would hand somebody else's tool the session card and
+    /// hide its real arguments. The web is the same: its `canonicalizeToolName`
+    /// only folds separators, it does not strip MCP prefixes, so only the exact
+    /// name (or the `functions.` namespace codex-acp aliases) ever matches.
+    private static func codexBuiltin(_ name: String) -> String {
+        let n = name.trimmingCharacters(in: .whitespaces).lowercased()
+        return n.hasPrefix("functions.") ? String(n.dropFirst("functions.".count)) : n
+    }
 
     private static func canonical(_ name: String) -> String {
         var n = name.lowercased()

@@ -5250,6 +5250,56 @@
         }
       }
     },
+    "Session command" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会话命令"
+          }
+        }
+      }
+    },
+    "^[%lld match](inflect: true) in ^[%lld file](inflect: true)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 处匹配，位于 %2$lld 个文件"
+          }
+        }
+      }
+    },
+    "^[%lld file](inflect: true)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个文件"
+          }
+        }
+      }
+    },
+    "%lld more not shown" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "另有 %lld 条未显示"
+          }
+        }
+      }
+    },
+    "Only the first %lld lines were scanned" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅扫描了前 %lld 行"
+          }
+        }
+      }
+    },
     "No matches" : {
       "localizations" : {
         "zh-Hans" : {
