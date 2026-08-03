@@ -167,8 +167,8 @@ struct SkillEditorSheet: View {
         // stay English inside a translated sentence; the agent name is verbatim.
         let scopeWord: LocalizedStringKey = scope == .global ? "Global" : "Project"
         return existing != nil
-            ? "\(Text(scopeWord)) skill for \(agent.displayName)."
-            : "New global skill for \(agent.displayName)."
+            ? "\(Text(scopeWord)) skill for \(agent.label)."
+            : "New global skill for \(agent.label)."
     }
 
     private func loadIfNeeded() async {

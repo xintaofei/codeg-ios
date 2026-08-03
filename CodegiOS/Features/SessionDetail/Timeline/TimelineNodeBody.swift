@@ -56,8 +56,8 @@ struct NodeBody: View {
         case .thinking:
             ThinkingShimmer()
                 .railHead(.top(10))
-        case .error(let message):
-            InlineTurnError(message: message)
+        case .error(let message, let details):
+            InlineTurnError(message: message, details: details)
         case .unsupported(let type):
             UnsupportedBlock(type: type)
         }
@@ -310,20 +310,75 @@ struct ContextCompactionDivider: View {
 
 struct InlineTurnError: View {
     let message: String
+    /// Server-supplied diagnostic evidence (agent stderr tail, unparsed-update
+    /// counts). Kept behind a disclosure and out of the one-line message: it is
+    /// multi-line raw agent output, and only useful once the user asks why.
+    var details: String?
+
+    @State private var detailsExpanded = false
+
+    /// Guard against a pathological stderr tail. The server already bounds this,
+    /// but the bound is its own, not one this card's layout agreed to.
+    private static let maxDetailChars = 4_000
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.danger)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(Theme.danger)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.danger)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(Theme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let details, !details.isEmpty {
+                disclosure(details)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Theme.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
         .hairlineBorder(Theme.Radius.sm, color: Theme.danger.opacity(0.4))
+    }
+
+    @ViewBuilder
+    private func disclosure(_ details: String) -> some View {
+        Button {
+            withAnimation(Theme.Motion.expand) { detailsExpanded.toggle() }
+        } label: {
+            HStack(spacing: 4) {
+                Text("Details")
+                    .font(.caption2.weight(.semibold))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .rotationEffect(.degrees(detailsExpanded ? 90 : 0))
+            }
+            .foregroundStyle(Theme.danger.opacity(0.85))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+
+        if detailsExpanded {
+            ScrollView(.horizontal, showsIndicators: false) {
+                // Selectable on purpose. The server's containment rule is that
+                // this payload must not be *forwarded automatically* to anything
+                // that outlives the app — an OS notification, a status tooltip —
+                // and it is redacted at the source precisely so it can be shown.
+                // Letting the user copy a stack trace into a bug report is the
+                // reason it is here at all; the web alert is likewise selectable.
+                Text(verbatim: String(details.prefix(Self.maxDetailChars)))
+                    .font(Theme.Typography.diffCode)
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Theme.surfaceNested, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .transition(.opacity)
+        }
     }
 }

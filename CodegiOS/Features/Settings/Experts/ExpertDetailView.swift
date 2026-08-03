@@ -129,7 +129,7 @@ struct ExpertDetailView: View {
                 .frame(width: 34, height: 34)
                 .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             VStack(alignment: .leading, spacing: 3) {
-                Text(agent.displayName)
+                Text(agent.label)
                     .font(.body)
                     .foregroundStyle(Theme.textPrimary)
                 if let caption {

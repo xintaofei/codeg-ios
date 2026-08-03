@@ -16,11 +16,27 @@ struct PermissionRequestCard: View {
 
     private var parsed: ParsedPermission { pending.parsed }
 
+    /// What each option would actually grant, for the options that say. Empty for
+    /// every agent that ships no `_meta.permission` (i.e. everything but codex
+    /// ≥1.1.8 and claude ≥0.64.1).
+    private var optionGrants: [(option: PermissionOption, changes: [PermissionOptionChange])] {
+        pending.options.compactMap { option in
+            let changes = option.changes
+            return changes.isEmpty ? nil : (option, changes)
+        }
+    }
+
     /// Long bodies (diffs, plan prose, many entries) get a height-capped scroll;
     /// short ones render inline so the card stays compact.
+    ///
+    /// ANY grant list forces the scroll: this card lives in a bottom safe-area
+    /// inset, and its option buttons must stay reachable no matter what the agent
+    /// wrote. The descriptions are agent-authored, so their rendered height is not
+    /// something this layout gets to assume.
     private var bodyScrolls: Bool {
         !parsed.diffFiles.isEmpty || parsed.planMarkdown != nil
             || parsed.planEntries.count > 4 || parsed.allowedPrompts.count > 4
+            || !optionGrants.isEmpty
     }
 
     var body: some View {
@@ -62,7 +78,10 @@ struct PermissionRequestCard: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.accent)
             VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: parsed.title)
+                // Prefer the agent's human-readable description over the raw
+                // title — for a shell request the title IS the command, which
+                // the body already shows verbatim.
+                Text(verbatim: parsed.description ?? parsed.title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(2)
@@ -171,10 +190,61 @@ struct PermissionRequestCard: View {
                 }
             }
 
+            if !optionGrants.isEmpty {
+                section("What each option grants", "key") { grantsList }
+            }
+
             if !parsed.hasStructuredBody {
                 CodeBlockView(code: parsed.jsonPreview, language: "json")
             }
         }
+    }
+
+    /// Per-option grant lists. Only some options carry one (claude tags the
+    /// always-allow option alone), so each list is named by its button.
+    private var grantsList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(optionGrants, id: \.option.id) { entry in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(verbatim: entry.option.name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    ForEach(Array(entry.changes.enumerated()), id: \.offset) { _, change in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            // Duration first, so it reads as a scannable column:
+                            // "Always Allow" alone never says whether the rule
+                            // dies with the session or lands in settings the
+                            // repo commits.
+                            if let scope = change.scope { scopeBadge(scope) }
+                            Text(verbatim: change.description)
+                                .font(.caption)
+                                .foregroundStyle(Theme.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Theme.surfaceNested, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+    }
+
+    /// A grant that outlives the session gets the warning tint; one that expires
+    /// on its own reads as neutral chrome.
+    private func scopeBadge(_ scope: PermissionChangeScope) -> some View {
+        Text(scope.label)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(scope.isPersistent ? Theme.warning : Theme.textSecondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                (scope.isPersistent ? Theme.warning.opacity(0.14) : Color.primary.opacity(0.06)),
+                in: Capsule()
+            )
+            .lineLimit(1)
+            .fixedSize()
     }
 
     private func section<Content: View>(_ label: LocalizedStringKey, _ icon: String, @ViewBuilder content: () -> Content) -> some View {

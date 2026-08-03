@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // MARK: - Permission options (Rust `PermissionOptionInfo`)
 
@@ -9,10 +10,66 @@ struct PermissionOption: Decodable, Hashable, Sendable, Identifiable {
     let optionId: String
     let name: String
     let kind: String
+    /// The option's ACP `_meta`, forwarded verbatim (the server names the field
+    /// `meta`). codex-acp ≥1.1.8 and claude-agent-acp ≥0.64.1 hang
+    /// `permission = {version: 1, changes: [...]}` here — see ``changes``.
+    /// Optional: every other agent, and any server older than 0.22.0, omits it.
+    let meta: AnyJSON?
 
     var id: String { optionId }
     /// Deny / keep-planning style choice — rendered as a bordered (non-filled) button.
     var isReject: Bool { kind.lowercased().hasPrefix("reject") }
+
+    /// What picking this option would actually grant, and for how long. Empty
+    /// for every agent that ships no `_meta.permission`.
+    var changes: [PermissionOptionChange] { PermissionParse.optionChanges(meta) }
+}
+
+/// How long a permission change lasts, and where it is written — normalized from
+/// the wire's `lifetime: {scope, storage?}` pair into one flat token the card can
+/// label directly.
+///
+/// ``persistent`` is the deliberate catch-all for a `scope: "persistent"` whose
+/// `storage` this build does not recognize: the destination is unknown, but the
+/// fact that the grant OUTLIVES the session is the part the user must not miss,
+/// so it degrades to a weaker warning rather than to silence.
+enum PermissionChangeScope: Hashable, Sendable {
+    case session
+    case process
+    case user
+    case project
+    case projectLocal
+    case persistent
+
+    var label: LocalizedStringKey {
+        switch self {
+        case .session: return "This session"
+        case .process: return "This run"
+        case .user: return "Saved to user settings"
+        case .project: return "Saved to project settings"
+        case .projectLocal: return "Saved to local project settings"
+        case .persistent: return "Saved permanently"
+        }
+    }
+
+    /// Grants that outlive the session are the ones worth a warning tint; a
+    /// session/run-scoped grant expires on its own and reads as neutral.
+    var isPersistent: Bool {
+        switch self {
+        case .session, .process: return false
+        case .user, .project, .projectLocal, .persistent: return true
+        }
+    }
+}
+
+/// One thing an option would change, as the agent itself describes it.
+struct PermissionOptionChange: Hashable, Sendable {
+    /// The agent's own rendered sentence ("Allow all Bash calls").
+    let description: String
+    /// `nil` when the change carries no lifetime, reports `scope: "unknown"`, or
+    /// uses a scope this build does not know — the card then says nothing about
+    /// duration rather than guessing at one.
+    let scope: PermissionChangeScope?
 }
 
 // MARK: - AskUserQuestion (Rust `QuestionSpec` / `QuestionOption`)
@@ -161,6 +218,11 @@ struct PermissionAllowedPrompt: Hashable, Sendable {
 /// Mirrors `codeg/src/lib/permission-request.ts`.
 struct ParsedPermission {
     var title: String
+    /// Human-readable description from `_meta.claudeCode.title` (claude-agent-acp
+    /// ≥0.63; for Bash it is the model-authored `description` input). Preferred
+    /// over ``title``, which for a shell request is the command itself — already
+    /// shown verbatim in the body. `nil` when the agent supplied none.
+    var description: String?
     var kind: String
     var command: String?
     var cwd: String?
@@ -219,8 +281,18 @@ struct ParsedPermission {
         let title = PermissionParse.pickString(obj, ["title", "toolName", "tool_name", "name"])
             ?? PermissionParse.fallbackTitle(rawKind)
 
+        // `_meta.claudeCode.title` — NOTE the underscored key: a permission
+        // request forwards the RAW ACP `ToolCallUpdate` serialization, where
+        // serde renames `meta` → `_meta`. (Tool-call events carry a plain `meta`
+        // instead, which is why this spelling appears nowhere else.)
+        let claudeMeta = PermissionParse.asObject(
+            PermissionParse.pickValue(PermissionParse.asObject(PermissionParse.pickValue(obj, ["_meta"])),
+                                      ["claudeCode"]))
+        let description = PermissionParse.pickString(claudeMeta, ["title"])
+
         return ParsedPermission(
-            title: title, kind: rawKind, command: command, cwd: cwd, diffFiles: diffFiles,
+            title: title, description: description,
+            kind: rawKind, command: command, cwd: cwd, diffFiles: diffFiles,
             planMarkdown: planMarkdown, planEntries: planEntries, allowedPrompts: allowedPrompts,
             modeTarget: modeTarget, url: url, query: query, prompt: prompt,
             jsonPreview: toolCall.prettyPrinted
@@ -252,6 +324,81 @@ private enum PermissionParse {
         guard let obj else { return nil }
         for k in keys { if let s = obj[k]?.nonEmptyString { return s } }
         return nil
+    }
+
+    // MARK: Option grants (`_meta.permission`)
+
+    /// Most change descriptions rendered for one option, and the per-description
+    /// character cap. The list is agent-authored and rides both the broadcast
+    /// event and the snapshot, so a bound keeps a pathological — or simply very
+    /// broad — grant from turning the card into a wall of text. Anything past the
+    /// cap is dropped rather than summarized: the option's own name still states
+    /// what it does.
+    static let maxPermissionChanges = 6
+    static let maxPermissionChangeChars = 200
+
+    /// Parse `_meta.permission = {version: 1, changes: [...]}`.
+    ///
+    /// Only `version: 1` is read — a future revision may reshape `changes`, and
+    /// showing it half-understood is worse than showing nothing.
+    ///
+    /// `lifetime` is read because `description` alone does NOT always answer "for
+    /// how long": codex writes the duration into its sentences, claude does not —
+    /// it reports `{scope: "session"}` vs `{scope: "persistent", storage:
+    /// "project"}` structurally instead. Left unread, claude's most common card
+    /// would pair an "Always Allow" button with "Allow all Bash calls" and never
+    /// reveal that the grant expires with the session — or, worse, that it is
+    /// about to be written into settings the repo commits. The remaining
+    /// structural fields (`targets`, `ruleBehavior`) stay ignored: those
+    /// `description` really does summarize.
+    static func optionChanges(_ meta: AnyJSON?) -> [PermissionOptionChange] {
+        guard let permission = asObject(pickValue(meta?.object, ["permission"])),
+              permission["version"]?.double == 1,
+              let changes = pickValue(permission, ["changes"])?.array
+        else { return [] }
+        var out: [PermissionOptionChange] = []
+        for change in changes {
+            if out.count >= maxPermissionChanges { break }
+            guard let description = pickString(asObject(change), ["description"]) else { continue }
+            out.append(PermissionOptionChange(
+                description: String(collapseWhitespace(description).prefix(maxPermissionChangeChars)),
+                scope: changeScope(pickValue(asObject(change), ["lifetime"]))
+            ))
+        }
+        return out
+    }
+
+    /// Flatten every run of whitespace to a single space.
+    ///
+    /// The web renders these descriptions as plain HTML, where newlines collapse
+    /// to spaces — `Text` instead honors every one of them, so a description
+    /// carrying a hundred newlines inside the 200-character budget would grow the
+    /// card without bound and push the buttons the user is about to press off
+    /// screen. Collapsing first also means the budget buys visible characters.
+    ///
+    /// (The cap counts Characters where the web's `slice` counts UTF-16 units, so
+    /// an all-emoji description keeps twice as much here. Deliberate: capping by
+    /// grapheme is the correct unit for a rendered length, and the surrounding
+    /// layout is bounded independently.)
+    private static func collapseWhitespace(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    /// Wire `lifetime` → ``PermissionChangeScope``; see that type's doc.
+    private static func changeScope(_ lifetime: AnyJSON?) -> PermissionChangeScope? {
+        let record = asObject(lifetime)
+        switch pickString(record, ["scope"]) {
+        case "session": return .session
+        case "process": return .process
+        case "persistent": break
+        default: return nil
+        }
+        switch pickString(record, ["storage"]) {
+        case "user": return .user
+        case "project": return .project
+        case "project_local": return .projectLocal
+        default: return .persistent
+        }
     }
 
     static func fallbackTitle(_ kind: String) -> String {

@@ -43,7 +43,7 @@ struct TimelineNode: Identifiable {
         case footer(MessageTurn, questionID: String?)
         case plan([PlanEntry], streaming: Bool)
         case thinking
-        case error(String)
+        case error(String, details: String?)
         case unsupported(String)
     }
 
@@ -194,7 +194,8 @@ enum TranscriptTimeline {
             node(for: part, ownerID: live.id, index: idx, agent: agent)
         })
         if let error = live.errorMessage {
-            out.append(TimelineNode(id: "\(live.id)#error", content: .error(error), agent: agent))
+            out.append(TimelineNode(id: "\(live.id)#error",
+                                    content: .error(error, details: live.errorDetails), agent: agent))
         }
         return out
     }

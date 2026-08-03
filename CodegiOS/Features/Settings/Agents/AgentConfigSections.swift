@@ -557,3 +557,56 @@ struct GrokConfigSection: View {
 }
 
 // OpenCodeConfigSection → AgentConfigOpenCode.swift; HermesConfigSection → AgentConfigHermes.swift.
+
+// MARK: - Custom (user-registered) ACP agent
+
+/// Config form for an agent codeg has no compile-time knowledge of — a
+/// user-registered ACP agent (``AgentType/other(wire:)``, codeg ≥0.22.0).
+///
+/// There is no structured form to show: the agent's launch metadata lives in the
+/// server's database rather than in this build, and the server reports no config
+/// file for it (`agent_local_config_path` returns `None`), so the host's
+/// "Advanced" raw-config editor is hidden for these too. What IS both editable
+/// and useful is the environment — an arbitrary ACP agent's credentials and
+/// endpoint overrides all arrive that way — so this exposes it directly as the
+/// `KEY=VALUE` text the save path already parses (`EnvText.parse`).
+struct CustomAgentConfigSection: View {
+    let agentType: AgentType
+    let agent: AcpAgentInfo
+    @Binding var draft: AgentDraft
+
+    var body: some View {
+        EditorSection(title: "Environment",
+                      footer: "One KEY=VALUE per line, passed to the agent process on launch.") {
+            VStack(alignment: .leading, spacing: 0) {
+                TextEditor(text: $draft.envText)
+                    .agentField()
+                    .frame(minHeight: 120)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+
+                Divider().overlay(Theme.hairline)
+
+                Text(originNote)
+                    .font(.caption).foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+            }
+        }
+    }
+
+    /// Says where the definition came from, so it's clear this screen edits the
+    /// agent's environment and not the definition itself (which is registered
+    /// and edited on the desktop app).
+    private var originNote: LocalizedStringKey {
+        switch agent.customSource {
+        case "registry":
+            return "Added from the ACP agent registry. Its command and launch settings are managed on the desktop app."
+        case "manual":
+            return "Added manually. Its command and launch settings are managed on the desktop app."
+        default:
+            return "This agent isn’t one codeg ships built-in support for, so only its environment is editable here."
+        }
+    }
+}

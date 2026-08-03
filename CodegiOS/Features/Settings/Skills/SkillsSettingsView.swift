@@ -277,7 +277,7 @@ private struct AgentSelectorPill: View {
                 // inline picker renders the agents with an automatic checkmark.
                 Picker("", selection: selectionBinding) {
                     ForEach(agents) { agent in
-                        Text(agent.displayName).tag(Optional(agent))
+                        Text(agent.label).tag(Optional(agent))
                     }
                 }
                 .pickerStyle(.inline)
@@ -304,7 +304,7 @@ private struct AgentSelectorPill: View {
             if let agent = selected {
                 AgentIcon(agent: agent)
                     .frame(width: 18, height: 18)
-                Text(agent.displayName)
+                Text(agent.label)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)

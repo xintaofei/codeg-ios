@@ -51,6 +51,9 @@ final class AgentsSettingsModel {
         if agents.isEmpty { phase = .loading }
         do {
             agents = try await client.listAgents().sorted { $0.sortOrder < $1.sortOrder }
+            // Free refresh of the custom-agent name/icon cache the session rows and
+            // timeline avatars read from — this page's list is the authoritative one.
+            CustomAgentRegistry.shared.ingest(agents)
             phase = .loaded
             refreshError = nil
         } catch {
@@ -111,6 +114,16 @@ final class AgentsSettingsModel {
                 let affectedEnv = try await client.updateAgentEnv(
                     agentType: agentType, enabled: liveEnabled,
                     env: envMap, modelProviderId: payload.modelProviderId)
+                // A user-registered ACP agent has no config file for the server to
+                // write (`agent_local_config_path` returns None for it), and its
+                // editor surfaces the environment only — so the env write above is
+                // the whole save. Skip the second call rather than posting an
+                // all-nil body at an endpoint that has nothing to do with it.
+                guard agentType.isBuiltin else {
+                    self.surfaceAffected(affectedEnv)
+                    await self.loadBody()
+                    return nil
+                }
                 let body = self.makeConfigBody(agentType, draft: payload, original: original)
                 let affectedConfig: Int
                 do {

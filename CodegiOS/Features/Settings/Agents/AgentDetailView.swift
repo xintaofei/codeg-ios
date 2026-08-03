@@ -70,7 +70,7 @@ struct AgentDetailView: View {
                 EmptyStateView(icon: "cpu", title: "Agent Unavailable", message: "This agent is no longer registered on the server.")
             }
         }
-        .navigationTitle(agent?.name ?? agentType.displayName)
+        .navigationTitle(agent?.name ?? agentType.label)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // Kimi & Pi own their save buttons inside their panels (dedicated
@@ -126,8 +126,10 @@ struct AgentDetailView: View {
                 typeConfigSection(agent)
                 // Hermes' config_json is a read-only backend projection, not a raw
                 // file — its structured form is the only editor. Kimi & Pi own their
-                // own raw/native editors inside their panels.
-                if agentType != .hermes && !isSelfContainedAgent { nativeConfigSection }
+                // own raw/native editors inside their panels. A custom ACP agent has
+                // no config file at all (the server reports none), so there is
+                // nothing for the raw editor to edit.
+                if agentType != .hermes && !isSelfContainedAgent && agentType.isBuiltin { nativeConfigSection }
                 if (agent.distributionType ?? "") == "binary" { clearCacheButton(agent) }
             }
             .padding(.horizontal, Theme.Layout.screenHMargin)
@@ -626,6 +628,9 @@ struct AgentConfigSection: View {
         case .cursor:     CursorConfigSection(draft: $draft, client: client)
         case .kimiCode:   KimiConfigSection(model: model, agent: agent, client: client)
         case .pi:         PiConfigSection(model: model, agent: agent, client: client)
+        // A user-registered ACP agent has no structured form to route to — see
+        // `CustomAgentConfigSection`.
+        case .other:      CustomAgentConfigSection(agentType: agentType, agent: agent, draft: $draft)
         }
     }
 }

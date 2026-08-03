@@ -209,7 +209,7 @@ private struct AgentOptionsSheet: View {
                     // The selected agent sits at full size; the rest recede slightly,
                     // so switching animates a gentle pop (paired with the ring).
                     .scaleEffect(isSelected ? 1 : 0.92)
-                Text(agent.shortName)
+                Text(agent.isBuiltin ? agent.shortName : agent.label)
                     .font(.caption2.weight(isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(1)
@@ -218,7 +218,7 @@ private struct AgentOptionsSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(agent.displayName)\(isSelected ? ", selected" : "")")
+        .accessibilityLabel("\(agent.label)\(isSelected ? ", selected" : "")")
     }
 
     // MARK: - Workspace (folder + branch in one card)

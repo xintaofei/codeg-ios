@@ -35,6 +35,10 @@ struct ToolCallVM: Identifiable {
     /// `codeg.delegation = { status, error_code?, text_preview?, duration_ms? }`,
     /// the authoritative terminal status the delegate card prefers over the ack.
     let meta: AnyJSON?
+    /// This call's sub-agent transcript, when it launched one. Live only — the
+    /// backend never persists sub-agent blocks, so the persisted path always
+    /// leaves this empty. See ``SubAgentRun``.
+    let transcript: [SubAgentRun]
 
     // Precomputed derived
     let displayTitle: String
@@ -47,7 +51,7 @@ struct ToolCallVM: Identifiable {
 
     init(id: String, rawName: String, kind: String, state: ToolCallState,
          input: String?, output: String?, content: String?, isError: Bool,
-         meta: AnyJSON? = nil) {
+         meta: AnyJSON? = nil, transcript: [SubAgentRun] = []) {
         // Grok's plan-mode tools carry their authoritative identity in
         // `_meta["x.ai/tool"].kind`, while the `title` we're handed as `rawName`
         // MUTATES across the lifecycle (`enter_plan_mode` → "Plan: Enter" → "Plan
@@ -64,6 +68,7 @@ struct ToolCallVM: Identifiable {
         self.content = content
         self.isError = isError
         self.meta = meta
+        self.transcript = transcript
 
         let parsed = ToolDerive.parseJSON(input)
         let b = ToolDerive.bucket(name: resolvedName, kind: kind)
@@ -199,7 +204,7 @@ enum MessageRender {
                 parts.append(.tool(ToolCallVM(
                     id: call.id, rawName: call.title, kind: call.kind, state: state,
                     input: call.rawInput, output: call.rawOutput, content: call.content, isError: call.isError,
-                    meta: call.meta)))
+                    meta: call.meta, transcript: call.transcript)))
             }
         }
         return group(parts)

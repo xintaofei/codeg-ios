@@ -174,6 +174,10 @@ final class AppModel {
         settingsPath = []
         contentPath = []
         activity.reset()
+        // Custom-agent identity is endpoint-local: an agent registered on one
+        // server doesn't exist on another, and showing the old server's name
+        // under a new server's rows would be worse than the slug fallback.
+        CustomAgentRegistry.shared.reset()
     }
 
     /// …and when the selected server is edited in place (same UUID, new

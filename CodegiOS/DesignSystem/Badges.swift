@@ -112,7 +112,7 @@ struct AgentBadge: View {
     var body: some View {
         HStack(spacing: 4) {
             AgentIcon(agent: agent).frame(width: 11, height: 11)
-            Text(agent.shortName).font(.caption2.weight(.semibold))
+            Text(agent.isBuiltin ? agent.shortName : agent.label).font(.caption2.weight(.semibold))
                 .foregroundStyle(agent.accent)
         }
         .padding(.horizontal, 8)

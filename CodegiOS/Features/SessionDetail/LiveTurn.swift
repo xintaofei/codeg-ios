@@ -23,6 +23,9 @@ final class LiveToolCall: Identifiable {
     /// terminal status the delegate card prefers over the running ack. Patched in
     /// place when a `tool_call_update` carries a newer meta.
     var meta: AnyJSON?
+    /// The sub-agent transcript belonging to this call, when it launched one.
+    /// Empty for every ordinary tool. See ``SubAgentRun``.
+    var transcript: [SubAgentRun] = []
 
     init(id: String, title: String, kind: String, status: String, rawInput: String?, rawOutput: String, content: String? = nil, meta: AnyJSON? = nil) {
         self.id = id
@@ -33,6 +36,33 @@ final class LiveToolCall: Identifiable {
         self.rawOutput = rawOutput
         self.content = content
         self.meta = meta
+    }
+
+    /// Append a sub-agent delta, merging into the trailing run when it is the
+    /// same kind.
+    ///
+    /// Deliberately NOT the backend's block predicate, which also splits on any
+    /// intervening block from another thread: main → sub → main → sub yields two
+    /// sub-agent blocks there and one merged run here. Merging is right for this
+    /// renderer — the sub-agent wrote one continuous passage and the main
+    /// thread's interleaved chunks are in a different view entirely, so honoring
+    /// the backend's split would cut a sentence in half for no reason. The same
+    /// holds in reverse for `segments`, whose main-thread runs merge across the
+    /// sub-agent chunks routed out of them. Live and snapshot still converge:
+    /// `buildLiveTurn` defers parented blocks to a second pass, so it reproduces
+    /// exactly these boundaries rather than the wire's.
+    func appendTranscript(_ delta: String, thinking: Bool) {
+        guard !delta.isEmpty else { return }
+        switch transcript.last {
+        case .text(let run) where !thinking: run.append(delta)
+        case .thinking(let run) where thinking: run.append(delta)
+        default: transcript.append(thinking ? .thinking(LiveTextRun(delta)) : .text(LiveTextRun(delta)))
+        }
+    }
+
+    /// Publish every transcript run's pending coalesce (see ``LiveTurn/flushAllText()``).
+    func flushTranscript() {
+        for entry in transcript { entry.run.flushNow() }
     }
 
     /// True once the agent reports the call finished (success or failure).
@@ -62,6 +92,36 @@ final class LiveToolCall: Identifiable {
         default: return "wrench.and.screwdriver"
         }
     }
+}
+
+/// One merged run of a SUB-AGENT's own prose or reasoning, streamed under the
+/// Agent tool call that launched it.
+///
+/// Sub-agent output is attributed by `_meta.claudeCode.parentToolUseId` and
+/// arrives interleaved with the main thread's on a single wire. It is the
+/// sub-agent talking to itself, not part of the reply the user asked for, so it
+/// is routed here instead of into ``LiveTurn/segments``.
+///
+/// LIVE ONLY. The backend persists main-thread blocks exclusively
+/// (`parent_tool_use_id: None`), so a transcript exists while the turn streams
+/// and is gone once it settles — matching the web client, and deliberately not
+/// reconstructible from history.
+enum SubAgentRun: Identifiable {
+    case text(LiveTextRun)
+    case thinking(LiveTextRun)
+
+    var run: LiveTextRun {
+        switch self {
+        case .text(let run), .thinking(let run): return run
+        }
+    }
+
+    var isThinking: Bool {
+        if case .thinking = self { return true }
+        return false
+    }
+
+    var id: String { (isThinking ? "k-" : "t-") + run.id }
 }
 
 /// One ordered piece of an in-flight assistant turn. The live turn is a sequence
@@ -172,6 +232,11 @@ final class LiveTurn: Identifiable {
     var livePlan: [PlanEntry] = []
     /// Fatal error surfaced inline at the end of the turn.
     var errorMessage: String?
+    /// Server-supplied diagnostic evidence for that error (agent stderr tail,
+    /// unparsed-update counts) — shown behind a disclosure, never in the one-line
+    /// message, mirroring the web's split between the alert body and the composer
+    /// tooltip. See ``AcpEvent/error(message:code:details:)``.
+    var errorDetails: String?
     /// Whether the turn is still receiving events (drives the pulse).
     var isStreaming = true
     /// Most recent stop reason once the turn completes.
@@ -191,8 +256,12 @@ final class LiveTurn: Identifiable {
 
     // MARK: - Mutation (event handlers call these on the main actor)
 
-    func appendText(_ delta: String) {
+    func appendText(_ delta: String, parentToolUseId: String? = nil) {
         guard !delta.isEmpty else { return }
+        if let parentToolUseId {
+            routeToSubAgent(delta, parent: parentToolUseId, thinking: false)
+            return
+        }
         if case .text(let run)? = segments.last {
             run.append(delta)
         } else {
@@ -200,13 +269,29 @@ final class LiveTurn: Identifiable {
         }
     }
 
-    func appendThinking(_ delta: String) {
+    func appendThinking(_ delta: String, parentToolUseId: String? = nil) {
         guard !delta.isEmpty else { return }
+        if let parentToolUseId {
+            routeToSubAgent(delta, parent: parentToolUseId, thinking: true)
+            return
+        }
         if case .thinking(let run)? = segments.last {
             run.append(delta)
         } else {
             segments.append(.thinking(LiveTextRun(delta)))
         }
+    }
+
+    /// Sub-agent output goes to the card of the Agent call that launched it,
+    /// never into the main reply.
+    ///
+    /// An unknown parent means the chunk is out-of-turn residue — typically an
+    /// async sub-agent still streaming after its parent turn settled — and is
+    /// dropped. The parent `tool_call` always precedes its sub-agent's chunks on
+    /// the seq-ordered wire, so a chunk that still belonged to this turn would
+    /// have found it. Dropping also bounds memory: orphan text never accumulates.
+    private func routeToSubAgent(_ delta: String, parent: String, thinking: Bool) {
+        toolIndex[parent]?.appendTranscript(delta, thinking: thinking)
     }
 
     /// Flush every text/reasoning run's pending coalesce immediately. Called when
@@ -216,7 +301,7 @@ final class LiveTurn: Identifiable {
         for segment in segments {
             switch segment {
             case .text(let run), .thinking(let run): run.flushNow()
-            case .tool: break
+            case .tool(let call): call.flushTranscript()
             }
         }
     }

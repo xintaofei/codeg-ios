@@ -1,31 +1,156 @@
 import SwiftUI
 
-/// The coding agents codeg can drive. Wire value is snake_case (serde
-/// `rename_all = "snake_case"` on the Rust `AgentType` enum). Enum *values*
-/// are unaffected by the decoder's key strategy, so raw values match directly.
-enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
-    case claudeCode = "claude_code"
-    case codex = "codex"
-    case openCode = "open_code"
-    case gemini = "gemini"
-    case openClaw = "open_claw"
-    case cline = "cline"
-    case hermes = "hermes"
-    case codeBuddy = "code_buddy"
-    case kimiCode = "kimi_code"
-    case pi = "pi"
-    case grok = "grok"
-    case cursor = "cursor"
+/// The coding agents codeg can drive.
+///
+/// Wire value is the Rust `AgentType`'s `as_wire()` form: the twelve built-ins
+/// keep their historical snake_case names, and a user-registered ACP agent
+/// serializes as `custom:<registry-id>` (codeg ≥0.22.0). Anything this build
+/// does not have hand-written support for lands in ``other(wire:)`` — which
+/// carries the wire string VERBATIM so it round-trips untouched.
+///
+/// That verbatim round-trip is the whole point. The previous decoder folded
+/// every unrecognized value into `.claudeCode`, which meant a custom agent was
+/// not merely mislabeled: saving its env/config, toggling it, reordering, or
+/// linking an expert all posted `agent_type: "claude_code"` and wrote one
+/// agent's settings into another's. An unknown agent must stay unknown.
+enum AgentType: Hashable, Sendable, Identifiable {
+    case claudeCode
+    case codex
+    case openCode
+    case gemini
+    case openClaw
+    case cline
+    case hermes
+    case codeBuddy
+    case kimiCode
+    case pi
+    case grok
+    case cursor
+
+    /// An agent with no compile-time support here: a user-registered ACP agent
+    /// (`custom:<registry-id>`) or a built-in added by a newer server. The
+    /// associated value is the full wire string, not the bare id, so encoding is
+    /// a straight echo of whatever the server sent.
+    ///
+    /// Display for these comes from the server — ``CustomAgentRegistry`` caches
+    /// the `name`/`iconUrl` off `acp_list_agents`; the computed properties below
+    /// are only the offline fallback.
+    case other(wire: String)
+
+    /// Wire prefix marking a user-registered ACP agent (Rust
+    /// `CUSTOM_AGENT_WIRE_PREFIX`).
+    static let customWirePrefix = "custom:"
+
+    /// The twelve compile-time agents, in the server's declaration order. Use
+    /// this wherever `allCases` was used: pickers and matrices can only offer
+    /// what this build can configure. (Custom agents come from the server's
+    /// agent list, not from a static set.)
+    static let builtins: [AgentType] = [
+        .claudeCode, .codex, .openCode, .gemini, .openClaw, .cline,
+        .hermes, .codeBuddy, .kimiCode, .pi, .grok, .cursor,
+    ]
 
     var id: String { rawValue }
 
-    /// Decodes unknown future agent types to `.claudeCode` rather than throwing,
-    /// so one new server-side agent can't break the whole list decode.
-    init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = AgentType(rawValue: raw) ?? .claudeCode
+    /// True for a user-registered ACP agent (`custom:<id>`). False for the
+    /// built-ins AND for an unknown non-`custom:` value, which is a newer
+    /// server's built-in rather than something the user added.
+    var isCustom: Bool { rawValue.hasPrefix(Self.customWirePrefix) }
+
+    /// The registry id behind `custom:<id>`; nil for everything else.
+    var customId: String? {
+        guard isCustom else { return nil }
+        return String(rawValue.dropFirst(Self.customWirePrefix.count))
     }
 
+    /// Whether this build has hand-written configuration support (native config
+    /// files, per-agent panels, auth modes). False for ``other(wire:)``, whose
+    /// settings screen is env-only — codeg cannot know where an arbitrary ACP
+    /// agent keeps its config, and the server reports none for it
+    /// (`agent_local_config_path` returns `None`).
+    var isBuiltin: Bool {
+        if case .other = self { return false }
+        return true
+    }
+}
+
+// MARK: - Wire representation
+
+extension AgentType: RawRepresentable {
+    /// Never fails: an unrecognized value becomes ``other(wire:)`` rather than
+    /// nil, so no call site can silently substitute a different agent. Only an
+    /// empty string is rejected.
+    init?(rawValue: String) {
+        switch rawValue {
+        case "claude_code": self = .claudeCode
+        case "codex": self = .codex
+        case "open_code": self = .openCode
+        case "gemini": self = .gemini
+        case "open_claw": self = .openClaw
+        case "cline": self = .cline
+        case "hermes": self = .hermes
+        case "code_buddy": self = .codeBuddy
+        case "kimi_code": self = .kimiCode
+        case "pi": self = .pi
+        case "grok": self = .grok
+        case "cursor": self = .cursor
+        case "": return nil
+        default: self = .other(wire: rawValue)
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .claudeCode: return "claude_code"
+        case .codex: return "codex"
+        case .openCode: return "open_code"
+        case .gemini: return "gemini"
+        case .openClaw: return "open_claw"
+        case .cline: return "cline"
+        case .hermes: return "hermes"
+        case .codeBuddy: return "code_buddy"
+        case .kimiCode: return "kimi_code"
+        case .pi: return "pi"
+        case .grok: return "grok"
+        case .cursor: return "cursor"
+        case .other(let wire): return wire
+        }
+    }
+}
+
+extension AgentType: Codable {
+    /// Explicit, so the `RawRepresentable` default (which throws on an
+    /// unrecognized raw value) can't reject a custom agent.
+    ///
+    /// `AgentType(rawValue:)` rejects only the empty string — a value the server
+    /// never emits (`AgentType::from_wire("")` is `None`). It lands on
+    /// `.other(wire: "")` rather than a real agent: aliasing it to `.claudeCode`
+    /// would re-create the exact corruption this type exists to prevent (a later
+    /// toggle / reorder / save would then post `claude_code`), while throwing
+    /// would fail an entire list decode over one malformed row.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = AgentType(rawValue: raw) ?? .other(wire: raw)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(rawValue)
+    }
+}
+
+// MARK: - Display
+
+extension AgentType {
+    /// The name to put on screen: the server's own for a custom agent, else
+    /// ``displayName``. Reading it from a SwiftUI `body` also subscribes the
+    /// view to ``CustomAgentRegistry``, so a row rendered before the agent list
+    /// arrives re-renders from the slug to the real name once it does.
+    @MainActor var label: String { CustomAgentRegistry.shared.label(for: self) }
+
+    /// Offline fallback name. For ``other(wire:)`` this humanizes the registry
+    /// id (`custom:my-agent` → "My Agent"); prefer ``label``, which uses the
+    /// server's own name when it has been fetched.
     var displayName: String {
         switch self {
         case .claudeCode: return "Claude Code"
@@ -40,6 +165,11 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "Pi"
         case .grok: return "Grok"
         case .cursor: return "Cursor"
+        case .other:
+            let humanized = Self.humanize(customId ?? rawValue)
+            // Only reachable from a malformed empty wire value (see the decoder);
+            // a blank row would be worse than saying so.
+            return humanized.isEmpty ? String(localized: "Unknown Agent") : humanized
         }
     }
 
@@ -58,7 +188,18 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "Pi"
         case .grok: return "Grok"
         case .cursor: return "Cursor"
+        case .other: return displayName
         }
+    }
+
+    /// `custom:my-agent` / `my_agent` → "My Agent".
+    private static func humanize(_ slug: String) -> String {
+        let words = slug
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+        return words.isEmpty ? slug : words.joined(separator: " ")
     }
 
     /// SF Symbol fallback (used only if the brand asset is ever missing).
@@ -76,13 +217,14 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "pi"
         case .grok: return "line.diagonal"
         case .cursor: return "cursorarrow"
+        case .other: return "puzzlepiece.extension"
         }
     }
 
     /// Name of the brand-icon image set in `Assets.xcassets` (the per-agent SVGs
     /// ported verbatim from the web client's `agent-icon.tsx`). Rendered by
-    /// `AgentIcon`.
-    var iconAsset: String {
+    /// `AgentIcon`. Nil for ``other(wire:)``, which ships no compiled asset.
+    var iconAsset: String? {
         switch self {
         case .claudeCode: return "AgentClaudeCode"
         case .codex: return "AgentCodex"
@@ -96,6 +238,7 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "AgentPi"
         case .grok: return "AgentGrok"
         case .cursor: return "AgentCursor"
+        case .other: return nil
         }
     }
 
@@ -107,6 +250,8 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         switch self {
         case .openCode, .cline, .hermes, .codeBuddy, .grok, .cursor: return true
         case .claudeCode, .codex, .gemini, .openClaw, .kimiCode, .pi: return false
+        // A downloaded icon is rendered as-is; the monogram fallback tints itself.
+        case .other: return false
         }
     }
 
@@ -130,6 +275,23 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         // Cursor's cube mark is monochrome too (web renders it at plain
         // `text-foreground`), so it gets the same appearance-following tint.
         case .cursor: return Color(light: Color(white: 0.12), dark: Color(white: 0.92))
+        // A custom agent has no brand color, so derive a stable one from its id:
+        // two agents stay visually distinct in a list, and the same agent keeps
+        // its color across launches. Saturation/brightness are pinned to a band
+        // that stays legible against both the light and dark card fills.
+        case .other: return Color(hue: Self.stableHue(rawValue), saturation: 0.52, brightness: 0.78)
         }
+    }
+
+    /// A hue in `0..<1` derived from the wire string. FNV-1a rather than
+    /// `hashValue`: Swift seeds its hasher per process, so the color would
+    /// change on every launch.
+    private static func stableHue(_ seed: String) -> Double {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in seed.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x1000_0000_01b3
+        }
+        return Double(hash % 360) / 360.0
     }
 }

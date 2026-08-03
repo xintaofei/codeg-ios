@@ -107,7 +107,7 @@ struct DelegatedSubThreadCard: View {
             avatar(input.agentType)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(verbatim: input.agentType?.displayName ?? String(localized: "Sub-agent"))
+                    Text(verbatim: input.agentType?.label ?? String(localized: "Sub-agent"))
                         .font(Theme.Typography.cardTitle)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)

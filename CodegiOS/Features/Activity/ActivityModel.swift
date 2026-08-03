@@ -153,6 +153,11 @@ final class ActivityModel {
             error = nil
             lastRefreshed = Date()
             consecutiveFailures = 0
+            // A conversation row can be backed by a user-registered ACP agent, and
+            // its name/icon live only on the server. Ride the app-wide pulse so the
+            // very first Chats render has them, without a per-row fetch. Once-per-
+            // endpoint; a failure leaves the humanized-slug fallback in place.
+            await CustomAgentRegistry.shared.refreshIfNeeded(client: client)
         } else {
             // Both failed after retries. Debounce so a lone blip in the periodic
             // pulse stays silent; surface it once it persists (or on first load,

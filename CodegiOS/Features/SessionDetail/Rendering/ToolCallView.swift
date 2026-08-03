@@ -116,7 +116,13 @@ struct ToolCallCard: View {
     }
     private var isExpanded: Bool { userExpanded ?? autoExpands }
     private var hasInput: Bool { (vm.input?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) }
-    private var hasBody: Bool { vm.diffFiles != nil || vm.hasOutput || hasInput }
+    /// The sub-agent transcript is live-only and disappears once the result
+    /// lands, so it is shown only while the call is actually running — matching
+    /// the web, and avoiding a section that would blink out at settle.
+    private var showsTranscript: Bool {
+        !vm.transcript.isEmpty && (vm.state == .running || vm.state == .inputStreaming)
+    }
+    private var hasBody: Bool { vm.diffFiles != nil || vm.hasOutput || hasInput || showsTranscript }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -172,6 +178,7 @@ struct ToolCallCard: View {
             DiffView(files: files)
         } else {
             inputBody
+            if showsTranscript { SubAgentTranscript(runs: vm.transcript) }
             outputBody
         }
     }
@@ -197,6 +204,86 @@ struct ToolCallCard: View {
         case .todo: TodoInputBody(vm: vm)
         case .web: WebInputBody(vm: vm)
         default: GenericInputBody(vm: vm)
+        }
+    }
+}
+
+/// The live transcript of a sub-agent launched by this tool call — the
+/// sub-agent's own prose and reasoning, which the wire interleaves with the main
+/// thread's and which used to be spliced straight into the reply the user was
+/// reading. See ``SubAgentRun``.
+///
+/// The RENDER is tail-bounded (the data is not): a sub-agent narrating its way
+/// through a long task produces an unbounded transcript, and only the recent
+/// tail is informative while it works. Mirrors the web's
+/// `AGENT_TRANSCRIPT_RENDER_TAIL`.
+private struct SubAgentTranscript: View {
+    let runs: [SubAgentRun]
+
+    private static let renderTail = 20
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Same wording as the web's `agentLiveTranscript`.
+            Text("Live activity")
+                .font(Theme.Typography.microLabel)
+                .textCase(.uppercase)
+                .tracking(0.5)
+                .foregroundStyle(Theme.textTertiary)
+            ForEach(runs.suffix(Self.renderTail)) { entry in
+                SubAgentRunRow(run: entry.run, isThinking: entry.isThinking)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// One transcript run. Holds its `LiveTextRun` as `@Bindable` and reads
+/// `run.text` in its OWN body, so each coalesced publish re-renders just this
+/// row instead of the whole card (the same rule `LiveTextNode` follows).
+private struct SubAgentRunRow: View {
+    @Bindable var run: LiveTextRun
+    let isThinking: Bool
+
+    /// Characters of one run actually drawn. A sub-agent can stream indefinitely
+    /// into a single run, and every ~50–140 ms coalesce re-parses and re-lays-out
+    /// whatever it holds — unbounded main-thread work for scaffolding the user is
+    /// skimming, not reading. Capping the tail bounds the parse, the
+    /// `AttributedString`, and the text layout; the run's own data is untouched.
+    private static let renderTailChars = 2_000
+
+    /// The tail, with a leading ellipsis once anything was dropped. The length
+    /// probe is on `utf8` (O(1) on a native string) so the common under-cap case
+    /// pays nothing; the slice itself only runs when the cap is exceeded.
+    private var visibleText: String {
+        let text = run.text
+        guard text.utf8.count > Self.renderTailChars else { return text }
+        return "…" + String(text.suffix(Self.renderTailChars))
+    }
+
+    var body: some View {
+        if isThinking {
+            // Reasoning renders verbatim (as the web does). An empty run is the
+            // "reasoning started" placeholder — the card's own spinner already
+            // says that, so there is nothing to draw.
+            if !run.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(verbatim: visibleText)
+                    .font(Theme.Typography.metaLabel.italic())
+                    .foregroundStyle(Theme.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            // Parsed inline but deliberately NOT through `MarkdownText`: every
+            // delta is a distinct string, so its LRU would churn its whole
+            // capacity on one chatty sub-agent. Code spans and emphasis read
+            // properly this way, which raw backticks do not.
+            Text(MarkdownText.attributed(from: visibleText))
+                .font(.callout)
+                .lineSpacing(3)
+                .foregroundStyle(Theme.textSecondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

@@ -44,8 +44,14 @@ enum UserMessageBlock: Hashable, Sendable, Decodable {
 /// Decode-only. Unknown event types decode to `.unknown` so a new server event
 /// never breaks the stream.
 enum AcpEvent: Hashable, Sendable, Decodable {
-    case contentDelta(text: String)
-    case thinking(text: String)
+    /// `parentToolUseId` attributes the chunk to a SUB-AGENT rather than the
+    /// reply the user is reading (claude-agent-acp ≥0.63 forwards
+    /// `_meta.claudeCode.parentToolUseId`; CodeBuddy has its own key). Both
+    /// threads stream interleaved on one wire, so anything parented must be
+    /// routed to the launching Agent tool call — see ``LiveTurn/appendText(_:parentToolUseId:)``.
+    /// nil = main thread.
+    case contentDelta(text: String, parentToolUseId: String?)
+    case thinking(text: String, parentToolUseId: String?)
     case toolCall(id: String, title: String, kind: String, status: String, content: String?, rawInput: String?, rawOutput: String?, meta: AnyJSON?)
     case toolCallUpdate(id: String, title: String?, status: String?, content: String?, rawInput: String?, rawOutput: String?, append: Bool, meta: AnyJSON?)
     case turnComplete(stopReason: String)
@@ -56,7 +62,12 @@ enum AcpEvent: Hashable, Sendable, Decodable {
     case usageUpdate(used: UInt64, size: UInt64)
     case userMessage(messageId: String, blocks: [UserMessageBlock])
     case userPromptSent(textPreview: String)
-    case error(message: String, code: String?)
+    /// `details` is out-of-band diagnostic evidence for errors codeg *inferred*
+    /// rather than received — the `turn_failed_empty*` family, where the agent
+    /// reported success and the wire carried nothing. It holds the turn's agent
+    /// stderr tail and a count of updates codeg failed to parse, already redacted
+    /// and length-bounded server-side. Absent for every ordinary error.
+    case error(message: String, code: String?, details: String?)
     /// Agent asks the user to approve a tool call before it runs. Also carries
     /// ExitPlanMode — the proposed plan rides inside `toolCall`. Resolve via
     /// `acp_respond_permission` with the chosen `option_id`.
@@ -82,9 +93,9 @@ enum AcpEvent: Hashable, Sendable, Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case type, text, title, kind, status, content, meta
-        case toolCallId, rawInput, rawOutput, rawOutputAppend
+        case toolCallId, parentToolUseId, rawInput, rawOutput, rawOutputAppend
         case stopReason, sessionId, conversationId, folderId
-        case used, size, messageId, blocks, message, code, textPreview
+        case used, size, messageId, blocks, message, code, details, textPreview
         case requestId, toolCall, options, questionId, questions, entries
         case approvalId, planMarkdown
     }
@@ -94,9 +105,15 @@ enum AcpEvent: Hashable, Sendable, Decodable {
         let type = try c.decode(String.self, forKey: .type)
         switch type {
         case "content_delta":
-            self = .contentDelta(text: try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+            self = .contentDelta(
+                text: try c.decodeIfPresent(String.self, forKey: .text) ?? "",
+                parentToolUseId: try c.decodeIfPresent(String.self, forKey: .parentToolUseId)
+            )
         case "thinking":
-            self = .thinking(text: try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+            self = .thinking(
+                text: try c.decodeIfPresent(String.self, forKey: .text) ?? "",
+                parentToolUseId: try c.decodeIfPresent(String.self, forKey: .parentToolUseId)
+            )
         case "tool_call":
             self = .toolCall(
                 id: try c.decodeIfPresent(String.self, forKey: .toolCallId) ?? "",
@@ -155,7 +172,8 @@ enum AcpEvent: Hashable, Sendable, Decodable {
         case "error":
             self = .error(
                 message: try c.decodeIfPresent(String.self, forKey: .message) ?? "Unknown error",
-                code: try c.decodeIfPresent(String.self, forKey: .code)
+                code: try c.decodeIfPresent(String.self, forKey: .code),
+                details: try c.decodeIfPresent(String.self, forKey: .details)
             )
         case "permission_request":
             self = .permissionRequest(
@@ -229,10 +247,15 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     let pendingPermission: PendingPermissionSnapshot?
     let pendingQuestion: PendingQuestionSnapshot?
     let pendingPlanApproval: PendingPlanApprovalSnapshot?
+    /// The connection's most recent error (Rust `SessionLastError`). Cleared
+    /// server-side on the next prompt, so on a still-live connection it always
+    /// belongs to the turn being attached to — never a stale one from before.
+    let lastError: SessionLastError?
 
     private enum CodingKeys: String, CodingKey {
         case connectionId, conversationId, folderId, status, externalId, eventSeq
         case liveMessage, activeToolCalls, pendingPermission, pendingQuestion, pendingPlanApproval
+        case lastError
     }
 
     init(from decoder: Decoder) throws {
@@ -248,6 +271,26 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         pendingPermission = (try? c.decodeIfPresent(PendingPermissionSnapshot.self, forKey: .pendingPermission)) ?? nil
         pendingQuestion = (try? c.decodeIfPresent(PendingQuestionSnapshot.self, forKey: .pendingQuestion)) ?? nil
         pendingPlanApproval = (try? c.decodeIfPresent(PendingPlanApprovalSnapshot.self, forKey: .pendingPlanApproval)) ?? nil
+        lastError = (try? c.decodeIfPresent(SessionLastError.self, forKey: .lastError)) ?? nil
+    }
+}
+
+/// The connection's last error, carried on the snapshot (Rust
+/// `SessionLastError`) so a client that attached AFTER the error still learns
+/// why the turn came back empty — the live event is its only other channel, and
+/// that one already fired.
+struct SessionLastError: Sendable, Decodable {
+    let message: String
+    let code: String?
+    /// See ``AcpEvent/error(message:code:details:)``. Already redacted server-side.
+    let details: String?
+
+    private enum CodingKeys: String, CodingKey { case message, code, details }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
+        code = try c.decodeIfPresent(String.self, forKey: .code)
+        details = try c.decodeIfPresent(String.self, forKey: .details)
     }
 }
 
@@ -265,18 +308,23 @@ struct LiveMessageSnapshot: Sendable, Decodable {
 /// One ordered block of the in-flight message (Rust `LiveContentBlock`,
 /// `kind`-tagged). `toolCallRef` points into `activeToolCalls` by id.
 enum LiveContentBlockSnapshot: Sendable, Decodable {
-    case text(String)
-    case thinking(String)
+    /// `parentToolUseId` carries the same sub-agent attribution the streaming
+    /// events do (see ``AcpEvent/contentDelta(text:parentToolUseId:)``), so a
+    /// client attaching mid-turn reconstructs the split rather than folding a
+    /// sub-agent's prose into the main reply.
+    case text(String, parentToolUseId: String?)
+    case thinking(String, parentToolUseId: String?)
     case toolCallRef(toolCallId: String)
     case plan(entries: AnyJSON)
     case unknown
 
-    private enum CodingKeys: String, CodingKey { case kind, text, toolCallId, entries }
+    private enum CodingKeys: String, CodingKey { case kind, text, toolCallId, parentToolUseId, entries }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let parent = try c.decodeIfPresent(String.self, forKey: .parentToolUseId)
         switch try c.decodeIfPresent(String.self, forKey: .kind) ?? "" {
-        case "text": self = .text(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
-        case "thinking": self = .thinking(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+        case "text": self = .text(try c.decodeIfPresent(String.self, forKey: .text) ?? "", parentToolUseId: parent)
+        case "thinking": self = .thinking(try c.decodeIfPresent(String.self, forKey: .text) ?? "", parentToolUseId: parent)
         case "tool_call_ref": self = .toolCallRef(toolCallId: try c.decodeIfPresent(String.self, forKey: .toolCallId) ?? "")
         case "plan": self = .plan(entries: try c.decodeIfPresent(AnyJSON.self, forKey: .entries) ?? .null)
         default: self = .unknown
@@ -401,6 +449,32 @@ struct AcpAgentInfo: Decodable, Identifiable, Hashable, Sendable {
     let installedVersion: String?
     let env: [String: String]?
     let modelProviderId: Int?
+
+    // MARK: Identity (codeg ≥0.22.0 — custom ACP agents)
+    /// Display icon for a user-registered agent, normally an inlined
+    /// `data:image/…;base64,…` URL. Always nil for built-ins, whose marks ship
+    /// as compiled vector assets. Decoded by ``CustomAgentRegistry``.
+    let iconUrl: String?
+    /// Where a custom agent's definition came from (`registry` | `manual`); nil
+    /// for built-ins. A manual definition's `registryVersion` is user-typed, so
+    /// the version display shows only the local version for those.
+    let customSource: String?
+    /// Whether codeg's entry is a third-party ACP *adapter* wrapping a vendor
+    /// CLI of a different name (Claude Code, Codex). Lets the surfaces with no
+    /// preflight result say "the adapter isn't installed" rather than "the agent
+    /// isn't". Optional (like every other field here) so an older server that
+    /// omits it can't fail the list decode — read it through ``isAdapter``.
+    let isAcpAdapter: Bool?
+    /// Whether the agent has a codeg-known skill store — every built-in, plus
+    /// custom agents that declared one. Gates the skills matrices. Read it
+    /// through ``supportsSkills``, which defaults it TRUE: an older server has
+    /// no such field and every agent it knows of is a skill-capable built-in.
+    let skillsCapable: Bool?
+
+    /// See ``isAcpAdapter``. Absent → not an adapter.
+    var isAdapter: Bool { isAcpAdapter ?? false }
+    /// See ``skillsCapable``. Absent → assume capable (pre-0.22.0 server).
+    var supportsSkills: Bool { skillsCapable ?? true }
 
     // MARK: Version / distribution (drives the install/upgrade/uninstall row)
     /// Latest version the registry knows of (npm / GitHub releases). `nil` when

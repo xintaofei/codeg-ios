@@ -89,7 +89,7 @@ struct ModelProvidersSettingsView: View {
                         )
                     }
                     ForEach(model.grouped, id: \.agent) { group in
-                        Text("\(group.agent.displayName.uppercased()) · \(group.items.count)")
+                        Text("\(group.agent.label.uppercased()) · \(group.items.count)")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Theme.textTertiary)
                             .tracking(0.5)

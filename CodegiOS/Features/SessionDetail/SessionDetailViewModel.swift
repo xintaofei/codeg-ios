@@ -105,7 +105,9 @@ final class SessionDetailViewModel {
     /// authoritative agent for a linked/existing conversation is the summary's.
     private(set) var selectedAgent: AgentType?
     /// Agents offered in the draft's in-page picker (narrowed to installed/enabled).
-    private(set) var availableAgents: [AgentType] = AgentType.allCases
+    /// Seeded with the built-ins only; the server's list (which may add custom
+    /// ACP agents) replaces it as soon as `loadDraftPickers` returns.
+    private(set) var availableAgents: [AgentType] = AgentType.builtins
     /// Folders offered in the draft's in-page picker.
     private(set) var availableFolders: [FolderDetail] = []
     /// The full folder set (`list_all_folder_details`), kept so the branch switcher
@@ -357,6 +359,7 @@ final class SessionDetailViewModel {
 
         // Narrow agents to what the server actually has installed + enabled.
         if let agents = try? await client.listAgents() {
+            CustomAgentRegistry.shared.ingest(agents)
             let usable = agents.filter { $0.available && $0.enabled }
                 .sorted { $0.sortOrder < $1.sortOrder }
                 .map(\.agentType)
@@ -1127,7 +1130,10 @@ final class SessionDetailViewModel {
                     // If the server had claimed a live turn at load, it finished
                     // between the detail fetch and this snapshot — reconcile so the
                     // final reply isn't missing from the (now stale) transcript.
+                    // (Before surfacing any error below: the reconcile bails when
+                    // `liveTurn` is already set.)
                     if serverSaysLive { await reconcileAfterMissedLive() }
+                    surfaceSettledError(from: snap)
                     return
                 }
             case .replay(let events):
@@ -1171,10 +1177,22 @@ final class SessionDetailViewModel {
         let live = LiveTurn()
         let toolsById = Dictionary((snap.activeToolCalls ?? []).map { ($0.id, $0) },
                                    uniquingKeysWith: { first, _ in first })
+        // Sub-agent blocks are applied in a second pass so routing does not depend
+        // on where the snapshot happens to place them relative to their parent's
+        // `tool_call_ref` — by then every tool call the snapshot carried exists,
+        // and the orphan gate rejects only genuinely parentless residue.
+        //
+        // Deferring is also what makes a reattach render identically to having
+        // watched the stream: main-thread blocks land back-to-back here and merge
+        // exactly as they did live, instead of being split by the interleaved
+        // sub-agent blocks the wire preserves between them.
+        var subAgent: [(parent: String, text: String, thinking: Bool)] = []
         for block in blocks {
             switch block {
-            case .text(let t): live.appendText(t)
-            case .thinking(let t): live.appendThinking(t)
+            case .text(let t, let parent):
+                if let parent { subAgent.append((parent, t, false)) } else { live.appendText(t) }
+            case .thinking(let t, let parent):
+                if let parent { subAgent.append((parent, t, true)) } else { live.appendThinking(t) }
             case .toolCallRef(let toolId):
                 guard let st = toolsById[toolId] else { break }
                 live.upsertToolCall(
@@ -1193,8 +1211,61 @@ final class SessionDetailViewModel {
                 break
             }
         }
+        for entry in subAgent {
+            if entry.thinking {
+                live.appendThinking(entry.text, parentToolUseId: entry.parent)
+            } else {
+                live.appendText(entry.text, parentToolUseId: entry.parent)
+            }
+        }
+        applySnapshotError(snap, to: live)
         live.flushAllText()
         return live
+    }
+
+    /// Stamp an error this client was not around for onto a turn.
+    ///
+    /// Attaching is its only channel — the live event already fired — so without
+    /// this, a cold attach shows a turn that silently produced nothing.
+    ///
+    /// Safe with respect to staleness: the server clears `last_error` on the
+    /// `Prompting` transition that begins every prompt, so a connection's copy
+    /// always belongs to the most recent turn, never an older one. Scoped to
+    /// errors that actually carry evidence (the inferred `turn_failed_empty*`
+    /// family), so attaching to a connection with some ordinary past error does
+    /// not start surfacing failures it never used to.
+    @discardableResult
+    private func applySnapshotError(_ snap: LiveSessionSnapshot, to live: LiveTurn) -> Bool {
+        guard let lastError = snap.lastError,
+              let evidence = lastError.details?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !evidence.isEmpty
+        else { return false }
+        live.errorDetails = evidence
+        if live.errorMessage == nil {
+            let message = lastError.message.trimmingCharacters(in: .whitespacesAndNewlines)
+            live.errorMessage = message.isEmpty ? String(localized: "The agent reported an error.") : message
+        }
+        return true
+    }
+
+    /// Surface a snapshot's error on an IDLE connection — the common case, not an
+    /// edge one: the server emits the inferred error and `TurnComplete` back to
+    /// back, and `TurnComplete` clears the live message while keeping
+    /// `last_error`. So any client that opens the session a moment later finds
+    /// nothing in flight and would, without this, be left with a turn that
+    /// produced no reply and no stated reason.
+    ///
+    /// The turn is born settled: `isStreaming` false (so `isInFlight` stays
+    /// false), no `isTurnActive`, no `liveTurnFromReattach` (nothing to hide in
+    /// the persisted transcript), and `sendState` untouched. It is a tombstone
+    /// carrying one error node, not a reply.
+    private func surfaceSettledError(from snap: LiveSessionSnapshot) {
+        guard liveTurn == nil else { return }
+        let tombstone = LiveTurn()
+        tombstone.isStreaming = false
+        guard applySnapshotError(snap, to: tombstone) else { return }
+        liveTurn = tombstone
+        requestScrollToBottom()
     }
 
     private func restorePending(from snap: LiveSessionSnapshot) {
@@ -1234,13 +1305,13 @@ final class SessionDetailViewModel {
 
     private func handle(event: AcpEvent, live: LiveTurn) {
         switch event {
-        case .contentDelta(let text):
-            live.appendText(text)
+        case .contentDelta(let text, let parent):
+            live.appendText(text, parentToolUseId: parent)
             if case .running = sendState {} else { sendState = .thinking }
             requestScrollToBottom()
 
-        case .thinking(let text):
-            live.appendThinking(text)
+        case .thinking(let text, let parent):
+            live.appendThinking(text, parentToolUseId: parent)
             if case .running = sendState {} else { sendState = .thinking }
             requestScrollToBottom()
 
@@ -1278,8 +1349,8 @@ final class SessionDetailViewModel {
         case .turnComplete(let stopReason):
             finalize(live: live, stopReason: stopReason)
 
-        case .error(let message, _):
-            failLive(live, message: message)
+        case .error(let message, _, let details):
+            failLive(live, message: message, details: details)
 
         case .conversationLinked(let linkedID, _):
             adoptLinkedConversation(linkedID)
@@ -1414,12 +1485,17 @@ final class SessionDetailViewModel {
         requestScrollToBottom()
     }
 
-    private func failLive(_ live: LiveTurn, message: String?) {
+    private func failLive(_ live: LiveTurn, message: String?, details: String? = nil) {
         isTurnActive = false
         clearInteractivePrompts()
         live.flushAllText()
         live.isStreaming = false
         if let message { live.errorMessage = message }
+        if let trimmed = details?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty {
+            live.errorDetails = trimmed
+        }
+        // `sendState` feeds the compose status line — keep it the one-line
+        // message. The evidence is multi-line and belongs in the disclosure only.
         sendState = message.map { .error($0) } ?? .idle
         closeStream()
         // Keep the live turn on screen so the user sees partial output + error;

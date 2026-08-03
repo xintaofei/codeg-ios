@@ -32,7 +32,13 @@ final class SkillsSettingsModel {
         if agents.isEmpty { phase = .loading }
         do {
             let list = try await client.listAgents()
-            agents = list.filter { $0.available && $0.enabled }
+            CustomAgentRegistry.shared.ingest(list)
+            // `supportsSkills` gates the matrix the way the web does: every
+            // built-in has a codeg-known skill store, but a user-registered ACP
+            // agent only does once its definition declares one (shared
+            // `.agents/skills` or a dedicated dir). Listing one that hasn't would
+            // offer an editor with nowhere to write.
+            agents = list.filter { $0.available && $0.enabled && $0.supportsSkills }
                 .sorted { $0.sortOrder < $1.sortOrder }
                 .map(\.agentType)
             phase = .loaded
