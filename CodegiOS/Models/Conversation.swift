@@ -183,11 +183,87 @@ struct SessionStats: Codable, Hashable, Sendable {
 
 /// Full session detail incl. message history (Rust `DbConversationDetail`).
 /// Decode-only: `MessageTurn`/`ContentBlock` are response shapes we never encode.
+///
+/// When the request asked for a turn window (`tailTurns` / `fromIndex`), `turns`
+/// holds only `full[turnsOffset...]` and the four window fields below describe
+/// where that slice sits. **Every other field still describes the FULL
+/// transcript** — `summary`'s counts, `sessionStats`, `inFlightUserTurnId`.
 struct ConversationDetail: Decodable, Sendable {
     let summary: ConversationSummary
     let turns: [MessageTurn]
     let sessionStats: SessionStats?
     let inFlightUserTurnId: String?
+
+    /// Global index of `turns[0]`. Absent on a server that predates windowing
+    /// (≤ 0.23), which always answers with the whole transcript.
+    let turnsOffset: Int?
+    /// Turn count of the full transcript.
+    let turnsTotal: Int?
+    /// Server fingerprint of `full[0..<turnsOffset)`, fixed-width 16-hex. Compared
+    /// verbatim — we never compute one locally, so its construction (FNV-1a over
+    /// role + timestamp-millis) is the server's business.
+    let prefixHash: String?
+
+    /// Global index one past the last loaded turn. The coordinate to compare
+    /// against when asking "did the transcript advance past what I hold?" — the
+    /// loaded `turns.count` alone stops growing once a tail window is saturated,
+    /// and drops outright when a window resets.
+    var globalEnd: Int { (turnsOffset ?? 0) + turns.count }
+}
+
+/// Where a loaded slice of `turns` sits inside the full transcript, for a server
+/// that speaks the windowing protocol. `nil`-initialized from a legacy response,
+/// which the view model treats as "the whole transcript is loaded".
+///
+/// iOS deliberately carries only three of the six protocol fields:
+/// `assistant_turns_before_offset` globalizes a send-time assistant baseline the
+/// web needs for its turn-metadata patch pass, and `uncovered_prefix_max_ts`
+/// gates its background-overlay retirement — neither mechanism exists here. And
+/// the client-side fingerprint *extension* the web performs is likewise only for
+/// that patch gate; we compare server-issued hashes and never derive one.
+struct TranscriptWindow: Equatable, Sendable {
+    /// Global index of the first loaded turn.
+    var offset: Int
+    /// Turn count of the full transcript.
+    var total: Int
+    /// Fingerprint of the not-yet-loaded prefix `full[0..<offset)`.
+    var prefixHash: String
+
+    /// Present only when the response carried all three fields; their absence
+    /// means a legacy full response and every windowed path must stand down.
+    init?(_ detail: ConversationDetail) {
+        guard let offset = detail.turnsOffset,
+              let total = detail.turnsTotal,
+              let prefixHash = detail.prefixHash
+        else { return nil }
+        self.init(offset: offset, total: total, prefixHash: prefixHash)
+    }
+
+    init(offset: Int, total: Int, prefixHash: String) {
+        self.offset = offset
+        self.total = total
+        self.prefixHash = prefixHash
+    }
+
+    /// Older history exists above the loaded slice.
+    var hasOlder: Bool { offset > 0 }
+}
+
+/// One page of older history (`get_folder_conversation_turns`), covering
+/// `full[turnsOffset ..< turnsOffset + turns.count]` and ending just before the
+/// `beforeIndex` that was asked for. A light response: history only, no summary,
+/// no stats, no live correlation.
+struct ConversationTurnsPage: Decodable, Sendable {
+    let turns: [MessageTurn]
+    let turnsOffset: Int
+    let turnsTotal: Int
+    /// Fingerprint of `full[0..<turnsOffset)` — adopted as the window's new
+    /// prefix hash once the page is prepended.
+    let prefixHash: String
+    /// Fingerprint of `full[0..<beforeIndex)` — the **seam proof**. It must equal
+    /// the window's current prefix hash, or this page came from a parse whose
+    /// prefix was rewritten since and cannot legally join what is loaded.
+    let prefixHashBeforeIndex: String
 }
 
 /// Returned by `acp_find_connection_for_conversation` when a live ACP

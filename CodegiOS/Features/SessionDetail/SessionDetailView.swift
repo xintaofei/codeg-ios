@@ -183,6 +183,9 @@ struct SessionDetailView: View {
             turnsVersion: model.turnsVersion,
             scrollTick: model.scrollTick,
             stickTick: model.stickTick,
+            hasOlderTurns: model.hasOlderTurns,
+            isLoadingOlderTurns: model.loadingOlderTurns,
+            onLoadOlderTurns: { Task { await model.loadOlderTurns() } },
             onPinnedChange: { model.setPinnedToBottom($0) }
         ) {
             // No top banner on an existing session — its identity + stats now

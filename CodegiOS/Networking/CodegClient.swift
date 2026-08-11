@@ -100,9 +100,32 @@ struct CodegClient: Sendable {
         ), session: Self.readSession)
     }
 
-    /// Full session detail incl. message history.
-    func conversationDetail(id: Int) async throws -> ConversationDetail {
-        try await postJSON("get_folder_conversation", ConversationIdBody(conversationId: id))
+    /// Session detail incl. message history.
+    ///
+    /// Pass `tailTurns` (last N turns, snapped back to a user-round boundary) or
+    /// `fromIndex` (exact slice from a global index) — never both — to fetch only
+    /// a **window** of the transcript. A long session's full history reaches tens
+    /// of megabytes and this endpoint is hit repeatedly per session, so the
+    /// unwindowed form is for callers that genuinely need every turn.
+    ///
+    /// The server clamps a window to 500 turns and may return up to ~200 more
+    /// than asked while walking back to a round boundary. A pre-0.24 server
+    /// ignores both selectors and answers with the whole transcript, which the
+    /// caller detects by the absent window fields.
+    func conversationDetail(id: Int, tailTurns: Int? = nil, fromIndex: Int? = nil) async throws -> ConversationDetail {
+        try await postJSON("get_folder_conversation", ConversationWindowBody(
+            conversationId: id, tailTurns: tailTurns, fromIndex: fromIndex
+        ))
+    }
+
+    /// One page of older history ending just before `beforeIndex`, for scrolling
+    /// up through a windowed transcript. 0.24+ only — but a legacy server never
+    /// reports a nonzero `turnsOffset`, so the paging path that calls this is
+    /// unreachable there.
+    func conversationTurns(id: Int, beforeIndex: Int, limit: Int) async throws -> ConversationTurnsPage {
+        try await postJSON("get_folder_conversation_turns", ConversationTurnsBody(
+            conversationId: id, beforeIndex: beforeIndex, limit: limit
+        ), session: Self.readSession)
     }
 
     /// Create a conversation row up front (before the first prompt) and return its

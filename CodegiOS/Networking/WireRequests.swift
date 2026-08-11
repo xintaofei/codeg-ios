@@ -45,6 +45,29 @@ struct ConversationIdBody: Encodable, Sendable {
     let conversationId: Int
 }
 
+/// Body for `get_folder_conversation` with an optional turn window. The two
+/// selectors are **mutually exclusive** — sending both is a 400 from the server
+/// (they are different coordinate systems). Both nil = the legacy full response.
+/// Optionals encode via `encodeIfPresent`, so an unset selector sends no key at
+/// all, which is also what makes this body safe against a pre-0.24 server: serde
+/// ignores the field it doesn't know and answers with the whole transcript.
+struct ConversationWindowBody: Encodable, Sendable {
+    let conversationId: Int
+    /// Last N turns, start aligned backward to a user-round boundary.
+    var tailTurns: Int?
+    /// Exact slice `turns[fromIndex...]`, never round-aligned — so the response
+    /// offset matches the coordinate the window was refreshed against.
+    var fromIndex: Int?
+}
+
+/// Body for `get_folder_conversation_turns` — one page of older history ending
+/// just before `beforeIndex`.
+struct ConversationTurnsBody: Encodable, Sendable {
+    let conversationId: Int
+    let beforeIndex: Int
+    let limit: Int
+}
+
 /// Body for `create_conversation` — creates a server-side conversation row in
 /// `folderId` for `agentType` (optional `title`) BEFORE the first prompt, so the
 /// server broadcasts a `conversation_upsert` to every client (the desktop/web

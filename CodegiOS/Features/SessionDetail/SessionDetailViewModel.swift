@@ -64,6 +64,52 @@ final class SessionDetailViewModel {
     /// no longer force a re-hash of every visible turn's full text (`MessageTurn`
     /// is content-`Hashable`) just to rebuild the node list.
     private(set) var turnsVersion = 0
+
+    // MARK: Transcript window
+    //
+    // `turns` is not necessarily the whole transcript: from 0.24 the server can
+    // serialize a *window* of it, and a long session's full history reaches tens
+    // of megabytes — which this screen used to download in full on open, again on
+    // every reconcile attempt after a turn, and again just to read the title.
+    //
+    // The invariant that makes this cheap to graft onto the existing code:
+    // **`turns` is always the suffix `full[window.offset...]`**. Every refresh
+    // therefore anchors at `fromIndex: window.offset` rather than re-requesting a
+    // tail, so the fetched region is exactly the region held — and comparisons
+    // against it keep meaning what they meant when the whole transcript was
+    // loaded. (Refreshing with `tailTurns` instead would silently cap the fetched
+    // count, and "did the transcript grow?" would go permanently false on any
+    // session longer than the window.)
+
+    /// Where `turns` sits in the full transcript, or `nil` when it *is* the full
+    /// transcript — a server that predates windowing, or a fetch made before the
+    /// first windowed response landed.
+    private(set) var window: TranscriptWindow?
+    /// A page of older history is being fetched (drives the transcript's spinner).
+    private(set) var loadingOlderTurns = false
+
+    /// Turns to request on the first fetch of a session. Matches the web client's
+    /// tail; comfortably more than the transcript renders on open (its own view
+    /// window is 50), so scrolling up is instant for a while before it pages.
+    private static let tailTurns = 120
+    /// Turns per page when scrolling up into older history.
+    private static let olderTurnsPage = 120
+    /// Window for the fetches that only read identity/stats and never touch
+    /// `turns`. Those fields describe the FULL transcript whatever the window is,
+    /// so ask for the smallest legal one. (The server still walks back to a round
+    /// boundary, so this returns a handful of turns, not one — they're discarded.)
+    private static let identityTurns = 1
+
+    /// Global index one past the last loaded turn — the coordinate a fetched
+    /// response's `globalEnd` is compared against to decide whether the server's
+    /// transcript has advanced past what is held. Equals `turns.count` exactly
+    /// when nothing is windowed.
+    private var loadedEnd: Int { (window?.offset ?? 0) + turns.count }
+
+    /// Older history exists above what is loaded, so the transcript should offer
+    /// to page up. False on a legacy server (everything is already loaded).
+    var hasOlderTurns: Bool { window?.hasOlder ?? false }
+
     /// Optimistic user turns awaiting persistence (spliced out on re-fetch).
     private(set) var pendingUserTurns: [MessageTurn] = []
     /// The assistant reply currently streaming, if any.
@@ -285,6 +331,155 @@ final class SessionDetailViewModel {
         summary?.agentType ?? selectedAgent ?? .claudeCode
     }
 
+    // MARK: - Windowed fetch
+
+    /// Total order over every transcript fetch this session issues — detail
+    /// refreshes AND older-history pages alike. Both take a generation, so
+    /// issuing either invalidates whatever else is in flight.
+    ///
+    /// Without a SHARED order the two silently clobber each other: a refresh
+    /// requested at offset 240 is still "consistent" when it lands (same offset,
+    /// same prefix hash — it was validated against the window it was requested
+    /// against), so if a page prepended 120..240 during its flight, committing it
+    /// replaces `turns` with the narrower suffix and the history the user just
+    /// scrolled in disappears. `loadedEnd` being prepend-invariant does not catch
+    /// this; only the ordering does.
+    private var fetchGeneration = 0
+
+    private func nextFetchGeneration() -> Int {
+        fetchGeneration &+= 1
+        return fetchGeneration
+    }
+
+    private func isCurrentGeneration(_ generation: Int) -> Bool { fetchGeneration == generation }
+
+    /// Result of a windowed refresh: the response, plus whether it had to
+    /// re-anchor.
+    private struct WindowedFetch {
+        let detail: ConversationDetail
+        /// The prefix was rewritten (a compaction) and the window was re-opened
+        /// at the tail. Global indices captured before it are meaningless
+        /// against this response — `turns_total` itself can have shrunk — so a
+        /// caller's monotonic "did the transcript advance?" check cannot run,
+        /// and this is NOT evidence that the response carries the caller's turn.
+        let reanchored: Bool
+    }
+
+    private enum WindowedFetchOutcome {
+        case fetched(WindowedFetch)
+        /// A newer fetch (a history page, another refresh) superseded this one.
+        /// Emphatically NOT a failure: nothing may be committed, but the turn is
+        /// fine and the caller must retry rather than declare the stream lost.
+        case superseded
+    }
+
+
+    /// Re-fetch the detail as a window scoped to what this session already holds.
+    ///
+    /// * No window yet (fresh session, or a server without windowing) → the
+    ///   default tail.
+    /// * A window → `fromIndex: offset`: refresh exactly the loaded region and
+    ///   leave the unloaded prefix alone. Anchoring at the window *start* rather
+    ///   than at the newest round is deliberate — turns inside the loaded region
+    ///   can still be rewritten later (delegation metadata advancing, a
+    ///   background task backfilling its acknowledgement), and those rewrites
+    ///   should land. The unloaded prefix picks them up when it is paged in.
+    ///
+    /// The response is verified against the window it was requested against. A
+    /// moved offset, a changed prefix hash, or a total that collapsed below the
+    /// window start all mean the prefix was rewritten — a compaction — so the
+    /// held coordinates describe a transcript that no longer exists. Re-open a
+    /// fresh tail rather than stitch two incompatible parses together; the cost
+    /// is the paged-in history, which the user can scroll back for.
+    ///
+    /// Returns `.superseded` when a newer fetch overtook this one — the caller
+    /// must then commit nothing, and must not read that as a failure.
+    private func fetchWindowedDetail(id: Int) async throws -> WindowedFetchOutcome {
+        let generation = nextFetchGeneration()
+        guard let current = window else {
+            let detail = try await client.conversationDetail(id: id, tailTurns: Self.tailTurns)
+            guard isCurrentGeneration(generation) else { return .superseded }
+            return .fetched(WindowedFetch(detail: detail, reanchored: false))
+        }
+        let detail = try await client.conversationDetail(id: id, fromIndex: current.offset)
+        guard isCurrentGeneration(generation) else { return .superseded }
+        guard let fetched = TranscriptWindow(detail) else {
+            return .fetched(WindowedFetch(detail: detail, reanchored: false))
+        }
+        if fetched.offset == current.offset,
+           fetched.prefixHash == current.prefixHash,
+           fetched.total >= current.offset {
+            return .fetched(WindowedFetch(detail: detail, reanchored: false))
+        }
+        let reset = try await client.conversationDetail(id: id, tailTurns: Self.tailTurns)
+        guard isCurrentGeneration(generation) else { return .superseded }
+        return .fetched(WindowedFetch(detail: reset, reanchored: true))
+    }
+
+    /// Adopt the window a response arrived under. Pair this with EVERY
+    /// `turns = detail.turns`: the array and the window are one coordinate
+    /// system and a half-applied update mis-places the whole transcript. `nil`
+    /// on a legacy response is the truthful answer — it carried every turn.
+    private func adoptWindow(_ detail: ConversationDetail) {
+        window = TranscriptWindow(detail)
+    }
+
+    /// Prepend one page of older history above the loaded window. Single-flight;
+    /// a no-op when everything is already loaded.
+    ///
+    /// The page must *prove* it joins what is held: `prefixHashBeforeIndex`
+    /// fingerprints `full[0..<beforeIndex)` from the same parse that produced the
+    /// page, so it has to equal the window's own prefix hash. A mismatch means
+    /// the prefix was rewritten between the two requests, and prepending would
+    /// splice a stale region onto a current one.
+    func loadOlderTurns() async {
+        guard let id = conversationID, let current = window, current.hasOlder, !loadingOlderTurns else { return }
+        loadingOlderTurns = true
+        defer { loadingOlderTurns = false }
+
+        // Joins the same total order as every detail refresh: a refresh issued
+        // before this page must not commit its (now stale, narrower) suffix
+        // afterwards, and a refresh issued after it supersedes it.
+        let generation = nextFetchGeneration()
+        guard let page = try? await client.conversationTurns(
+            id: id, beforeIndex: current.offset, limit: Self.olderTurnsPage
+        ) else { return }
+        guard isCurrentGeneration(generation) else { return }
+
+        // The window may have moved while the page was in flight (a refresh
+        // landed, the session reset): re-read it instead of trusting the capture.
+        guard let now = window,
+              now.offset == current.offset,
+              now.prefixHash == current.prefixHash
+        else { return }
+
+        guard page.prefixHashBeforeIndex == now.prefixHash else {
+            // Prefix rewritten under us. Re-anchor by refreshing — the same
+            // mismatch there re-opens at the tail. Skipped while a turn is live:
+            // that path owns `turns` and reconciles on its own.
+            guard liveTurn == nil, !isInFlight else { return }
+            if case .fetched(let fetch)? = try? await fetchWindowedDetail(id: id),
+               liveTurn == nil, !isInFlight {
+                summary = fetch.detail.summary
+                turns = fetch.detail.turns
+                adoptWindow(fetch.detail)
+                sessionStats = fetch.detail.sessionStats ?? sessionStats
+            }
+            return
+        }
+        guard page.turnsOffset <= now.offset else { return }
+
+        // Defensive de-dup at the seam. The ranges are disjoint by construction;
+        // this only guards against a server that rounded the page bounds outward.
+        let existing = Set(turns.map(\.id))
+        let fresh = page.turns.filter { !existing.contains($0.id) }
+        guard !fresh.isEmpty || page.turnsOffset < now.offset else { return }
+        turns = fresh + turns
+        // `total` keeps the window's own (newer) value: the page reports the same
+        // parse it was sliced from, which never saw the loaded tail's latest turns.
+        window = TranscriptWindow(offset: page.turnsOffset, total: now.total, prefixHash: page.prefixHash)
+    }
+
     // MARK: - Load
 
     /// Guards the one-time draft option load so a re-run of `.task` can't refetch.
@@ -295,21 +490,34 @@ final class SessionDetailViewModel {
         case .existing(let id):
             phase = .loading
             do {
-                async let detailReq = client.conversationDetail(id: id)
+                // Takes a generation like every other transcript fetch: a `.task`
+                // re-run must not commit its fresh tail over a window the user has
+                // meanwhile paged, and a page issued during this load supersedes it.
+                let generation = nextFetchGeneration()
+                async let detailReq = client.conversationDetail(id: id, tailTurns: Self.tailTurns)
                 async let foldersReq = client.listFolders()
                 let detail = try await detailReq
                 let folders = try await foldersReq
+                // Superseded: adopt only the fields that describe the FULL
+                // transcript regardless of window (identity, stats, folders) and
+                // leave `turns`/`window` to whatever overtook this load. Falling
+                // out of the method instead would strand `phase` on `.loading`.
+                let stale = !isCurrentGeneration(generation)
 
                 summary = detail.summary
-                turns = detail.turns
+                if !stale {
+                    turns = detail.turns
+                    adoptWindow(detail)
+                }
                 sessionStats = detail.sessionStats
                 allFolders = folders
                 folder = folders.first { $0.id == detail.summary.folderId }
                 currentBranch = detail.summary.gitBranch ?? folder?.gitBranch
                 insertModel.agentType = detail.summary.agentType
                 phase = .loaded
-                // Initial load lands at the latest message.
-                requestStickToBottom()
+                // Initial load lands at the latest message — but not when this
+                // load was superseded; the transcript belongs to something else.
+                if !stale { requestStickToBottom() }
                 // If a turn is still running on this session (started here earlier,
                 // from codeg web, or before an app relaunch), attach so it streams
                 // live and any pending permission/question card surfaces.
@@ -862,7 +1070,10 @@ final class SessionDetailViewModel {
         // first token on an extra round-trip.
         Task { [weak self] in
             guard let self,
-                  let detail = try? await self.client.conversationDetail(id: id),
+                  // Identity + stats only — those describe the full transcript
+                  // whatever window is asked for, so ask for the smallest one
+                  // and leave `turns` (and the window) untouched.
+                  let detail = try? await self.client.conversationDetail(id: id, tailTurns: Self.identityTurns),
                   self.conversationID == id else { return }
             self.summary = detail.summary
             self.sessionStats = detail.sessionStats ?? self.sessionStats
@@ -1088,10 +1299,12 @@ final class SessionDetailViewModel {
     /// started locally — that path owns the transcript.
     private func reconcileAfterMissedLive() async {
         guard let id = conversationID, liveTurn == nil, !isInFlight, stream == nil else { return }
-        guard let detail = try? await client.conversationDetail(id: id) else { return }
+        guard case .fetched(let fetch)? = try? await fetchWindowedDetail(id: id) else { return }
         guard liveTurn == nil, !isInFlight, stream == nil else { return }
+        let detail = fetch.detail
         summary = detail.summary
         turns = detail.turns
+        adoptWindow(detail)
         sessionStats = detail.sessionStats ?? sessionStats
         requestStickToBottom()
     }
@@ -1398,10 +1611,12 @@ final class SessionDetailViewModel {
         conversationID = id
         Task { [weak self] in
             guard let self else { return }
-            guard let detail = try? await self.client.conversationDetail(id: id),
+            guard let detail = try? await self.client.conversationDetail(id: id, tailTurns: Self.identityTurns),
                   self.conversationID == id else { return }
             // Mid-stream: adopt identity + stats only — the live turn is still
-            // rendering and `refreshAfterTurn()` reconciles the transcript.
+            // rendering and `refreshAfterTurn()` reconciles the transcript. The
+            // minimal window keeps this off the transcript's coordinate system
+            // entirely (no `adoptWindow`); the reconcile opens the real one.
             self.summary = detail.summary
             self.sessionStats = detail.sessionStats ?? self.sessionStats
             self.insertModel.agentType = detail.summary.agentType
@@ -1560,25 +1775,55 @@ final class SessionDetailViewModel {
     private func reconcileOrFail(live: LiveTurn, reason: String?) async {
         guard liveTurn === live, isTurnActive else { return }
         streamReconnects = 0
-        if let id = conversationID,
-           let detail = try? await client.conversationDetail(id: id),
-           liveTurn === live, isTurnActive {
-            summary = detail.summary
-            sessionStats = detail.sessionStats ?? sessionStats
-            // Adopt only a transcript that genuinely advanced past our pre-turn
-            // baseline AND ends with a real reply — never a stale read.
-            if detail.turns.count > turns.count, Self.transcriptHasReply(detail.turns) {
-                isTurnActive = false
-                clearInteractivePrompts()
-                turns = detail.turns
-                pendingUserTurns.removeAll()
-                liveTurn = nil
-                sendState = .idle
-                closeStream()
-                requestScrollToBottom()
-                return
+        // Retried, because two outcomes are "no answer yet" rather than "the
+        // turn is lost": a fetch superseded by a concurrently-loaded history
+        // page (the user may scroll up during a live turn), and a re-anchor,
+        // which leaves no coordinate system in which to judge this response.
+        // Failing on either would announce a dead connection for a turn that is
+        // perfectly healthy.
+        for attempt in 0..<3 {
+            guard liveTurn === live, isTurnActive else { return }
+            if let id = conversationID,
+               case .fetched(let fetch)? = try? await fetchWindowedDetail(id: id),
+               liveTurn === live, isTurnActive {
+                let detail = fetch.detail
+                summary = detail.summary
+                sessionStats = detail.sessionStats ?? sessionStats
+                // Adopt only a transcript that genuinely advanced past our
+                // pre-turn baseline AND ends with a real reply — never a stale
+                // read. The baseline is a GLOBAL index, not a loaded count: a
+                // windowed response holds only its slice, so counts are not
+                // comparable across a window that moved.
+                //
+                // A re-anchored response is NOT exempt. `turns_total` can have
+                // collapsed far below the baseline, so the growth test cannot
+                // run — but "cannot judge" is not "accept": a freshly-anchored
+                // tail that still ends with the PREVIOUS turn's reply satisfies
+                // `transcriptHasReply` just as well, and adopting it would drop
+                // the reply we streamed. Retry rather than guess. (See the
+                // matching note in `refreshAfterTurn` for why the window is
+                // deliberately left stranded rather than rebased here.)
+                if !fetch.reanchored,
+                   detail.globalEnd > loadedEnd, Self.transcriptHasReply(detail.turns) {
+                    isTurnActive = false
+                    clearInteractivePrompts()
+                    turns = detail.turns
+                    adoptWindow(detail)
+                    pendingUserTurns.removeAll()
+                    liveTurn = nil
+                    sendState = .idle
+                    closeStream()
+                    requestScrollToBottom()
+                    return
+                }
             }
+            if attempt < 2 { try? await Task.sleep(for: .milliseconds(400)) }
         }
+        // Ownership is re-checked here, not just inside the loop: the final
+        // attempt can end in `.superseded` or a throw, and a second turn may
+        // have taken over during that await. Failing `live` then would tear
+        // down state the newer turn owns.
+        guard liveTurn === live, isTurnActive else { return }
         failLive(live, message: "Lost the connection. Your reply may still be running — reopen the session to check.")
     }
 
@@ -1692,7 +1937,12 @@ final class SessionDetailViewModel {
         // turn's assistant reply would satisfy `transcriptHasReply` and we'd adopt
         // it, dropping the reply we just streamed. `turns` isn't mutated elsewhere
         // between finalize and this reconcile.
-        let baselineCount = turns.count
+        //
+        // A GLOBAL index, not a loaded count: a windowed response carries only
+        // its slice, so `turns.count` is not comparable across responses (and a
+        // page loaded during the retry loop grows `turns` without the transcript
+        // having advanced at all — the global end is invariant under a prepend).
+        let baselineEnd = loadedEnd
 
         for attempt in 0..<5 {
             // If the user started another turn while we were reconciling, that
@@ -1700,29 +1950,54 @@ final class SessionDetailViewModel {
             // don't wipe its in-flight state (its own finalize reconciles later).
             guard liveTurn === live else { return }
             do {
-                let detail = try await client.conversationDetail(id: id)
-                // Re-check after the await — a new turn may have begun during it.
-                guard liveTurn === live else { return }
-                // Identity/stats are always safe to adopt, even before the reply
-                // is queryable, so the header stays fresh while we wait.
-                summary = detail.summary
-                sessionStats = detail.sessionStats ?? sessionStats
+                // `.superseded` (e.g. a history page the user pulled in while
+                // this retried) commits nothing and falls through to the backoff
+                // so the next attempt re-reads — it is not a failure.
+                if case .fetched(let fetch) = try await fetchWindowedDetail(id: id) {
+                    let detail = fetch.detail
+                    // Re-check after the await — a new turn may have begun during it.
+                    guard liveTurn === live else { return }
+                    // Identity/stats are always safe to adopt, even before the reply
+                    // is queryable, so the header stays fresh while we wait.
+                    summary = detail.summary
+                    sessionStats = detail.sessionStats ?? sessionStats
 
-                // Adopt only once the transcript has genuinely advanced for THIS
-                // turn: it must have grown past the baseline (so a stale read that
-                // merely ends with an older reply can't masquerade as ours) and —
-                // when there's a streamed reply to protect — end with a non-empty
-                // assistant turn.
-                let advanced = detail.turns.count > baselineCount
-                if advanced, !mustPreserveReply || Self.transcriptHasReply(detail.turns) {
-                    turns = detail.turns
-                    pendingUserTurns.removeAll()
-                    liveTurn = nil
-                    requestScrollToBottom()
-                    return
+                    // Adopt only once the transcript has genuinely advanced for THIS
+                    // turn: it must have grown past the baseline (so a stale read that
+                    // merely ends with an older reply can't masquerade as ours) and —
+                    // when there's a streamed reply to protect — end with a non-empty
+                    // assistant turn.
+                    //
+                    // A re-anchored response proves NOTHING about this turn: the
+                    // compaction rewrote the coordinates the baseline was captured
+                    // in, and the fresh tail can just as easily end with the
+                    // PREVIOUS reply — which `transcriptHasReply` would wave
+                    // through, and which for an empty live reply isn't even
+                    // checked. Keep the live turn and retry; if the budget runs
+                    // out, `promoteUnreconciled` below preserves the reply.
+                    //
+                    // The window is then left anchored on coordinates the server
+                    // rewrote, so later refreshes keep re-anchoring and this
+                    // session falls back to promotion for its remaining turns.
+                    // That is the SAME outcome this screen had before windowing
+                    // existed (`turns.count` was equally stranded above a
+                    // compacted transcript's length), and reopening the session
+                    // clears it. Rebasing onto the re-anchored transcript here
+                    // was tried and removed: the rewritten tail can already
+                    // contain this round, and promoting on top of it duplicates
+                    // the user's prompt and reply — worse than the stall.
+                    let advanced = !fetch.reanchored && detail.globalEnd > baselineEnd
+                    if advanced, !mustPreserveReply || Self.transcriptHasReply(detail.turns) {
+                        turns = detail.turns
+                        adoptWindow(detail)
+                        pendingUserTurns.removeAll()
+                        liveTurn = nil
+                        requestScrollToBottom()
+                        return
+                    }
+                    // Not reconciled for this turn yet — keep the finalized live turn
+                    // visible and try again shortly.
                 }
-                // Not reconciled for this turn yet — keep the finalized live turn
-                // visible and try again shortly.
             } catch {
                 // Re-fetch failed: keep the live turn (now finalized, no pulse) so
                 // the user still sees the reply, then retry.
@@ -1732,6 +2007,11 @@ final class SessionDetailViewModel {
                 try? await Task.sleep(for: .milliseconds(500))
             }
         }
+        // Ownership is re-checked here, not only inside the loop: the final
+        // attempt can end in `.superseded` or a throw, and sending is re-enabled
+        // once a turn finalizes — so a second turn may have taken over during
+        // that last await, and this one must touch nothing it now owns.
+        guard liveTurn === live else { return }
         // Gave up reconciling (the server hasn't persisted the reply within the
         // retry window). Fold the finalized reply — and its optimistic user turn —
         // into the authoritative `turns` so it survives a subsequent send instead

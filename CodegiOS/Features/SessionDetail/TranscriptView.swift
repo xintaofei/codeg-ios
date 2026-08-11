@@ -62,6 +62,15 @@ struct TranscriptView<Header: View>: View {
     /// Bumped on the user's own send / initial load; forces a re-pin regardless
     /// of the current scroll position.
     let stickTick: Int
+    /// The server holds older history above `turns[0]` — `turns` is a *window*
+    /// of the transcript, not all of it (0.24+). Scrolling past the top of what
+    /// is loaded fetches the next page instead of stopping.
+    var hasOlderTurns: Bool = false
+    /// A page of older history is in flight.
+    var isLoadingOlderTurns: Bool = false
+    /// Fetch one page of older history. Called once the local reveal window has
+    /// exposed every loaded turn and the server still has more.
+    var onLoadOlderTurns: () -> Void = {}
     /// Reports whether the viewport is parked at the bottom. The owning view uses
     /// it to show/hide the floating "jump to latest" button (which lives above the
     /// compose bar, not here, so it is reliably tappable).
@@ -146,7 +155,9 @@ struct TranscriptView<Header: View>: View {
 
     /// Whether the window reaches the true start of the conversation (everything
     /// loaded). Only then is the scrollaway `header` shown and the rail's top capped.
-    private var headLoaded: Bool { effectiveStart == 0 }
+    /// Two windows have to be exhausted: this view's local reveal window, and — on
+    /// a 0.24+ server — the slice of the transcript the session actually holds.
+    private var headLoaded: Bool { effectiveStart == 0 && !hasOlderTurns }
 
     /// Walk back from `desired` to the nearest non-assistant (user/system) turn so
     /// the window never starts in the middle of a merged assistant reply.
@@ -197,7 +208,7 @@ struct TranscriptView<Header: View>: View {
         // conversation; otherwise the spine continues up into the not-yet-loaded
         // turns.
         if !all.isEmpty {
-            if start == 0 { all[0].connectTop = false }
+            if headLoaded { all[0].connectTop = false }
             all[all.count - 1].connectBottom = false
         }
         return all
@@ -206,9 +217,23 @@ struct TranscriptView<Header: View>: View {
     /// Reveal an older page of turns. Cheap (build + layout are O(window)); the
     /// bottom scroll anchor keeps the user's current position from jumping as rows
     /// are inserted above.
+    ///
+    /// Once the local window has exposed every loaded turn, the same gesture asks
+    /// the *session* for another page off the server.
     private func loadEarlier() {
+        guard !isLoadingEarlier, !isLoadingOlderTurns else { return }
         let cur = effectiveStart
-        guard cur > 0, !isLoadingEarlier else { return }
+        guard cur > 0 else {
+            guard hasOlderTurns else { return }
+            // Pin the local window open at the head before the page lands. The
+            // incoming turns are PREPENDED, and a tail-anchored window (the `nil`
+            // default) would recompute its start past them and hide the very page
+            // that was just fetched. Index 0 is also the one absolute index a
+            // prepend cannot invalidate.
+            windowStartTurn = 0
+            onLoadOlderTurns()
+            return
+        }
         isLoadingEarlier = true
         windowStartTurn = snappedStart(cur - pageTurns)
         Task { @MainActor in
@@ -228,7 +253,7 @@ struct TranscriptView<Header: View>: View {
                 if headLoaded {
                     header()
                         .modifier(TimelineRowChrome(top: 12, leading: TimelineMetrics.rowTrailingInset))
-                } else if isLoadingEarlier {
+                } else if isLoadingEarlier || isLoadingOlderTurns {
                     ProgressView()
                         .controlSize(.small)
                         .frame(maxWidth: .infinity)
@@ -299,7 +324,9 @@ struct TranscriptView<Header: View>: View {
                 // `!stuckToBottom` rejects the transient near-top geometry reported
                 // while the list is still settling onto the bottom anchor at open —
                 // otherwise a fresh open would immediately page in older history.
-                if nearTop, !stuckToBottom, !headLoaded, !isLoadingEarlier { loadEarlier() }
+                if nearTop, !stuckToBottom, !headLoaded, !isLoadingEarlier, !isLoadingOlderTurns {
+                    loadEarlier()
+                }
             }
             // Streamed growth: follow instantly, but ONLY while pinned. A single
             // plain `scrollTo` per tick (no re-assert) — the content is already
