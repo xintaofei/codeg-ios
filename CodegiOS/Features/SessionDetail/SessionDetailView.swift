@@ -277,6 +277,7 @@ struct SessionDetailView: View {
                     notice: model.notice,
                     attachments: model.attachments,
                     canAttachMore: model.canAttachMore,
+                    canAttachImages: model.canAttachImages,
                     onAddAttachments: { model.addAttachments($0) },
                     onRemoveAttachment: { model.removeAttachment($0) },
                     onNotice: { model.notice = $0 },

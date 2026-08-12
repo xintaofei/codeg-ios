@@ -16,6 +16,11 @@ struct ComposeBar: View {
     let notice: String?
     let attachments: [Attachment]
     let canAttachMore: Bool
+    /// False only when the live session has positively said it takes images in
+    /// neither encoding — then the Attach section is dropped rather than shown
+    /// permanently disabled, since for that agent there is nothing to enable.
+    /// True (the default) whenever capabilities are still unknown.
+    let canAttachImages: Bool
     let onAddAttachments: ([Attachment]) -> Void
     let onRemoveAttachment: (UUID) -> Void
     let onNotice: (String) -> Void
@@ -132,21 +137,23 @@ struct ComposeBar: View {
         Menu {
             // Attach images. Disabled per-item when the attachment budget is full,
             // so the insert actions below stay reachable.
-            Section("Attach") {
-                Button { showPhotoPicker = true } label: {
-                    Label("Photo Library", systemImage: "photo.on.rectangle")
-                }
-                .disabled(!canAttachMore)
-                if isCameraAvailable {
-                    Button { showCamera = true } label: {
-                        Label("Camera", systemImage: "camera")
+            if canAttachImages {
+                Section("Attach") {
+                    Button { showPhotoPicker = true } label: {
+                        Label("Photo Library", systemImage: "photo.on.rectangle")
+                    }
+                    .disabled(!canAttachMore)
+                    if isCameraAvailable {
+                        Button { showCamera = true } label: {
+                            Label("Camera", systemImage: "camera")
+                        }
+                        .disabled(!canAttachMore)
+                    }
+                    Button { showFileImporter = true } label: {
+                        Label("Files", systemImage: "folder")
                     }
                     .disabled(!canAttachMore)
                 }
-                Button { showFileImporter = true } label: {
-                    Label("Files", systemImage: "folder")
-                }
-                .disabled(!canAttachMore)
             }
             // Insert text: quick messages, expert mentions, slash commands.
             Section("Insert") {

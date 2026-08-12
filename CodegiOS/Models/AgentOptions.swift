@@ -16,9 +16,12 @@ import Foundation
 struct AgentOptionsSnapshot: Hashable, Sendable, Decodable {
     let modes: SessionModeState?
     let configOptions: [SessionConfigOption]
+    /// What the probe's session said it accepts in a prompt. Nil when the agent
+    /// advertised nothing within the probe's window.
+    let promptCapabilities: PromptCapabilities?
 
     private enum CodingKeys: String, CodingKey {
-        case modes, configOptions
+        case modes, configOptions, promptCapabilities
     }
 
     init(from decoder: Decoder) throws {
@@ -27,12 +30,14 @@ struct AgentOptionsSnapshot: Hashable, Sendable, Decodable {
         // Rust always serializes the Vec, but default to empty defensively so a
         // server that omits it can't fail the whole decode.
         configOptions = try c.decodeIfPresent([SessionConfigOption].self, forKey: .configOptions) ?? []
+        promptCapabilities = try c.decodeIfPresent(PromptCapabilities.self, forKey: .promptCapabilities)
     }
 
     /// Direct initializer for previews / tests.
-    init(modes: SessionModeState?, configOptions: [SessionConfigOption]) {
+    init(modes: SessionModeState?, configOptions: [SessionConfigOption], promptCapabilities: PromptCapabilities? = nil) {
         self.modes = modes
         self.configOptions = configOptions
+        self.promptCapabilities = promptCapabilities
     }
 
     /// True when there is nothing the user can pick — used to show a
@@ -69,9 +74,18 @@ struct SessionSnapshot: Hashable, Sendable, Decodable {
     /// Slash commands the live agent advertises (`available_commands`). Empty
     /// until a connection is bound to the conversation; surfaced in the "+" menu.
     let availableCommands: [AvailableCommandInfo]
+    /// What THIS live session accepts in a prompt — the authoritative source for
+    /// encoding an attached image (see ``PromptCapabilities``). Nil until the
+    /// agent's `initialize` handshake has published them.
+    let promptCapabilities: PromptCapabilities?
+    /// The connection's own lifecycle state. Read only to stop waiting on a
+    /// connection that has already died; an unrecognized value decodes to nil,
+    /// which means "keep waiting" — the safe direction.
+    let status: ConnectionStatus?
 
     private enum CodingKeys: String, CodingKey {
         case modes, currentMode, configOptions, selectorsReady, availableCommands
+        case promptCapabilities, status
     }
 
     init(from decoder: Decoder) throws {
@@ -81,6 +95,14 @@ struct SessionSnapshot: Hashable, Sendable, Decodable {
         configOptions = try c.decodeIfPresent([SessionConfigOption].self, forKey: .configOptions)
         selectorsReady = try c.decodeIfPresent(Bool.self, forKey: .selectorsReady) ?? false
         availableCommands = try c.decodeIfPresent([AvailableCommandInfo].self, forKey: .availableCommands) ?? []
+        promptCapabilities = try c.decodeIfPresent(PromptCapabilities.self, forKey: .promptCapabilities)
+        status = try c.decodeIfPresent(String.self, forKey: .status).flatMap(ConnectionStatus.init(rawValue:))
+    }
+
+    /// True when this session is over, so nothing more will ever be published on
+    /// it. Mirrors the give-up condition in the backend's own capability wait.
+    var isConnectionOver: Bool {
+        status == .disconnected || status == .error
     }
 
     /// True when the snapshot actually carries selectable options (a live session
@@ -91,8 +113,58 @@ struct SessionSnapshot: Hashable, Sendable, Decodable {
 
     /// View as the catalog shape the sheet renders.
     var asOptionsSnapshot: AgentOptionsSnapshot {
-        AgentOptionsSnapshot(modes: modes, configOptions: configOptions ?? [])
+        AgentOptionsSnapshot(
+            modes: modes,
+            configOptions: configOptions ?? [],
+            promptCapabilities: promptCapabilities
+        )
     }
+}
+
+/// What an agent accepts in a prompt (Rust `PromptCapabilitiesInfo`, from the
+/// ACP `initialize` handshake). Decode-only.
+///
+/// This decides how an attached image is put on the wire, because the same bytes
+/// have two encodings and agents disagree about which they take:
+///
+/// - `image` — a native ACP `image` block (Claude, Codex, …).
+/// - `embeddedContext` — a `resource` block whose `blob` carries the bytes under
+///   an image mime type. Grok advertises `image: false` + `embedded_context: true`
+///   and only accepts this form.
+///
+/// An agent that advertises neither has no third shape to reach for; see
+/// ``Attachment/promptInputBlock(for:)``.
+struct PromptCapabilities: Hashable, Sendable, Decodable {
+    let image: Bool
+    /// Decoded for a faithful mirror of the wire struct; this client attaches no
+    /// audio, so nothing reads it yet.
+    let audio: Bool
+    let embeddedContext: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case image, audio, embeddedContext
+    }
+
+    init(image: Bool, audio: Bool = false, embeddedContext: Bool) {
+        self.image = image
+        self.audio = audio
+        self.embeddedContext = embeddedContext
+    }
+
+    /// Rust serializes all three (plain bools, no `Option`), but default each
+    /// defensively: this rides inside ``SessionSnapshot``, and throwing here
+    /// would fail the whole snapshot — taking modes, config and slash commands
+    /// down with it — over a field nothing but attachment routing reads.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        image = try c.decodeIfPresent(Bool.self, forKey: .image) ?? false
+        audio = try c.decodeIfPresent(Bool.self, forKey: .audio) ?? false
+        embeddedContext = try c.decodeIfPresent(Bool.self, forKey: .embeddedContext) ?? false
+    }
+
+    /// Whether an image can reach this agent in *any* encoding — the gate on
+    /// offering image attachment at all.
+    var canAttachImages: Bool { image || embeddedContext }
 }
 
 /// One selectable agent mode (Rust `SessionModeInfo`), e.g. Claude's

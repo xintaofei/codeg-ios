@@ -181,6 +181,24 @@ final class SessionDetailViewModel {
             && attachments.reduce(0) { $0 + $1.byteCount } < AttachmentPrep.maxTotalBytes
     }
 
+    /// The best-known prompt capabilities for the agent this screen talks to, and
+    /// the connection that value was confirmed against.
+    ///
+    /// Nil means "not established yet", which is the common case: the only source
+    /// is a *live* session, and an idle conversation has none. It is filled
+    /// opportunistically from snapshot reads the screen already makes, and
+    /// authoritatively — once per connection — by the send path before it encodes
+    /// an attached image.
+    private(set) var promptCapabilities: PromptCapabilities?
+    private var promptCapabilitiesConnection: String?
+
+    /// Whether to offer image attachment at all. Optimistic while unknown: the
+    /// alternative is withholding the feature from every agent that accepts it
+    /// (capabilities are unknown until a session is live), and a send that can't
+    /// be encoded still reaches the agent's own error. Only a live session that
+    /// positively rejects both encodings hides the "+" menu's Attach section.
+    var canAttachImages: Bool { promptCapabilities?.canAttachImages ?? true }
+
     /// Coarse phase of an in-flight send, for the compose status line.
     enum SendState: Equatable {
         case idle
@@ -276,7 +294,9 @@ final class SessionDetailViewModel {
         // after an apply, since the set_* routes only enqueue the change.
         agentOptions.loadSnapshot = { [weak self] in
             guard let self, let id = self.conversationID else { return nil }
-            return try await self.client.sessionSnapshot(conversationId: id)
+            let snapshot = try await self.client.sessionSnapshot(conversationId: id)
+            self.adoptPromptCapabilities(from: snapshot)
+            return snapshot
         }
 
         // Quick messages + experts are connection-independent catalog reads.
@@ -296,7 +316,9 @@ final class SessionDetailViewModel {
         }
         insertModel.loadCommandsAction = { [weak self] in
             guard let self, let id = self.conversationID else { return [] }
-            return try await self.client.sessionSnapshot(conversationId: id)?.availableCommands ?? []
+            let snapshot = try await self.client.sessionSnapshot(conversationId: id)
+            self.adoptPromptCapabilities(from: snapshot)
+            return snapshot?.availableCommands ?? []
         }
 
     }
@@ -636,6 +658,11 @@ final class SessionDetailViewModel {
     /// option-apply / first prompt re-resolves against the new agent/folder.
     private func resetDraftConnection() {
         connectionID = nil
+        // Capabilities belong to the agent that was selected, not to the screen —
+        // keeping Grok's after a switch to Claude would encode the next image as
+        // an embedded blob for an agent that takes native images.
+        promptCapabilities = nil
+        promptCapabilitiesConnection = nil
         agentOptions.teardown()
     }
 
@@ -1043,11 +1070,86 @@ final class SessionDetailViewModel {
         return conn
     }
 
+    /// How long to keep asking a connection what it accepts, matching the
+    /// backend's own `IMAGE_CAPABILITY_WAIT`. A wait is needed at all because
+    /// `acp_connect` returns as soon as the agent process is registered: a fresh
+    /// session's `initialize` — which is what publishes capabilities — is still in
+    /// flight, and the snapshot route answers immediately with whatever it has.
+    /// Reading once would hand a brand-new Grok session the native image block it
+    /// rejects, which is the exact failure this routing exists to prevent.
+    private static let promptCapabilityWait: Duration = .seconds(20)
+
+    /// The capabilities of the connection this prompt is about to reach: resolved
+    /// once per connection, and only for a prompt that actually carries an image —
+    /// the same rule the backend applies before re-encoding a work task's
+    /// attachments, so no text-only send pays for any of this. The by-connection
+    /// route is used rather than the by-conversation one because it also answers
+    /// in the pre-first-prompt window, where a draft's fresh connection isn't
+    /// bound to a conversation yet.
+    ///
+    /// Polls (unlike the backend's in-process wait, each ask is a round-trip, so
+    /// the interval backs off) and stops early on the three terminal answers:
+    /// capabilities published, connection gone, connection dead.
+    ///
+    /// Best-effort by design: running out of budget, a transport failure, or a
+    /// session that publishes nothing all fall back to whatever was learned
+    /// earlier — possibly nil, i.e. send natively. A capability lookup must never
+    /// be the thing that stops a message going out, and guessing wrong costs no
+    /// more than today: the agent's own error.
+    private func resolvePromptCapabilities(on conn: String) async -> PromptCapabilities? {
+        if promptCapabilitiesConnection == conn, let known = promptCapabilities { return known }
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: Self.promptCapabilityWait)
+        var interval: Duration = .milliseconds(200)
+        while !Task.isCancelled {
+            let snapshot: SessionSnapshot?
+            do {
+                snapshot = try await client.connectionSnapshot(connectionId: conn)
+            } catch {
+                return promptCapabilities   // no information; stop asking
+            }
+            guard let snapshot else { return promptCapabilities }   // connection gone
+            if let caps = snapshot.promptCapabilities {
+                promptCapabilities = caps
+                promptCapabilitiesConnection = conn
+                return caps
+            }
+            // A dead session will never advertise anything.
+            if snapshot.isConnectionOver { return promptCapabilities }
+            guard clock.now < deadline else { break }
+            // Cancellation makes the sleep return at once; the loop condition
+            // catches it on the next pass.
+            try? await Task.sleep(for: interval)
+            interval = min(interval * 2, .seconds(1))
+        }
+        return promptCapabilities
+    }
+
+    /// Take the capabilities off a live-session snapshot the screen read for some
+    /// other reason (the options sheet, the slash-command list) — free, and enough
+    /// to gate the "+" menu before any send. Never *clears* a known value: a
+    /// snapshot without them means this session has published none yet, not that
+    /// the agent has none. The connection is deliberately left unrecorded, so the
+    /// send path still makes its own authoritative read against the connection it
+    /// is actually prompting.
+    private func adoptPromptCapabilities(from snapshot: SessionSnapshot?) {
+        guard let caps = snapshot?.promptCapabilities else { return }
+        promptCapabilities = caps
+    }
+
     private func sendPrompt(conn: String, text: String, attachments sending: [Attachment], clientMessageID: String) async throws {
         // Text first, then images — matches the web client's block order.
         var blocks: [PromptInputBlock] = []
         if !text.isEmpty { blocks.append(.text(text)) }
-        blocks.append(contentsOf: sending.map { $0.promptInputBlock })
+        if !sending.isEmpty {
+            let caps = await resolvePromptCapabilities(on: conn)
+            blocks.append(contentsOf: sending.map { $0.promptInputBlock(for: caps) })
+            // Resolving capabilities can wait on a fresh agent's handshake, which
+            // is long enough for the user to hit Stop. `cancel()` has already torn
+            // the stream down by then, so prompting anyway would start a turn with
+            // nothing listening; `runSend` treats this throw as the no-op it is.
+            try Task.checkCancellation()
+        }
         // A new task sends a nil conversationId + the target folderId; the
         // server creates the conversation and announces it via
         // `conversation_linked` on the stream.

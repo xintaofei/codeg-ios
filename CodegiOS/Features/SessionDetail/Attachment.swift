@@ -1,20 +1,10 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// An image the user has attached to the next prompt. Image-only for now: the
-/// server's `PromptInputBlock` (and our `ContentBlock`) model `image` but not
-/// arbitrary `resource` files, so the "+" menu only accepts images. Holds the
-/// already-prepared (downscaled/compressed) bytes so the chip thumbnail and the
-/// wire payload come from the same source.
-///
-/// NOTE: the web client gates image attaching on the connection's
-/// `prompt_capabilities.image`. That capability is delivered as a live
-/// `prompt_capabilities` stream event on a persistent per-conversation
-/// connection, which this Phase-1 client does not maintain or model (same root
-/// as the agent-options probe seam). Image-unsupported agents are therefore not
-/// pre-gated here; such a turn surfaces the agent's error via the normal live-turn
-/// failure path rather than being blocked up front. Capability gating is a
-/// follow-up that depends on modeling live session/capability events.
+/// An image the user has attached to the next prompt. Image-only: the "+" menu
+/// offers no arbitrary-file route (the web client's inline file badges have no
+/// counterpart here). Holds the already-prepared (downscaled/compressed) bytes so
+/// the chip thumbnail and the wire payload come from the same source.
 struct Attachment: Identifiable, Hashable, Sendable {
     let id: UUID
     let name: String
@@ -31,9 +21,37 @@ struct Attachment: Identifiable, Hashable, Sendable {
     var byteCount: Int { data.count }
     var base64: String { data.base64EncodedString() }
 
-    /// The wire block sent in `acp_prompt`.
-    var promptInputBlock: PromptInputBlock {
-        .image(data: base64, mimeType: mimeType, uri: nil)
+    /// The wire block sent in `acp_prompt`, in the encoding `caps` says the
+    /// connected agent takes — a port of the web client's
+    /// `imageAttachmentToPromptBlock`, with the backend's `reencode_images` rule
+    /// for the case the web helper never has to face:
+    ///
+    /// - accepts images → a native `image` block.
+    /// - rejects images but takes embedded context (Grok) → a `resource` whose
+    ///   `blob` carries the same bytes under the same image mime type.
+    /// - **neither**, or not yet known → a native `image` block. There is no
+    ///   third shape, so re-encoding into one the agent also rejects would only
+    ///   obscure the error it is about to raise; and an unknown capability must
+    ///   not silently downgrade an agent that does take images.
+    func promptInputBlock(for caps: PromptCapabilities?) -> PromptInputBlock {
+        guard let caps, !caps.image, caps.embeddedContext else {
+            return .image(data: base64, mimeType: mimeType, uri: nil)
+        }
+        return .resource(uri: embeddedResourceURI, mimeType: mimeType, text: nil, blob: base64)
+    }
+
+    /// Stable identifier for these bytes when they ride as an embedded resource.
+    /// Every attachment here is picked/captured on the device, so there is never
+    /// a path the agent could read — the uri exists only to name the blob, and is
+    /// derived from the attachment (not a fresh UUID) so encoding is pure.
+    /// Mirrors the web client's `clipboard://` scheme.
+    private var embeddedResourceURI: String {
+        let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = "\(label.isEmpty ? "clipboard-image" : label)-\(id.uuidString)"
+        // `encodeURIComponent`'s unreserved set, so the uri matches what the web
+        // client would have produced for the same label.
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.!~*'()"))
+        return "clipboard://\(raw.addingPercentEncoding(withAllowedCharacters: allowed) ?? id.uuidString)"
     }
 
     /// The block used to render this image immediately in the optimistic user

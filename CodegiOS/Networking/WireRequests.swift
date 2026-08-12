@@ -6,11 +6,18 @@ import Foundation
 enum PromptInputBlock: Encodable, Sendable {
     case text(String)
     case image(data: String, mimeType: String, uri: String?)
+    /// Content embedded inline under a uri, carrying either `text` or a base64
+    /// `blob` — the encoding agents that reject native image blocks accept for
+    /// an attached image (see ``PromptCapabilities``). The server promotes an
+    /// image-mime blob back to an image for viewers and for the stored turn
+    /// (`user_blocks_from_prompt` / the Grok transcript parser), so the picture
+    /// still renders as a thumbnail on every client.
+    case resource(uri: String, mimeType: String?, text: String?, blob: String?)
 
     private enum CodingKeys: String, CodingKey {
         case type, text, data
         case mimeType = "mime_type"
-        case uri
+        case uri, blob
     }
 
     func encode(to encoder: Encoder) throws {
@@ -24,6 +31,14 @@ enum PromptInputBlock: Encodable, Sendable {
             try c.encode(data, forKey: .data)
             try c.encode(mimeType, forKey: .mimeType)
             try c.encodeIfPresent(uri, forKey: .uri)
+        case .resource(let uri, let mimeType, let text, let blob):
+            try c.encode("resource", forKey: .type)
+            try c.encode(uri, forKey: .uri)
+            // Rust reads the other three as `Option` + `#[serde(default)]`, so an
+            // omitted key and an explicit null are the same `None`.
+            try c.encodeIfPresent(mimeType, forKey: .mimeType)
+            try c.encodeIfPresent(text, forKey: .text)
+            try c.encodeIfPresent(blob, forKey: .blob)
         }
     }
 }
