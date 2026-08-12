@@ -29,6 +29,35 @@ struct ImageData: Codable, Hashable, Sendable {
     let uri: String?
 }
 
+/// What a persisted `tool_use` block says about its own lifecycle (Rust
+/// `ContentBlock::ToolUse.status`, `pending` / `in_progress` / `completed` /
+/// `failed`).
+///
+/// `.unknown` — the field was absent, empty, or a value we don't know — means
+/// exactly that: **unknown**, never "settled". Only an affirmative value may be
+/// acted on, because absence of a status is not evidence of anything: today only
+/// grok's parser records one, and it records it on calls that are already paired
+/// with a placeholder result.
+enum ToolUseStatus: Hashable, Sendable {
+    case unknown
+    /// `pending` / `in_progress` — the agent said this call was still working
+    /// *as of the line that wrote it*. A transcript is a record, not a live feed,
+    /// so this is only trustworthy while something else affirms the round is
+    /// running (see `TranscriptTimeline`'s in-flight scope).
+    case running
+    case completed
+    case failed
+
+    init(wire: String?) {
+        switch wire?.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "pending", "in_progress": self = .running
+        case "completed": self = .completed
+        case "failed": self = .failed
+        default: self = .unknown
+        }
+    }
+}
+
 /// A polymorphic block of message content (Rust `ContentBlock`, internally
 /// tagged by `type` with snake_case variant names). Decode-only: the server is
 /// the source of truth for transcripts; locally-constructed optimistic turns
@@ -39,7 +68,7 @@ enum ContentBlock: Hashable, Sendable, Decodable {
     case thinking(String)
     case image(ImageData)
     case imageGeneration(revisedPrompt: String?, image: ImageData?)
-    case toolUse(id: String?, name: String, inputPreview: String?, meta: AnyJSON?)
+    case toolUse(id: String?, name: String, inputPreview: String?, status: ToolUseStatus, meta: AnyJSON?)
     case toolResult(id: String?, outputPreview: String?, isError: Bool)
     case unknown(type: String)
 
@@ -47,7 +76,7 @@ enum ContentBlock: Hashable, Sendable, Decodable {
         // NOTE: the decoder uses `.convertFromSnakeCase`, so wire keys arrive
         // here already camelCased — match them in camelCase.
         case type, text, data, mimeType, uri, revisedPrompt, image
-        case toolUseId, toolName, inputPreview, meta
+        case toolUseId, toolName, inputPreview, status, meta
         case outputPreview, isError
     }
 
@@ -75,6 +104,7 @@ enum ContentBlock: Hashable, Sendable, Decodable {
                 id: try c.decodeIfPresent(String.self, forKey: .toolUseId),
                 name: try c.decodeIfPresent(String.self, forKey: .toolName) ?? "tool",
                 inputPreview: try c.decodeIfPresent(String.self, forKey: .inputPreview),
+                status: ToolUseStatus(wire: try c.decodeIfPresent(String.self, forKey: .status)),
                 // `meta["codeg.delegation"]` carries the delegate card's authoritative
                 // terminal status; nil for tool uses without any meta.
                 meta: try c.decodeIfPresent(AnyJSON.self, forKey: .meta)

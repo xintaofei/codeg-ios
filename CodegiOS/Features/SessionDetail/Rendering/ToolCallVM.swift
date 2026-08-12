@@ -97,7 +97,13 @@ struct ToolCallVM: Identifiable {
         self.input = resolvedInput
         self.output = output
         self.content = content
-        self.isError = isError
+        // `state == .error` and `isError` must agree: the state drives THIS card,
+        // but `isError` is what everything above it reads — the group's "N failed"
+        // badge, the group / delegation-poll / checklist rail markers, and the gate
+        // that keeps a failed task op out of the successful checklist. A failure
+        // the tool's own `status` declared has no result block to carry the flag,
+        // so it is stamped here rather than at each of those sites.
+        self.isError = isError || state == .error
         self.meta = meta
         self.transcript = transcript
         self.commandAction = action
@@ -199,8 +205,12 @@ enum RenderPart {
 @MainActor
 enum MessageRender {
 
-    static func adaptTurn(_ turn: MessageTurn) -> [RenderPart] {
-        if let cached = turnCache[turn] { return cached }
+    /// - Parameter inFlightRound: this turn belongs to the round the server says
+    ///   is running right now (`in_flight_user_turn_id`). It is the ONLY thing
+    ///   that may put a spinner on a persisted tool call — see `toolState`.
+    static func adaptTurn(_ turn: MessageTurn, inFlightRound: Bool = false) -> [RenderPart] {
+        let cacheKey = TurnKey(turn: turn, inFlightRound: inFlightRound)
+        if let cached = turnCache[cacheKey] { return cached }
 
         let blocks = turn.blocks
         var consumed = Set<Int>()
@@ -217,14 +227,15 @@ enum MessageRender {
             case .imageGeneration(let prompt, let img):
                 if let img { parts.append(.image(img, caption: prompt)) }
                 else if let prompt, !prompt.isEmpty { parts.append(.text(prompt)) }
-            case .toolUse(let toolID, let name, let inputPreview, let meta):
+            case .toolUse(let toolID, let name, let inputPreview, let status, let meta):
                 let resultIdx = findResult(in: blocks, after: idx, toolID: toolID, consumed: consumed)
                 var output: String?
                 var isErr = false
                 if let r = resultIdx, case .toolResult(_, let outPreview, let e) = blocks[r] {
                     output = outPreview; isErr = e; consumed.insert(r)
                 }
-                let state: ToolCallState = resultIdx == nil ? .running : (isErr ? .error : .done)
+                let state = toolState(paired: resultIdx != nil, isError: isErr,
+                                      status: status, inFlightRound: inFlightRound)
                 // A compaction is a boundary marker, not a call: it renders as a
                 // divider between turns, so it never becomes a `ToolCallVM` (and so
                 // can't be swept into a tool group).
@@ -248,8 +259,47 @@ enum MessageRender {
         }
 
         let grouped = group(parts)
-        cacheTurn(turn, grouped)
+        cacheTurn(cacheKey, grouped)
         return grouped
+    }
+
+    /// The lifecycle state of a **persisted** tool call.
+    ///
+    /// The governing rule is that a transcript is a *record*: a `tool_use` with
+    /// no `tool_result` normally means the conversation already ended, so the
+    /// call settled — missing output is not evidence of liveness (an empty result
+    /// still writes a `tool_result`, and a codex code-mode script that never
+    /// `text()`s its call settles with none). Treating every unpaired call as
+    /// running is what left orphans from an interrupted round spinning forever.
+    ///
+    /// Two affirmative signals override that default, and nothing else does:
+    ///
+    /// * `status` — the agent's own statement. Terminal values settle the card
+    ///   even with no result block; `.running` is only honored inside the
+    ///   in-flight round, because a transcript keeps whatever status it was last
+    ///   given and an interrupted call's stale `in_progress` would otherwise
+    ///   produce a spinner nothing will ever clear.
+    /// * `inFlightRound` — the server says this round is running right now
+    ///   (`in_flight_user_turn_id`), so its unfinished calls really are working.
+    ///   This is what a cross-client reader (or a viewer whose attach missed)
+    ///   has instead of a live stream.
+    ///
+    /// An in-round `.running` is honored even on a PAIRED call: grok pairs every
+    /// call with a placeholder result and backfills it, so one of its calls that
+    /// is still working arrives already matched. A failure outranks it either
+    /// way — a result that errored, or a `failed` status, is terminal.
+    ///
+    /// `.error` here is not only this card's own indicator: `ToolCallVM` mirrors
+    /// it into `isError`, which is what the enclosing group / checklist read.
+    static func toolState(paired: Bool, isError: Bool,
+                          status: ToolUseStatus, inFlightRound: Bool) -> ToolCallState {
+        if paired, isError { return .error }
+        if status == .failed { return .error }
+        if inFlightRound, status == .running { return .running }
+        if paired { return .done }
+        if status == .completed { return .done }
+        // Unknown, or a `running` the round can't vouch for.
+        return inFlightRound ? .running : .done
     }
 
     static func adaptLive(_ turn: LiveTurn) -> [RenderPart] {
@@ -419,13 +469,22 @@ enum MessageRender {
     // lookup compares full value equality (hash is only a bucket hint), so a
     // colliding id with different content can never produce a false hit, and a
     // turn whose content actually changed re-derives correctly.
-    private static var turnCache: [MessageTurn: [RenderPart]] = [:]
-    private static var turnOrder: [MessageTurn] = []
+    //
+    // `inFlightRound` rides in the key for the same reason: it changes what the
+    // very same turn adapts to (a spinner vs. a settled card), so a cache keyed
+    // on content alone would keep serving the running render after the round
+    // completed.
+    private struct TurnKey: Hashable {
+        let turn: MessageTurn
+        let inFlightRound: Bool
+    }
+    private static var turnCache: [TurnKey: [RenderPart]] = [:]
+    private static var turnOrder: [TurnKey] = []
     private static let turnLimit = 400
 
-    private static func cacheTurn(_ turn: MessageTurn, _ parts: [RenderPart]) {
-        turnCache[turn] = parts
-        turnOrder.append(turn)
+    private static func cacheTurn(_ key: TurnKey, _ parts: [RenderPart]) {
+        turnCache[key] = parts
+        turnOrder.append(key)
         if turnOrder.count > turnLimit {
             let evicted = turnOrder.removeFirst()
             turnCache.removeValue(forKey: evicted)
@@ -447,13 +506,53 @@ enum ToolDerive {
     }
 
     /// Descend into a wrapper object (`input`/`arguments`/…) when the args were
-    /// nested; otherwise the object itself is the args.
+    /// nested; otherwise the object itself is the args — then fill in canonical
+    /// argument names the agent spelled differently on the wire.
+    ///
+    /// Every card body and every derivation reads its arguments through here, so
+    /// this is the one place the aliasing has to happen for Read/Write/Edit/Grep
+    /// to agree on the same payload.
     static func effectiveArgs(_ parsed: [String: Any]?) -> [String: Any]? {
         guard let parsed else { return nil }
         for key in ["input", "arguments", "params", "payload"] {
-            if let inner = parsed[key] as? [String: Any] { return inner }
+            if let inner = parsed[key] as? [String: Any] { return aliased(inner) }
         }
-        return parsed
+        return aliased(parsed)
+    }
+
+    /// Wire spellings that mean the same argument as one of the canonical
+    /// (snake_case) keys the cards read. OpenCode names its tool arguments in
+    /// camelCase and its ACP adapter forwards them verbatim, so the LIVE stream
+    /// carries `filePath` / `oldString` where the history parser has already
+    /// rewritten them (`parsers/opencode.rs::normalize_tool_call`) — which is why
+    /// a live Write card lost its path and a live Edit card lost its diff while
+    /// the same call rendered fine after a reload. `include` → `glob` is the same
+    /// one-sided rename that parser applies to OpenCode's grep filter.
+    private static let argAliases: [(alias: String, canonical: String)] = [
+        ("filePath", "file_path"),
+        ("notebookPath", "notebook_path"),
+        ("oldString", "old_string"),
+        ("newString", "new_string"),
+        ("newSource", "new_source"),
+        ("replaceAll", "replace_all"),
+        ("editMode", "edit_mode"),
+        ("cellType", "cell_type"),
+        ("include", "glob"),
+    ]
+
+    /// Add any missing canonical key. Only ever writes a key that is ABSENT, so
+    /// it can never override what an agent actually sent — making it a no-op on
+    /// every payload the Rust parsers already normalized (all history) and on
+    /// every agent that speaks snake_case natively. Returns the input untouched
+    /// when nothing had to be added, so the common case copies nothing.
+    private static func aliased(_ args: [String: Any]) -> [String: Any] {
+        var out: [String: Any]?
+        for (alias, canonical) in argAliases {
+            guard let value = args[alias], !(value is NSNull), args[canonical] == nil else { continue }
+            if out == nil { out = args }
+            out?[canonical] = value
+        }
+        return out ?? args
     }
 
     /// Pull the shell command out of a tool input. Mirrors web
@@ -587,13 +686,16 @@ enum ToolDerive {
         case "todowrite", "todo_write", "update_todo_list", "todos":
             if let (done, total) = todoCounts(args: args) { return "Todos (\(done)/\(total))" }
             return "Todos"
-        case "task", "taskcreate", "agent", "dispatch_agent", "new_task", "delegate_to_agent":
+        case "task", "taskcreate", "agent", "dispatch_agent", "new_task", "delegate_to_agent",
+             "spawn_subagent":
             if let sub = str(["subagent_type", "agent_type", "description", "subject"]) {
                 return display(name) + ": " + truncate(sub, 50)
             }
             return display(name)
         case "skill":
-            if let s = str(["name", "skill", "command"]) { return "Skill: \(s)" }
+            // `skill` is what most hosts pass; OpenCode's native tool takes
+            // `name`. Read the unambiguous one first.
+            if let s = str(["skill", "name", "command"]) { return "Skill: \(s)" }
             return "Skill"
         default:
             if let v = firstStringValue(args) { return "\(display(name)): \(truncate(v, 50))" }
@@ -629,8 +731,13 @@ enum ToolDerive {
     private static let todoNames: Set<String> = ["todowrite", "todo_write", "update_todo_list", "todos"]
     // Agent-DISPATCH tools (spawn a sub-agent) — distinct from the task-MANAGEMENT
     // tools below, which manage a to-do list.
+    // `spawn_subagent` is Grok's native sub-agent launcher. It has to be listed
+    // explicitly: the history parser rewrites it to "Agent", but any path where
+    // only the raw name survives (the `x.ai/tool.name` fallback, with no input to
+    // classify from) reaches here — and no substring rule can rescue it, since
+    // "subagent" has no word boundary before "agent".
     private static let taskNames: Set<String> = [
-        "task", "agent", "dispatch_agent", "new_task",
+        "task", "agent", "dispatch_agent", "new_task", "spawn_subagent",
         "delegate_to_agent", "delegate_task", "subagent", "spawn_agent", "call_omo_agent",
     ]
     /// The harness task-management tools — a to-do list, NOT sub-agent dispatch.

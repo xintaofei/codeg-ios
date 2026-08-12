@@ -392,7 +392,10 @@ final class LiveTurn: Identifiable {
                     blocks.append(.thinking(run.fullText))
                 }
             case .tool(let call):
-                blocks.append(.toolUse(id: call.id, name: call.title, inputPreview: call.rawInput, meta: call.meta))
+                // The snapshot always pairs a result below, so the status slot has
+                // nothing to add — the pair already states the outcome.
+                blocks.append(.toolUse(id: call.id, name: call.title, inputPreview: call.rawInput,
+                                       status: .unknown, meta: call.meta))
                 let output = call.rawOutput.isEmpty ? call.content : call.rawOutput
                 blocks.append(.toolResult(id: call.id, outputPreview: output, isError: call.isError))
             }

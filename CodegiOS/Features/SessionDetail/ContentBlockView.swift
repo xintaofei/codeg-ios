@@ -24,9 +24,13 @@ struct ContentBlockView: View {
             } else if let revisedPrompt {
                 MarkdownContent(raw: revisedPrompt)
             }
-        case .toolUse(let id, let name, let inputPreview, let meta):
+        case .toolUse(let id, let name, let inputPreview, let status, let meta):
             ToolCallCard(vm: ToolCallVM(
-                id: id ?? "tool", rawName: name, kind: "", state: .done,
+                id: id ?? "tool", rawName: name, kind: "",
+                // Standalone (outside a transcript) there is no round to scope
+                // against, so only the block's own status can say "still working".
+                state: MessageRender.toolState(paired: false, isError: false,
+                                               status: status, inFlightRound: false),
                 input: inputPreview, output: nil, content: nil, isError: false, meta: meta))
         case .toolResult(let id, let outputPreview, let isError):
             ToolCallCard(vm: ToolCallVM(

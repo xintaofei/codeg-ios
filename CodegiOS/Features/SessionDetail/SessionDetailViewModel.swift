@@ -88,6 +88,13 @@ final class SessionDetailViewModel {
     /// A page of older history is being fetched (drives the transcript's spinner).
     private(set) var loadingOlderTurns = false
 
+    /// The user turn that opened the round the server says is running right now.
+    /// Unlike the window this describes the FULL transcript, but it is adopted with
+    /// `turns` all the same: it scopes them, and a scope that outlived the turns it
+    /// scopes would put a spinner on the wrong round. `nil` whenever the server
+    /// reports nothing in flight.
+    private(set) var inFlightUserTurnId: String?
+
     /// Turns to request on the first fetch of a session. Matches the web client's
     /// tail; comfortably more than the transcript renders on open (its own view
     /// window is 50), so scrolling up is instant for a while before it pages.
@@ -416,12 +423,15 @@ final class SessionDetailViewModel {
         return .fetched(WindowedFetch(detail: reset, reanchored: true))
     }
 
-    /// Adopt the window a response arrived under. Pair this with EVERY
-    /// `turns = detail.turns`: the array and the window are one coordinate
-    /// system and a half-applied update mis-places the whole transcript. `nil`
-    /// on a legacy response is the truthful answer — it carried every turn.
-    private func adoptWindow(_ detail: ConversationDetail) {
+    /// Adopt the coordinates a response's `turns` arrived under: where they sit in
+    /// the full transcript, and which round the server says is running. Pair this
+    /// with EVERY `turns = detail.turns` — the array and its window are one
+    /// coordinate system, and a half-applied update mis-places the whole
+    /// transcript. A `nil` window on a legacy response is the truthful answer: it
+    /// carried every turn.
+    private func adoptTranscriptScope(_ detail: ConversationDetail) {
         window = TranscriptWindow(detail)
+        inFlightUserTurnId = detail.inFlightUserTurnId
     }
 
     /// Prepend one page of older history above the loaded window. Single-flight;
@@ -462,7 +472,7 @@ final class SessionDetailViewModel {
                liveTurn == nil, !isInFlight {
                 summary = fetch.detail.summary
                 turns = fetch.detail.turns
-                adoptWindow(fetch.detail)
+                adoptTranscriptScope(fetch.detail)
                 sessionStats = fetch.detail.sessionStats ?? sessionStats
             }
             return
@@ -507,7 +517,7 @@ final class SessionDetailViewModel {
                 summary = detail.summary
                 if !stale {
                     turns = detail.turns
-                    adoptWindow(detail)
+                    adoptTranscriptScope(detail)
                 }
                 sessionStats = detail.sessionStats
                 allFolders = folders
@@ -1304,7 +1314,7 @@ final class SessionDetailViewModel {
         let detail = fetch.detail
         summary = detail.summary
         turns = detail.turns
-        adoptWindow(detail)
+        adoptTranscriptScope(detail)
         sessionStats = detail.sessionStats ?? sessionStats
         requestStickToBottom()
     }
@@ -1616,7 +1626,7 @@ final class SessionDetailViewModel {
             // Mid-stream: adopt identity + stats only — the live turn is still
             // rendering and `refreshAfterTurn()` reconciles the transcript. The
             // minimal window keeps this off the transcript's coordinate system
-            // entirely (no `adoptWindow`); the reconcile opens the real one.
+            // entirely (no `adoptTranscriptScope`); the reconcile opens the real one.
             self.summary = detail.summary
             self.sessionStats = detail.sessionStats ?? self.sessionStats
             self.insertModel.agentType = detail.summary.agentType
@@ -1808,7 +1818,7 @@ final class SessionDetailViewModel {
                     isTurnActive = false
                     clearInteractivePrompts()
                     turns = detail.turns
-                    adoptWindow(detail)
+                    adoptTranscriptScope(detail)
                     pendingUserTurns.removeAll()
                     liveTurn = nil
                     sendState = .idle
@@ -1989,7 +1999,7 @@ final class SessionDetailViewModel {
                     let advanced = !fetch.reanchored && detail.globalEnd > baselineEnd
                     if advanced, !mustPreserveReply || Self.transcriptHasReply(detail.turns) {
                         turns = detail.turns
-                        adoptWindow(detail)
+                        adoptTranscriptScope(detail)
                         pendingUserTurns.removeAll()
                         liveTurn = nil
                         requestScrollToBottom()

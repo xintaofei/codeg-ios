@@ -106,7 +106,12 @@ enum TranscriptTimeline {
     ///   beside the live stream. Mirrors the web client's `getTimelineTurns`
     ///   in-flight suppression. A no-op on the send path (the optimistic prompt is in
     ///   `pending`, not `turns`, so there are no trailing persisted assistant turns).
-    static func buildPersisted(turns rawTurns: [MessageTurn], pending: [MessageTurn], agent: AgentType, suppressInFlight: Bool) -> [TimelineNode] {
+    /// - Parameter inFlightUserTurnId: the server's affirmative statement that the
+    ///   round opened by this user turn is running right now. The replies after it
+    ///   are the only ones allowed to render an unfinished tool call as running —
+    ///   everywhere else a `tool_use` with no result is a record of a call that
+    ///   settled, not one still working. See `MessageRender.toolState`.
+    static func buildPersisted(turns rawTurns: [MessageTurn], pending: [MessageTurn], agent: AgentType, suppressInFlight: Bool, inFlightUserTurnId: String? = nil) -> [TimelineNode] {
         var nodes: [TimelineNode] = []
 
         // Hide the persisted partial in-flight reply while the reattach live turn
@@ -120,6 +125,14 @@ enum TranscriptTimeline {
                 .map(\.element)
         } else {
             turns = rawTurns
+        }
+
+        // Where the running round begins, if it is loaded at all. Resolved on the
+        // POST-suppression list so the index lines up with the walk below. Absent
+        // (nil id, or a prompt that scrolled out of the loaded window) simply means
+        // no turn is in the round — a missing anchor must never widen the scope.
+        let inFlightIdx = inFlightUserTurnId.flatMap { id in
+            turns.firstIndex { $0.role == .user && $0.id == id }
         }
 
         // Persisted turns. User/system map 1:1; runs of consecutive assistant
@@ -145,7 +158,10 @@ enum TranscriptTimeline {
                 var j = i + 1
                 while j < turns.count, turns[j].role == .assistant { j += 1 }
                 let merged = merge(Array(turns[i..<j]))
-                nodes.append(contentsOf: assistantNodes(merged: merged, questionID: lastUserID, agent: agent))
+                nodes.append(contentsOf: assistantNodes(
+                    merged: merged, questionID: lastUserID, agent: agent,
+                    inFlightRound: inFlightIdx.map { i > $0 } ?? false
+                ))
                 i = j
             }
         }
@@ -171,8 +187,9 @@ enum TranscriptTimeline {
 
     // MARK: Assistant reply → nodes
 
-    private static func assistantNodes(merged: MessageTurn, questionID: String?, agent: AgentType) -> [TimelineNode] {
-        var out = MessageRender.adaptTurn(merged).enumerated().map { idx, part in
+    private static func assistantNodes(merged: MessageTurn, questionID: String?, agent: AgentType,
+                                       inFlightRound: Bool) -> [TimelineNode] {
+        var out = MessageRender.adaptTurn(merged, inFlightRound: inFlightRound).enumerated().map { idx, part in
             node(for: part, ownerID: merged.id, index: idx, agent: agent)
         }
         // The footer (reply time / model / tokens / copy / jump) is always emitted

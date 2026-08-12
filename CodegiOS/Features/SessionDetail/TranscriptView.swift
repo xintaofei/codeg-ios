@@ -48,6 +48,11 @@ struct TranscriptView<Header: View>: View {
     /// authoritative complete in-flight reply; the persisted partial copy the
     /// agent is concurrently writing into `turns` is hidden so it isn't doubled.
     var liveOwnsInFlightReply: Bool = false
+    /// The user turn that opened the round the server says is running right now.
+    /// Scopes which persisted tool calls may render as running — without it a
+    /// cross-client reader shows a settled ✓ for a call that is still working,
+    /// and an orphan left by an interrupted round spins forever.
+    var inFlightUserTurnId: String?
     /// The session's agent, for the agent-branded marker on assistant nodes.
     let agent: AgentType
     /// A cheap, monotonic version of the view model's `turns`, bumped on every
@@ -135,6 +140,10 @@ struct TranscriptView<Header: View>: View {
         var effectiveStart: Int
         var pendingIDs: [String]
         var suppressInFlight: Bool
+        // Part of the key, not just an input: it decides whether an unfinished
+        // tool call renders as running, so the memo has to drop when the round
+        // ends (or moves) even though the turns themselves may not have changed.
+        var inFlightUserTurnId: String?
         var agent: AgentType
     }
     private final class PersistedMemo {
@@ -183,6 +192,7 @@ struct TranscriptView<Header: View>: View {
             effectiveStart: start,
             pendingIDs: pendingUserTurns.map(\.id),
             suppressInFlight: suppressInFlight,
+            inFlightUserTurnId: inFlightUserTurnId,
             agent: agent
         )
 
@@ -193,7 +203,8 @@ struct TranscriptView<Header: View>: View {
             let slice = start == 0 ? turns : Array(turns[start...])
             persisted = TranscriptTimeline.buildPersisted(
                 turns: slice, pending: pendingUserTurns, agent: agent,
-                suppressInFlight: suppressInFlight
+                suppressInFlight: suppressInFlight,
+                inFlightUserTurnId: inFlightUserTurnId
             )
             persistedMemo.key = key
             persistedMemo.nodes = persisted
