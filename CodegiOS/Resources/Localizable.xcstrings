@@ -1748,6 +1748,16 @@
         }
       }
     },
+    "codeg sends its companion MCP server when a session starts. Turn this off for an agent that rejects MCP servers and fails to connect." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "codeg 会在会话开始时附带自己的 MCP 服务器。若某个 agent 拒绝 MCP 服务器、因而连不上，请关掉此项。"
+          }
+        }
+      }
+    },
     "Collapse" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -8266,6 +8276,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "提交"
+          }
+        }
+      }
+    },
+    "Supports MCP servers" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "支持 MCP 服务器"
           }
         }
       }

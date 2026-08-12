@@ -35,10 +35,16 @@ struct AgentOptionsSnapshot: Hashable, Sendable, Decodable {
         self.configOptions = configOptions
     }
 
-    /// True when there is nothing the user can pick — used to show an
+    /// True when there is nothing the user can pick — used to show a
     /// "no configurable options" state instead of empty pickers.
+    ///
+    /// Counts only options this build can DRAW (see ``SessionConfigKind/isRenderable``):
+    /// an agent advertising nothing but a kind newer than this app would
+    /// otherwise land on the loaded state and render an empty card. Saying "no
+    /// configurable options" understates that case slightly — there are options,
+    /// just none reachable from this version — but it beats a blank sheet.
     var isEmpty: Bool {
-        (modes?.availableModes.isEmpty ?? true) && configOptions.isEmpty
+        (modes?.availableModes.isEmpty ?? true) && !configOptions.contains { $0.kind.isRenderable }
     }
 }
 
@@ -98,7 +104,7 @@ struct SessionModeInfo: Hashable, Sendable, Decodable, Identifiable {
 }
 
 /// One configurable option (Rust `SessionConfigOptionInfo`), e.g. a model
-/// selector. `kind` carries the concrete control (currently only `select`).
+/// selector or an on/off toggle. `kind` carries the concrete control.
 struct SessionConfigOption: Hashable, Sendable, Decodable, Identifiable {
     let id: String
     let name: String
@@ -108,10 +114,20 @@ struct SessionConfigOption: Hashable, Sendable, Decodable, Identifiable {
 }
 
 /// The control behind a `SessionConfigOption` (Rust `SessionConfigKindInfo`,
-/// internally tagged by `type`). Only `select` is modeled; unknown future kinds
-/// decode to `.unknown` rather than throwing.
+/// internally tagged by `type`). Unknown future kinds decode to `.unknown`
+/// rather than throwing — the server only strips discriminators *it* cannot
+/// decode, so a kind newer than this build can still reach us.
+///
+/// VALUES ARE OPAQUE STRINGS. The whole selector transport — the set command,
+/// `acp_connect`'s `preferredConfigValues`, and ``SelectorPrefsStore`` — carries
+/// `String` values; only the server's `encode_config_option_value` turns a
+/// boolean's `"true"` back into a real JSON boolean at the ACP wire. So a
+/// boolean option's value is exactly `"true"` / `"false"` everywhere here.
 enum SessionConfigKind: Hashable, Sendable, Decodable {
     case select(currentValue: String, options: [SessionConfigSelectOption], groups: [SessionConfigSelectGroup])
+    /// An on/off toggle (ACP's `unstable_boolean_config`). Cline 3.0.50+ ships
+    /// one as `auto_approve` ("Auto-approve tools").
+    case boolean(currentValue: Bool)
     case unknown(type: String)
 
     private enum CodingKeys: String, CodingKey {
@@ -128,8 +144,23 @@ enum SessionConfigKind: Hashable, Sendable, Decodable {
                 options: try c.decodeIfPresent([SessionConfigSelectOption].self, forKey: .options) ?? [],
                 groups: try c.decodeIfPresent([SessionConfigSelectGroup].self, forKey: .groups) ?? []
             )
+        case "boolean":
+            // Same `current_value` key as a select, but a JSON bool.
+            self = .boolean(currentValue: try c.decodeIfPresent(Bool.self, forKey: .currentValue) ?? false)
         default:
             self = .unknown(type: type)
+        }
+    }
+
+    /// Whether there is actually a control to draw for this option. False for a
+    /// kind this build doesn't model, and for a select that offers no choices —
+    /// both render nothing, so counting them would silently hide the Mode section
+    /// (suppressed whenever config options exist) and leave an empty card behind.
+    var isRenderable: Bool {
+        switch self {
+        case .select(_, let options, let groups): return !options.isEmpty || !groups.isEmpty
+        case .boolean: return true
+        case .unknown: return false
         }
     }
 
@@ -148,17 +179,34 @@ enum SessionConfigKind: Hashable, Sendable, Decodable {
         return nil
     }
 
-    /// The current value of a `select`, nil for any other kind.
-    var selectCurrentValue: String? {
-        if case .select(let value, _, _) = self { return value }
-        return nil
+    /// The option's current value in the selector transport's string form (see
+    /// the type's note), exactly as the agent reports it — including the empty
+    /// string a select may normalize to. Nil only for a kind this build cannot
+    /// read a value out of.
+    ///
+    /// Callers that SEED a selection additionally reject the empty string (there
+    /// is no such choice to highlight); reconciliation must not, or an agent that
+    /// answers `""` would leave the optimistic pick on screen forever.
+    var currentValueString: String? {
+        switch self {
+        case .select(let value, _, _): return value
+        case .boolean(let isOn): return isOn ? "true" : "false"
+        case .unknown: return nil
+        }
     }
 
-    /// Every selectable value (flat + grouped) — used to validate a cached
-    /// preference against the live catalog before pre-selecting it.
-    var allSelectValues: [String] {
-        guard case .select(_, let options, let groups) = self else { return [] }
-        return options.map(\.value) + groups.flatMap { $0.options.map(\.value) }
+    /// Whether `value` is one this option can actually take — used to validate a
+    /// cached preference against the live catalog before pre-selecting it.
+    func accepts(_ value: String) -> Bool {
+        switch self {
+        case .select(_, let options, let groups):
+            return options.contains { $0.value == value }
+                || groups.contains { $0.options.contains { $0.value == value } }
+        case .boolean:
+            return value == "true" || value == "false"
+        case .unknown:
+            return false
+        }
     }
 }
 

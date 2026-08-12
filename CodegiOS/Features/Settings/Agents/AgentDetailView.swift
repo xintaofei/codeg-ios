@@ -630,7 +630,7 @@ struct AgentConfigSection: View {
         case .pi:         PiConfigSection(model: model, agent: agent, client: client)
         // A user-registered ACP agent has no structured form to route to — see
         // `CustomAgentConfigSection`.
-        case .other:      CustomAgentConfigSection(agentType: agentType, agent: agent, draft: $draft)
+        case .other:      CustomAgentConfigSection(agentType: agentType, agent: agent, draft: $draft, client: client)
         }
     }
 }

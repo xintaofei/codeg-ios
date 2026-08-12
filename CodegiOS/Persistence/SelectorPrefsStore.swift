@@ -17,8 +17,13 @@ struct SelectorPrefs: Codable, Equatable, Sendable {
 /// them before reporting state), and used to pre-select the draft options sheet.
 ///
 /// Keyed purely by `AgentType` (not per-server) like the web — modes/config are
-/// intrinsic to the agent; a value the current server doesn't know is simply
-/// ignored on connect.
+/// intrinsic to the agent.
+///
+/// A remembered value is replayed at `acp_connect` with NO client-side
+/// validation, and the server forwards even a config id the agent never
+/// advertised (`apply_preferred_selectors` deliberately lets the agent decide).
+/// So a stale entry here is not inert — `AgentOptionsModel` prunes values a live
+/// catalog rejects, and never leaves one behind for an apply that failed.
 enum SelectorPrefsStore {
     private static let key = "codeg.selectorPrefs.v1"
 
@@ -35,17 +40,24 @@ enum SelectorPrefsStore {
         all()[agent.rawValue] ?? SelectorPrefs()
     }
 
-    /// Remember the agent's mode selection.
-    static func saveMode(agent: AgentType, modeId: String) {
+    /// Remember the agent's mode selection — or forget it, when `modeId` is nil
+    /// (an apply that failed and had nothing remembered before it).
+    static func saveMode(agent: AgentType, modeId: String?) {
         update(agent) { $0.modeId = modeId }
     }
 
     /// Remember one config option's value, preserving the agent's other values.
-    static func saveConfig(agent: AgentType, configId: String, valueId: String) {
+    /// A nil `valueId` FORGETS the option: used to undo a failed apply that had
+    /// no prior value, and to drop a cached value the agent's current catalog no
+    /// longer accepts. That matters because a remembered value is replayed at
+    /// `acp_connect` (`preferredConfigValues`) with no further validation — and
+    /// for a boolean option the server reads anything that isn't exactly `"true"`
+    /// as `false`, so a stale value doesn't fail, it silently means "off".
+    static func saveConfig(agent: AgentType, configId: String, valueId: String?) {
         update(agent) {
             var values = $0.configValues ?? [:]
             values[configId] = valueId
-            $0.configValues = values
+            $0.configValues = values.isEmpty ? nil : values
         }
     }
 

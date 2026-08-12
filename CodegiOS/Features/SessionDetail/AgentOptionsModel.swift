@@ -33,6 +33,20 @@ final class AgentOptionsModel {
         case failed(String)
     }
 
+    /// What a selection targets: the session's mode, or one config option by id.
+    ///
+    /// Typed rather than a `String` with a `"mode"` sentinel, because `"mode"` is
+    /// a real config-option id: codex-acp 1.0.0 advertises its approval presets
+    /// as BOTH standard ACP modes and an `id = "mode"` config option (see
+    /// `ensure_codex_mode_option` in the server's `connection.rs`). Under a
+    /// sentinel, picking that option would write the session-mode preference and
+    /// leave the config one stale — and at connect the server applies the mode
+    /// first and the config values after, so the stale one would win.
+    enum Selector: Hashable, Sendable {
+        case mode
+        case config(id: String)
+    }
+
     private let client: CodegClient
 
     /// Injected by the owner to resolve (and cache) the shared chat connection.
@@ -50,8 +64,13 @@ final class AgentOptionsModel {
     private(set) var selectedModeId: String?
     private(set) var selectedConfig: [String: String] = [:]   // configId → valueId
 
-    /// Keys currently being applied ("mode" or a configId) so a row can spin.
-    private(set) var applying: Set<String> = []
+    /// Selectors being applied FOR THE AGENT ON SCREEN, so a row can spin. Read
+    /// from the shared registry, so retargeting the sheet neither strands another
+    /// agent's spinner nor drops the claim that operation still holds.
+    var applying: Set<Selector> {
+        guard let agentType else { return [] }
+        return SelectorApplyRegistry.shared.selectors(for: agentType)
+    }
 
     /// Transient apply failure surfaced under the selectors.
     var errorNotice: String?
@@ -171,10 +190,11 @@ final class AgentOptionsModel {
         snapshot = options
         selectedModeId = snap.modes?.currentModeId ?? snap.currentMode ?? selectedModeId
         for option in snap.configOptions ?? [] {
-            if let current = option.kind.selectCurrentValue, !current.isEmpty {
+            if let current = option.kind.currentValueString, !current.isEmpty {
                 selectedConfig[option.id] = current
             }
         }
+        dropRejectedPreferences(in: snap.configOptions ?? [], modes: snap.modes)
         phase = options.isEmpty ? .empty : .loaded
     }
 
@@ -195,57 +215,157 @@ final class AgentOptionsModel {
             }
         }
         for option in snap.configOptions where selectedConfig[option.id] == nil {
-            if let saved = prefs.configValues?[option.id], option.kind.allSelectValues.contains(saved) {
+            if let saved = prefs.configValues?[option.id], option.kind.accepts(saved) {
                 selectedConfig[option.id] = saved
-            } else if let current = option.kind.selectCurrentValue, !current.isEmpty {
+            } else if let current = option.kind.currentValueString, !current.isEmpty {
                 selectedConfig[option.id] = current
             }
         }
+        dropRejectedPreferences(in: snap.configOptions, modes: snap.modes)
         phase = snap.isEmpty ? .empty : .loaded
+    }
+
+    /// Forget any remembered value this agent's CURRENT catalog says it can't
+    /// take, so the sheet and the next `acp_connect` agree.
+    ///
+    /// Declining to highlight a rejected value isn't enough on its own: the whole
+    /// preference map is replayed at connect, unvalidated. An option that changed
+    /// kind between agent versions is the case that bites — a select's `"on"`
+    /// left over on what is now a boolean isn't rejected server-side, it's read
+    /// as "not `\"true\"`" and applied as OFF, against a sheet showing the agent's
+    /// own (possibly ON) value.
+    ///
+    /// Only options present in this catalog are judged. A value for an option the
+    /// agent no longer advertises is left alone: it may belong to an agent version
+    /// the user goes back to. Note this is NOT because the server would ignore it
+    /// — `apply_preferred_selectors` deliberately forwards an unadvertised
+    /// `config_id` and lets the agent decide (codex-acp accepts `"mode"` whether
+    /// or not it advertised it) — but because a value we cannot judge is not one
+    /// we should throw away.
+    /// A selector with an apply in flight is skipped: that operation owns the
+    /// entry until it settles, and it is judging against the connection it
+    /// targeted rather than against this catalog.
+    /// Judge just the one selector that finished applying, against the catalog on
+    /// screen. Deliberately NOT the whole sweep: this catalog may be older than
+    /// some other selector's freshly settled value, and for Grok it can be a
+    /// different catalog entirely — switching model replaces the reasoning-effort
+    /// selector wholesale — so a broad re-judgement could delete a preference that
+    /// is perfectly valid under the catalog it was chosen from.
+    private func revalidate(_ selector: Selector, agent: AgentType) {
+        guard agentType == agent, let snapshot else { return }
+        let saved = SelectorPrefsStore.prefs(for: agent)
+        switch selector {
+        case .mode:
+            guard let value = saved.modeId, let modes = snapshot.modes,
+                  !modes.availableModes.isEmpty,
+                  !modes.availableModes.contains(where: { $0.id == value }) else { return }
+            remember(.mode, value: nil, agent: agent)
+        case .config(let id):
+            guard let value = saved.configValues?[id],
+                  let option = snapshot.configOptions.first(where: { $0.id == id }),
+                  option.kind.isRenderable, !option.kind.accepts(value) else { return }
+            remember(selector, value: nil, agent: agent)
+        }
+    }
+
+    private func dropRejectedPreferences(in options: [SessionConfigOption], modes: SessionModeState?) {
+        guard let agent = agentType else { return }
+        let saved = SelectorPrefsStore.prefs(for: agent)
+
+        if let remembered = saved.modeId, let modes, !modes.availableModes.isEmpty,
+           !modes.availableModes.contains(where: { $0.id == remembered }),
+           !SelectorApplyRegistry.shared.isClaimed(.init(agent: agent, selector: .mode)) {
+            remember(.mode, value: nil, agent: agent)
+        }
+
+        guard let savedConfig = saved.configValues else { return }
+        for option in options where option.kind.isRenderable {
+            let selector = Selector.config(id: option.id)
+            guard let value = savedConfig[option.id], !option.kind.accepts(value),
+                  !SelectorApplyRegistry.shared.isClaimed(.init(agent: agent, selector: selector))
+            else { continue }
+            remember(selector, value: nil, agent: agent)
+        }
     }
 
     // MARK: - Apply
 
     func selectMode(_ modeId: String) {
-        guard modeId != selectedModeId, canApply("mode") else { return }
+        guard modeId != selectedModeId, let agent = agentType, canApply(.mode, agent: agent) else { return }
         let previous = selectedModeId
         selectedModeId = modeId   // optimistic (only after the guards pass)
         // Remember the pick per agent so the next new session starts in this mode
         // (re-applied via acp_connect's preferredModeId). Mirrors the web client.
-        if let agentType { SelectorPrefsStore.saveMode(agent: agentType, modeId: modeId) }
-        run(key: "mode", desired: modeId, revert: { [weak self] in self?.selectedModeId = previous }) { client, conn in
+        remember(.mode, value: modeId, agent: agent)
+        run(selector: .mode, desired: modeId, previous: previous, agent: agent) { client, conn in
             try await client.setMode(connectionId: conn, modeId: modeId)
         }
     }
 
     func selectConfig(optionId: String, valueId: String) {
-        guard selectedConfig[optionId] != valueId, canApply(optionId) else { return }
+        let selector = Selector.config(id: optionId)
+        guard selectedConfig[optionId] != valueId, let agent = agentType,
+              canApply(selector, agent: agent) else { return }
         let previous = selectedConfig[optionId]
         selectedConfig[optionId] = valueId   // optimistic (only after the guards pass)
-        if let agentType { SelectorPrefsStore.saveConfig(agent: agentType, configId: optionId, valueId: valueId) }
-        run(key: optionId, desired: valueId, revert: { [weak self] in self?.selectedConfig[optionId] = previous }) { client, conn in
+        remember(selector, value: valueId, agent: agent)
+        run(selector: selector, desired: valueId, previous: previous, agent: agent) { client, conn in
             try await client.setConfigOption(connectionId: conn, configId: optionId, valueId: valueId)
         }
     }
 
-    /// True when an apply for `key` can start: a connection resolver is wired and
-    /// no apply for the same key is already in flight — so a rapid/second tap can't
-    /// move the highlighted selection without sending a matching network command.
-    private func canApply(_ key: String) -> Bool {
-        resolveConnection != nil && !applying.contains(key)
+    /// Persist (or forget, for a nil value) one remembered selection.
+    ///
+    /// This has to move in lockstep with the visible selection, including on the
+    /// revert path: the remembered value is replayed on the NEXT `acp_connect`
+    /// as `preferredConfigValues`/`preferredModeId`, so a value left behind by a
+    /// failed apply silently takes effect later, in a session where the user
+    /// never sees it. That is merely surprising for a model pick and unacceptable
+    /// for cline's `auto_approve`, whose whole job is to stop asking before
+    /// running a tool.
+    ///
+    /// `agent` is passed rather than read from `agentType`: an apply outlives the
+    /// draft's agent picker, and its outcome belongs to the agent it was made
+    /// for, not to whichever one the sheet is showing when it lands.
+    private func remember(_ selector: Selector, value: String?, agent: AgentType) {
+        switch selector {
+        case .mode:
+            SelectorPrefsStore.saveMode(agent: agent, modeId: value)
+        case .config(let id):
+            SelectorPrefsStore.saveConfig(agent: agent, configId: id, valueId: value)
+        }
+    }
+
+    /// True when an apply for `selector` can start: a connection resolver is wired
+    /// and no apply for the same selector is already in flight — so a rapid/second
+    /// tap can't move the highlighted selection without sending a matching network
+    /// command.
+    private func canApply(_ selector: Selector, agent: AgentType) -> Bool {
+        resolveConnection != nil
+            && !SelectorApplyRegistry.shared.isClaimed(.init(agent: agent, selector: selector))
     }
 
     private func run(
-        key: String,
+        selector: Selector,
         desired: String,
-        revert: @escaping () -> Void,
+        previous: String?,
+        agent: AgentType,
         action: @escaping (CodegClient, String) async throws -> Void
     ) {
-        guard resolveConnection != nil else { revert(); return }
-        applying.insert(key)
+        guard resolveConnection != nil else {
+            revert(selector, to: previous, agent: agent)
+            return
+        }
+        let claim = SelectorApplyRegistry.Claim(agent: agent, selector: selector)
+        SelectorApplyRegistry.shared.claim(claim)
         errorNotice = nil
         let client = self.client
         Task { [weak self] in
+            // Established BEFORE the weak-self exit and independent of the model:
+            // the claim is process-wide, so a model torn down before this job got
+            // a reference would otherwise strand that (agent, selector) for the
+            // life of the process.
+            defer { SelectorApplyRegistry.shared.release(claim) }
             guard let self else { return }
             do {
                 let conn = try await self.sharedConnection()
@@ -258,16 +378,37 @@ final class AgentOptionsModel {
                 // the authoritative snapshot of the EXACT connection we targeted
                 // (by id, so it works even before the connection binds to the
                 // conversation) before trusting the optimistic value.
-                await self.reconcile(key: key, desired: desired, connectionId: conn)
+                await self.reconcile(selector: selector, desired: desired, connectionId: conn, agent: agent)
             } catch is CancellationError {
-                revert()
+                self.revert(selector, to: previous, agent: agent)
                 self.connectionTask = nil
             } catch {
-                revert()
+                self.revert(selector, to: previous, agent: agent)
                 self.connectionTask = nil   // re-resolve on the next apply
-                self.errorNotice = Self.describe(error)
+                if self.agentType == agent { self.errorNotice = Self.describe(error) }
             }
-            self.applying.remove(key)
+            // A catalog load that happened WHILE the claim was held skipped this
+            // entry on purpose. Judge it once now that the operation has settled,
+            // or a value the loaded catalog rejects could sit in the store until
+            // some later load happens along. The claim is released by the `defer`
+            // above — which runs after this, so lift the judgement out of the
+            // skip-if-claimed rule explicitly.
+            self.revalidate(selector, agent: agent)
+        }
+    }
+
+    /// Undo an apply that didn't take. The STORE is put back regardless of what
+    /// the sheet is showing now — that entry belongs to `agent` and is replayed at
+    /// its next connect. It is the sole owner of that entry (see
+    /// ``SelectorApplyRegistry``), so no check is needed. The visible selection is
+    /// only restored while the sheet is still on that agent — otherwise it belongs
+    /// to whatever is on screen now.
+    private func revert(_ selector: Selector, to previous: String?, agent: AgentType) {
+        remember(selector, value: previous, agent: agent)
+        guard agentType == agent else { return }
+        switch selector {
+        case .mode: selectedModeId = previous
+        case .config(let id): selectedConfig[id] = previous
         }
     }
 
@@ -288,36 +429,89 @@ final class AgentOptionsModel {
     }
 
     /// Poll the authoritative snapshot of the targeted connection until it confirms
-    /// `desired` for `key`, or it settles on a different (agent-normalized) value,
-    /// or we time out. Adopts the authoritative value when seen; otherwise keeps
-    /// the optimistic pick. Queries by `connectionId` so it works even before the
-    /// connection is bound to the conversation.
-    private func reconcile(key: String, desired: String, connectionId: String) async {
-        var lastSeen: String?
+    /// `desired` for `selector`, or it settles on a different (agent-normalized)
+    /// value, or we time out. Adopts the authoritative value when seen; otherwise
+    /// keeps the optimistic pick. Queries by `connectionId` so it works even before
+    /// the connection is bound to the conversation.
+    private func reconcile(selector: Selector, desired: String, connectionId: String,
+                           agent: AgentType) async {
+        var lastSeen: (value: String, accepted: Bool?)?
         for attempt in 0..<Self.reconcileAttempts {
             try? await Task.sleep(for: .milliseconds(attempt == 0 ? 350 : 400))
             if Task.isCancelled { return }
-            guard let snap = try? await client.connectionSnapshot(connectionId: connectionId),
-                  let current = currentValue(forKey: key, in: snap) else { continue }
-            lastSeen = current
+            guard let snap = try? await client.connectionSnapshot(connectionId: connectionId) else { continue }
+            guard let current = currentValue(for: selector, in: snap) else {
+                // A snapshot that answered but no longer carries this selector
+                // retires the older evidence rather than letting it be adopted
+                // from stale grounds.
+                lastSeen = nil
+                continue
+            }
+            let seen = (value: current, accepted: accepts(selector, current, in: snap))
+            lastSeen = seen
             if current == desired {
-                setSelection(key: key, value: current)   // confirmed
+                adopt(selector, seen, agent: agent)   // confirmed
                 return
             }
         }
         // Settled without confirming the pick — adopt the last authoritative value
         // we saw (the agent may have normalized/rejected it); if we never saw one,
         // keep the optimistic pick as a best effort.
-        if let lastSeen { setSelection(key: key, value: lastSeen) }
+        if let lastSeen { adopt(selector, lastSeen, agent: agent) }
     }
 
-    private func currentValue(forKey key: String, in snap: SessionSnapshot) -> String? {
-        if key == "mode" { return snap.modes?.currentModeId ?? snap.currentMode }
-        return snap.configOptions?.first { $0.id == key }?.kind.selectCurrentValue
+    private func currentValue(for selector: Selector, in snap: SessionSnapshot) -> String? {
+        switch selector {
+        case .mode:
+            return snap.modes?.currentModeId ?? snap.currentMode
+        case .config(let id):
+            return snap.configOptions?.first { $0.id == id }?.kind.currentValueString
+        }
     }
 
-    private func setSelection(key: String, value: String) {
-        if key == "mode" { selectedModeId = value } else { selectedConfig[key] = value }
+    /// Adopt an AUTHORITATIVE value seen during reconciliation.
+    ///
+    /// What the agent holds beats what was asked for on SCREEN — but not in the
+    /// store. The remembered value is what the next session starts from, and an
+    /// agent reverting a pick in THIS session doesn't mean the user stopped
+    /// wanting it: Grok makes that explicit, refusing an incompatible in-place
+    /// model switch, snapping the live selector back, and deliberately keeping the
+    /// attempted model as the preference so the "start a new session" it suggests
+    /// actually lands on it (`set_grok_config_option`; the web asserts this in
+    /// `acp-connections-context.test.tsx`). So the optimistic write stands.
+    ///
+    /// The one exception is a value the connection's own catalog says it cannot
+    /// take (`accepted == false`) — an agent that normalizes to `""`. That isn't a
+    /// preference, it's noise, and connect would replay it verbatim.
+    private func adopt(_ selector: Selector, _ seen: (value: String, accepted: Bool?), agent: AgentType) {
+        if seen.accepted == false { remember(selector, value: nil, agent: agent) }
+        guard agentType == agent else { return }
+        switch selector {
+        case .mode: selectedModeId = seen.value
+        case .config(let id): selectedConfig[id] = seen.value
+        }
+    }
+
+    /// Whether the TARGETED CONNECTION says `value` is a choice `selector` can
+    /// take — nil when there is nothing to judge against: no entry for it (the
+    /// server forwards an unadvertised config id and lets the agent decide), or an
+    /// option kind this build can't read choices out of. Unjudgeable is not
+    /// rejected.
+    ///
+    /// Judged against the polled snapshot rather than the sheet's `snapshot`,
+    /// because the sheet may since have been retargeted at a different agent — one
+    /// whose catalog can have an identically-named option with entirely different
+    /// values, and has no say over this apply.
+    private func accepts(_ selector: Selector, _ value: String, in snap: SessionSnapshot) -> Bool? {
+        switch selector {
+        case .mode:
+            guard let modes = snap.modes, !modes.availableModes.isEmpty else { return nil }
+            return modes.availableModes.contains { $0.id == value }
+        case .config(let id):
+            guard let option = snap.configOptions?.first(where: { $0.id == id }),
+                  option.kind.isRenderable else { return nil }
+            return option.kind.accepts(value)
+        }
     }
 
     func teardown() {
@@ -327,11 +521,52 @@ final class AgentOptionsModel {
         autoLoadTask = nil
         connectionTask?.cancel()
         connectionTask = nil
-        applying.removeAll()
+        // Deliberately does NOT retire in-flight applies: those operations really
+        // are still running, and each still owns its agent's stored preference.
+        // Whether one may also touch the VISIBLE selection is decided when it
+        // lands, by asking whether the sheet is still on that agent — see
+        // ``revert(_:to:agent:)``.
     }
 
     private static func describe(_ error: Error) -> String {
         if let api = error as? APIError { return api.errorDescription ?? "\(api)" }
         return error.localizedDescription
+    }
+}
+
+/// Process-wide registry of in-flight selector applies.
+///
+/// The scope is the point. ``SelectorPrefsStore`` is a process-global blob keyed
+/// by agent, and an apply now writes it LONG after the user's tap — when
+/// reconciliation settles, or when a failure reverts. The app allows multiple
+/// scenes (`UIApplicationSupportsMultipleScenes`), so two session sheets can sit
+/// on the same agent; a claim narrower than the store would let the older scene's
+/// late write land on top of the newer scene's settled choice.
+///
+/// So: at most one unsettled apply per (agent, selector) IN THE PROCESS. Every
+/// holder is `@MainActor`, which is what makes the check-then-claim atomic.
+/// `@Observable` rather than a bare static so the rows watching it still redraw —
+/// including the other scene's, which is the honest picture of what's happening.
+@MainActor
+@Observable
+final class SelectorApplyRegistry {
+    static let shared = SelectorApplyRegistry()
+
+    struct Claim: Hashable, Sendable {
+        let agent: AgentType
+        let selector: AgentOptionsModel.Selector
+    }
+
+    private(set) var claims: Set<Claim> = []
+
+    private init() {}
+
+    func isClaimed(_ claim: Claim) -> Bool { claims.contains(claim) }
+    func claim(_ claim: Claim) { claims.insert(claim) }
+    func release(_ claim: Claim) { claims.remove(claim) }
+
+    /// Selectors claimed for `agent`, so its rows can spin.
+    func selectors(for agent: AgentType) -> Set<AgentOptionsModel.Selector> {
+        Set(claims.lazy.filter { $0.agent == agent }.map(\.selector))
     }
 }

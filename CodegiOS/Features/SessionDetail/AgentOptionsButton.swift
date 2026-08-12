@@ -398,7 +398,11 @@ private struct AgentOptionsSheet: View {
 
     @ViewBuilder
     private var selectors: some View {
-        let configOptions = options.snapshot?.configOptions ?? []
+        // Only options this build has a control for. An option whose `kind` is
+        // newer than this app can't be drawn, and counting it would suppress the
+        // Mode section below for nothing (the server strips only the kinds IT
+        // can't decode, so a too-new kind still reaches us).
+        let configOptions = (options.snapshot?.configOptions ?? []).filter { $0.kind.isRenderable }
         let modes = options.snapshot?.modes
         let hasConfig = !configOptions.isEmpty
         let hasModes = !(modes?.availableModes.isEmpty ?? true)
@@ -415,8 +419,8 @@ private struct AgentOptionsSheet: View {
                         title: mode.name,
                         subtitle: mode.description,
                         isSelected: options.selectedModeId == mode.id,
-                        isApplying: options.applying.contains("mode") && options.selectedModeId == mode.id,
-                        disabled: isBusy || options.applying.contains("mode"),
+                        isApplying: options.applying.contains(.mode) && options.selectedModeId == mode.id,
+                        disabled: isBusy || options.applying.contains(.mode),
                         action: { options.selectMode(mode.id) }
                     )
                 }
@@ -428,15 +432,20 @@ private struct AgentOptionsSheet: View {
         }
     }
 
-    /// One config option. Renders grouped options (group label + its options) when
-    /// `groups` is non-empty, ELSE the flat options — never both, matching the
-    /// web's `groups.length > 0 ? groups : options` ternary (the source of the
-    /// duplicate rows when both were rendered).
+    /// One config option. A boolean is one switch; a select renders grouped
+    /// options (group label + its options) when `groups` is non-empty, ELSE the
+    /// flat options — never both, matching the web's `groups.length > 0 ? groups
+    /// : options` ternary (the source of the duplicate rows when both were
+    /// rendered).
     @ViewBuilder
     private func configSection(_ option: SessionConfigOption) -> some View {
         let groups = option.kind.selectGroups ?? []
         let flat = option.kind.selectOptions ?? []
-        if !groups.isEmpty {
+        if case .boolean(let advertised) = option.kind {
+            OptionSection(title: Text(verbatim: option.name)) {
+                booleanRow(option: option, advertised: advertised)
+            }
+        } else if !groups.isEmpty {
             OptionSection(title: Text(verbatim: option.name)) {
                 ForEach(Array(groups.enumerated()), id: \.element.id) { groupIndex, group in
                     if groupIndex > 0 { rowSeparator }
@@ -457,13 +466,30 @@ private struct AgentOptionsSheet: View {
         }
     }
 
+    /// The single switch behind a boolean option. `advertised` is the catalog's
+    /// own value, used until a selection has been seeded (or when the option was
+    /// never seeded at all) so the switch never reads "off" for an option the
+    /// agent says is on. A flip applies through the same string-valued path as a
+    /// select — see ``SessionConfigKind``.
+    private func booleanRow(option: SessionConfigOption, advertised: Bool) -> some View {
+        let isOn = options.selectedConfig[option.id].map { $0 == "true" } ?? advertised
+        return BooleanOptionRow(
+            name: option.name,
+            title: option.description.flatMap { $0.isEmpty ? nil : $0 },
+            isOn: isOn,
+            isApplying: options.applying.contains(.config(id: option.id)),
+            disabled: isBusy || options.applying.contains(.config(id: option.id)),
+            set: { on in options.selectConfig(optionId: option.id, valueId: on ? "true" : "false") }
+        )
+    }
+
     private func optionRow(option: SessionConfigOption, choice: SessionConfigSelectOption) -> some View {
         OptionRow(
             title: choice.name,
             subtitle: choice.description,
             isSelected: options.selectedConfig[option.id] == choice.value,
-            isApplying: options.applying.contains(option.id) && options.selectedConfig[option.id] == choice.value,
-            disabled: isBusy || options.applying.contains(option.id),
+            isApplying: options.applying.contains(.config(id: option.id)) && options.selectedConfig[option.id] == choice.value,
+            disabled: isBusy || options.applying.contains(.config(id: option.id)),
             action: { options.selectConfig(optionId: option.id, valueId: choice.value) }
         )
     }
@@ -514,6 +540,53 @@ struct OptionSection<Content: View>: View {
                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
                 .hairlineBorder(Theme.Radius.md)
         }
+    }
+}
+
+/// The row behind a boolean config option: a switch, with the option's
+/// description as its label when it has one (the option's NAME is already the
+/// section header above it). While an apply is in flight the switch is replaced
+/// by a spinner, matching what a select's row does.
+private struct BooleanOptionRow: View {
+    /// The option's own name. It's already the section header, so it isn't drawn
+    /// again — it's what VoiceOver announces, since the switch's visible label is
+    /// the description (or nothing at all).
+    let name: String
+    let title: String?
+    let isOn: Bool
+    let isApplying: Bool
+    let disabled: Bool
+    let set: (Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Group {
+                if let title {
+                    Text(verbatim: title)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Enabled")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(Theme.textPrimary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isApplying {
+                ProgressView().controlSize(.small)
+            } else {
+                Toggle("", isOn: Binding(get: { isOn }, set: set))
+                    .labelsHidden()
+                    .tint(Theme.accent)
+                    .disabled(disabled)
+                    .accessibilityLabel(Text(verbatim: name))
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .opacity(disabled && !isApplying ? 0.5 : 1)
     }
 }
 
