@@ -5874,6 +5874,17 @@
         }
       }
     },
+    "Open sub-agent session" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开子 Agent 会话"
+          }
+        }
+      }
+    },
     "Optional per-role model overrides. Leave blank to use defaults." : {
       "extractionState" : "stale",
       "localizations" : {

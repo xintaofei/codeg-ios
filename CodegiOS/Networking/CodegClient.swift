@@ -128,6 +128,16 @@ struct CodegClient: Sendable {
         ), session: Self.readSession)
     }
 
+    /// A session parsed straight from the agent's own transcript, by its native
+    /// id. Resolves sessions no listing returns — which is the point: a grok
+    /// `spawn_subagent` child is hidden from the sidebar, and this is the only
+    /// way to read it. Re-issuing this while the child works is a live view.
+    func agentSession(agentType: AgentType, sessionId: String) async throws -> AgentSessionDetail {
+        try await postJSON("get_conversation", AgentSessionBody(
+            agentType: agentType, conversationId: sessionId
+        ), session: Self.readSession)
+    }
+
     /// Create a conversation row up front (before the first prompt) and return its
     /// id. The server broadcasts a `conversation_upsert` on creation, so every
     /// connected client (desktop / web) sees the new session immediately — unlike

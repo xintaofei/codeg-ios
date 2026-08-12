@@ -111,7 +111,11 @@ enum TranscriptTimeline {
     ///   are the only ones allowed to render an unfinished tool call as running —
     ///   everywhere else a `tool_use` with no result is a record of a call that
     ///   settled, not one still working. See `MessageRender.toolState`.
-    static func buildPersisted(turns rawTurns: [MessageTurn], pending: [MessageTurn], agent: AgentType, suppressInFlight: Bool, inFlightUserTurnId: String? = nil) -> [TimelineNode] {
+    /// - Parameter liveness: the floor applied to EVERY turn, for a transcript
+    ///   that is being re-read while its session runs and has no round anchor of
+    ///   its own (the sub-agent viewer). Left `.settled` by the main transcript,
+    ///   which scopes liveness per-round via `inFlightUserTurnId` instead.
+    static func buildPersisted(turns rawTurns: [MessageTurn], pending: [MessageTurn], agent: AgentType, suppressInFlight: Bool, inFlightUserTurnId: String? = nil, liveness: ToolLiveness = .settled) -> [TimelineNode] {
         var nodes: [TimelineNode] = []
 
         // Hide the persisted partial in-flight reply while the reattach live turn
@@ -158,9 +162,10 @@ enum TranscriptTimeline {
                 var j = i + 1
                 while j < turns.count, turns[j].role == .assistant { j += 1 }
                 let merged = merge(Array(turns[i..<j]))
+                let inRound = inFlightIdx.map { i > $0 } ?? false
                 nodes.append(contentsOf: assistantNodes(
                     merged: merged, questionID: lastUserID, agent: agent,
-                    inFlightRound: inFlightIdx.map { i > $0 } ?? false
+                    liveness: inRound ? .round : liveness
                 ))
                 i = j
             }
@@ -188,8 +193,8 @@ enum TranscriptTimeline {
     // MARK: Assistant reply → nodes
 
     private static func assistantNodes(merged: MessageTurn, questionID: String?, agent: AgentType,
-                                       inFlightRound: Bool) -> [TimelineNode] {
-        var out = MessageRender.adaptTurn(merged, inFlightRound: inFlightRound).enumerated().map { idx, part in
+                                       liveness: ToolLiveness) -> [TimelineNode] {
+        var out = MessageRender.adaptTurn(merged, liveness: liveness).enumerated().map { idx, part in
             node(for: part, ownerID: merged.id, index: idx, agent: agent)
         }
         // The footer (reply time / model / tokens / copy / jump) is always emitted

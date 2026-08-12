@@ -129,6 +129,12 @@ struct SessionDetailView: View {
                 SessionDetailsSheet(summary: summary, stats: model.sessionStats, folder: model.folder)
             }
         }
+        // A sub-agent's session is fetched by a tool card deep inside the
+        // transcript, which has no business holding a client — publish the
+        // capability instead, the same way the transcript publishes scrolling.
+        .environment(\.agentSessionLoader, AgentSessionLoader { agent, sessionId in
+            try await model.agentSession(agentType: agent, sessionId: sessionId)
+        })
         .task { await model.load() }
         .onDisappear { model.teardown() }
         // Haptics — the app's marquee "felt" moments, all keyed off existing

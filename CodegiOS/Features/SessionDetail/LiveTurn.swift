@@ -397,7 +397,8 @@ final class LiveTurn: Identifiable {
                 blocks.append(.toolUse(id: call.id, name: call.title, inputPreview: call.rawInput,
                                        status: .unknown, meta: call.meta))
                 let output = call.rawOutput.isEmpty ? call.content : call.rawOutput
-                blocks.append(.toolResult(id: call.id, outputPreview: output, isError: call.isError))
+                blocks.append(.toolResult(id: call.id, outputPreview: output, isError: call.isError,
+                                          agentStats: nil))
             }
         }
         return MessageTurn(id: id, role: .assistant, blocks: blocks, timestamp: Date())

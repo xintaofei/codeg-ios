@@ -29,6 +29,22 @@ struct ImageData: Codable, Hashable, Sendable {
     let uri: String?
 }
 
+/// What a sub-agent's own transcript says about the run it performed (Rust
+/// `AgentExecutionStats`, on a `tool_result`).
+///
+/// Only the fields this client actually renders are decoded — the Rust struct
+/// also carries per-kind tool tallies, token totals and the child's own tool
+/// calls, none of which iOS shows today (a sub-agent's work is read by opening
+/// its session, not by re-summarizing it here).
+struct AgentExecutionStats: Codable, Hashable, Sendable {
+    /// The child's own session id, when the sub-agent ran as a standalone
+    /// session on disk rather than as chunks folded into the parent's stream.
+    /// Grok is the case that has one: every `spawn_subagent` child is a full
+    /// session, and grok forwards none of its work over ACP — so this id is the
+    /// only route to what the child actually did. `nil` for every other agent.
+    let childSessionId: String?
+}
+
 /// What a persisted `tool_use` block says about its own lifecycle (Rust
 /// `ContentBlock::ToolUse.status`, `pending` / `in_progress` / `completed` /
 /// `failed`).
@@ -69,7 +85,7 @@ enum ContentBlock: Hashable, Sendable, Decodable {
     case image(ImageData)
     case imageGeneration(revisedPrompt: String?, image: ImageData?)
     case toolUse(id: String?, name: String, inputPreview: String?, status: ToolUseStatus, meta: AnyJSON?)
-    case toolResult(id: String?, outputPreview: String?, isError: Bool)
+    case toolResult(id: String?, outputPreview: String?, isError: Bool, agentStats: AgentExecutionStats?)
     case unknown(type: String)
 
     private enum CodingKeys: String, CodingKey {
@@ -77,7 +93,7 @@ enum ContentBlock: Hashable, Sendable, Decodable {
         // here already camelCased — match them in camelCase.
         case type, text, data, mimeType, uri, revisedPrompt, image
         case toolUseId, toolName, inputPreview, status, meta
-        case outputPreview, isError
+        case outputPreview, isError, agentStats
     }
 
     init(from decoder: Decoder) throws {
@@ -113,7 +129,8 @@ enum ContentBlock: Hashable, Sendable, Decodable {
             self = .toolResult(
                 id: try c.decodeIfPresent(String.self, forKey: .toolUseId),
                 outputPreview: try c.decodeIfPresent(String.self, forKey: .outputPreview),
-                isError: try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
+                isError: try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false,
+                agentStats: try c.decodeIfPresent(AgentExecutionStats.self, forKey: .agentStats)
             )
         default:
             self = .unknown(type: type)

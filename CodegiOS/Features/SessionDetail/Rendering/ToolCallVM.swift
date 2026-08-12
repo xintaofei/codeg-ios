@@ -10,6 +10,27 @@ enum ToolCallState {
     case error
 }
 
+/// What a transcript is allowed to treat as evidence that one of its tool calls
+/// is still working. A transcript is a *record*, so the default is "nothing" —
+/// see ``MessageRender/toolState(paired:isError:status:liveness:)``.
+enum ToolLiveness: Hashable {
+    /// A record of something that already happened. Only a terminal `status` is
+    /// read; nothing spins.
+    case settled
+    /// This transcript is being re-read while its session runs (the sub-agent
+    /// viewer polls a grok child's file on a timer). Grok pairs every call with
+    /// a placeholder result and backfills it, so its unfinished calls arrive
+    /// already matched and the call's own `status` is the only honest signal —
+    /// which this makes trustworthy. Silence still isn't: an unpaired call with
+    /// no status stays settled, exactly as in a record.
+    case status
+    /// The server says the round these turns belong to is running right now
+    /// (`in_flight_user_turn_id`). That vouches for an unfinished call whether
+    /// or not it carries a status — it is what a cross-client reader has
+    /// instead of a live stream.
+    case round
+}
+
 /// Coarse category a tool falls into — drives the icon and the group summary
 /// ("Read 3 files · Edited 2 files"). Mirrors the codeg client's tool-kind
 /// buckets.
@@ -47,6 +68,17 @@ struct ToolCallVM: Identifiable {
     /// backend never persists sub-agent blocks, so the persisted path always
     /// leaves this empty. See ``SubAgentRun``.
     let transcript: [SubAgentRun]
+    /// What the sub-agent's own transcript reported, off the paired
+    /// `tool_result`. Persisted only; the live path carries the same facts on
+    /// `meta` instead.
+    let agentStats: AgentExecutionStats?
+    /// This call is being rendered from a turn whose wire data is still
+    /// arriving. Only a background sub-agent launch reads it (see
+    /// ``SubAgentSection``): such a launcher settles at its ack while the child
+    /// works on, so the launcher's own state can't say whether the child is
+    /// still going — but the reply it settled inside can, and unlike the ack
+    /// text that claim expires on its own.
+    let isLive: Bool
 
     // Precomputed derived
     let displayTitle: String
@@ -68,7 +100,8 @@ struct ToolCallVM: Identifiable {
 
     init(id: String, rawName: String, kind: String, state: ToolCallState,
          input: String?, output: String?, content: String?, isError: Bool,
-         meta: AnyJSON? = nil, transcript: [SubAgentRun] = []) {
+         meta: AnyJSON? = nil, transcript: [SubAgentRun] = [],
+         agentStats: AgentExecutionStats? = nil, isLive: Bool = false) {
         // A codex-acp command action (`createCommandActionEvent`) has no tool
         // name and NO input — only a human title, which arrives here as
         // `rawName`. Its identity, its query and its path all have to be read
@@ -106,6 +139,8 @@ struct ToolCallVM: Identifiable {
         self.isError = isError || state == .error
         self.meta = meta
         self.transcript = transcript
+        self.agentStats = agentStats
+        self.isLive = isLive
         self.commandAction = action
 
         let parsed = ToolDerive.parseJSON(resolvedInput)
@@ -123,6 +158,17 @@ struct ToolCallVM: Identifiable {
             ?? ToolDerive.icon(bucket: b, name: resolvedName, input: resolvedInput)
         self.diffFiles = ToolDerive.diff(bucket: b, input: resolvedInput, output: output, content: content, parsed: parsed)
         self.announcedSessionId = ToolDerive.announcedSession(name: resolvedName, output: output)
+    }
+
+    /// Grok's live sub-agent ticker, when this call launched one and a tick has
+    /// arrived. The only live signal of a grok child's work — it forwards none
+    /// of the child's chunks or tool calls.
+    var grokProgress: GrokSubagent.Progress? { GrokSubagent.progress(meta: meta) }
+
+    /// The child's own session, when the sub-agent ran as one — the entry point
+    /// to what it actually did. Present both live and in history.
+    var childSession: GrokSubagent.ChildSession? {
+        GrokSubagent.childSession(meta: meta, stats: agentStats)
     }
 
     /// The pattern a search-shaped call looked for, highlighted in its results.
@@ -205,11 +251,10 @@ enum RenderPart {
 @MainActor
 enum MessageRender {
 
-    /// - Parameter inFlightRound: this turn belongs to the round the server says
-    ///   is running right now (`in_flight_user_turn_id`). It is the ONLY thing
-    ///   that may put a spinner on a persisted tool call — see `toolState`.
-    static func adaptTurn(_ turn: MessageTurn, inFlightRound: Bool = false) -> [RenderPart] {
-        let cacheKey = TurnKey(turn: turn, inFlightRound: inFlightRound)
+    /// - Parameter liveness: what may put a spinner on one of this turn's tool
+    ///   calls. `.settled` (a record) for all but two cases — see `toolState`.
+    static func adaptTurn(_ turn: MessageTurn, liveness: ToolLiveness = .settled) -> [RenderPart] {
+        let cacheKey = TurnKey(turn: turn, liveness: liveness)
         if let cached = turnCache[cacheKey] { return cached }
 
         let blocks = turn.blocks
@@ -231,11 +276,12 @@ enum MessageRender {
                 let resultIdx = findResult(in: blocks, after: idx, toolID: toolID, consumed: consumed)
                 var output: String?
                 var isErr = false
-                if let r = resultIdx, case .toolResult(_, let outPreview, let e) = blocks[r] {
-                    output = outPreview; isErr = e; consumed.insert(r)
+                var stats: AgentExecutionStats?
+                if let r = resultIdx, case .toolResult(_, let outPreview, let e, let s) = blocks[r] {
+                    output = outPreview; isErr = e; stats = s; consumed.insert(r)
                 }
                 let state = toolState(paired: resultIdx != nil, isError: isErr,
-                                      status: status, inFlightRound: inFlightRound)
+                                      status: status, liveness: liveness)
                 // A compaction is a boundary marker, not a call: it renders as a
                 // divider between turns, so it never becomes a `ToolCallVM` (and so
                 // can't be swept into a tool group).
@@ -247,12 +293,13 @@ enum MessageRender {
                 }
                 parts.append(.tool(ToolCallVM(
                     id: toolID ?? "tool-\(idx)", rawName: name, kind: "", state: state,
-                    input: inputPreview, output: output, content: nil, isError: isErr, meta: meta)))
-            case .toolResult(let toolID, let outPreview, let e):
+                    input: inputPreview, output: output, content: nil, isError: isErr, meta: meta,
+                    agentStats: stats)))
+            case .toolResult(let toolID, let outPreview, let e, let stats):
                 // Orphan result (no preceding tool_use) — show it on its own.
                 parts.append(.tool(ToolCallVM(
                     id: toolID ?? "result-\(idx)", rawName: "result", kind: "", state: e ? .error : .done,
-                    input: nil, output: outPreview, content: nil, isError: e)))
+                    input: nil, output: outPreview, content: nil, isError: e, agentStats: stats)))
             case .unknown(let type):
                 parts.append(.unknown(type: type))
             }
@@ -272,34 +319,35 @@ enum MessageRender {
     /// `text()`s its call settles with none). Treating every unpaired call as
     /// running is what left orphans from an interrupted round spinning forever.
     ///
-    /// Two affirmative signals override that default, and nothing else does:
+    /// Two affirmative signals override that default, and nothing else does —
+    /// `liveness` says which of them this transcript has (see ``ToolLiveness``):
     ///
     /// * `status` — the agent's own statement. Terminal values settle the card
-    ///   even with no result block; `.running` is only honored inside the
-    ///   in-flight round, because a transcript keeps whatever status it was last
-    ///   given and an interrupted call's stale `in_progress` would otherwise
-    ///   produce a spinner nothing will ever clear.
-    /// * `inFlightRound` — the server says this round is running right now
-    ///   (`in_flight_user_turn_id`), so its unfinished calls really are working.
-    ///   This is what a cross-client reader (or a viewer whose attach missed)
-    ///   has instead of a live stream.
+    ///   even with no result block; `.running` is only honored when something
+    ///   vouches for the transcript being current, because a transcript keeps
+    ///   whatever status it was last given and an interrupted call's stale
+    ///   `in_progress` would otherwise produce a spinner nothing will ever clear.
+    /// * a running round (`.round`) — the server says this round is live right
+    ///   now, so its unfinished calls really are working, status or not. This is
+    ///   what a cross-client reader (or a viewer whose attach missed) has
+    ///   instead of a live stream.
     ///
-    /// An in-round `.running` is honored even on a PAIRED call: grok pairs every
-    /// call with a placeholder result and backfills it, so one of its calls that
-    /// is still working arrives already matched. A failure outranks it either
-    /// way — a result that errored, or a `failed` status, is terminal.
+    /// A live `.running` is honored even on a PAIRED call: grok pairs every call
+    /// with a placeholder result and backfills it, so one of its calls that is
+    /// still working arrives already matched. A failure outranks it either way —
+    /// a result that errored, or a `failed` status, is terminal.
     ///
     /// `.error` here is not only this card's own indicator: `ToolCallVM` mirrors
     /// it into `isError`, which is what the enclosing group / checklist read.
     static func toolState(paired: Bool, isError: Bool,
-                          status: ToolUseStatus, inFlightRound: Bool) -> ToolCallState {
+                          status: ToolUseStatus, liveness: ToolLiveness) -> ToolCallState {
         if paired, isError { return .error }
         if status == .failed { return .error }
-        if inFlightRound, status == .running { return .running }
+        if liveness != .settled, status == .running { return .running }
         if paired { return .done }
         if status == .completed { return .done }
-        // Unknown, or a `running` the round can't vouch for.
-        return inFlightRound ? .running : .done
+        // Unknown, or a `running` nothing can vouch for.
+        return liveness == .round ? .running : .done
     }
 
     static func adaptLive(_ turn: LiveTurn) -> [RenderPart] {
@@ -332,7 +380,7 @@ enum MessageRender {
                 parts.append(.tool(ToolCallVM(
                     id: call.id, rawName: call.title, kind: call.kind, state: state,
                     input: call.rawInput, output: call.rawOutput, content: call.content, isError: call.isError,
-                    meta: call.meta, transcript: call.transcript)))
+                    meta: call.meta, transcript: call.transcript, isLive: turn.isStreaming)))
             }
         }
         return group(parts)
@@ -446,7 +494,7 @@ enum MessageRender {
         // Prefer an exact id match anywhere later.
         if let toolID {
             for j in (idx + 1)..<blocks.count where !consumed.contains(j) {
-                if case .toolResult(let rid, _, _) = blocks[j], rid == toolID { return j }
+                if case .toolResult(let rid, _, _, _) = blocks[j], rid == toolID { return j }
             }
         }
         // Otherwise the next unconsumed result — but stop at the next tool_use so
@@ -470,13 +518,13 @@ enum MessageRender {
     // colliding id with different content can never produce a false hit, and a
     // turn whose content actually changed re-derives correctly.
     //
-    // `inFlightRound` rides in the key for the same reason: it changes what the
-    // very same turn adapts to (a spinner vs. a settled card), so a cache keyed
-    // on content alone would keep serving the running render after the round
+    // `liveness` rides in the key for the same reason: it changes what the very
+    // same turn adapts to (a spinner vs. a settled card), so a cache keyed on
+    // content alone would keep serving the running render after the round
     // completed.
     private struct TurnKey: Hashable {
         let turn: MessageTurn
-        let inFlightRound: Bool
+        let liveness: ToolLiveness
     }
     private static var turnCache: [TurnKey: [RenderPart]] = [:]
     private static var turnOrder: [TurnKey] = []

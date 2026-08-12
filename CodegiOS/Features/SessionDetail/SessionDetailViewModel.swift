@@ -423,6 +423,13 @@ final class SessionDetailViewModel {
         return .fetched(WindowedFetch(detail: reset, reanchored: true))
     }
 
+    /// Read a session by its NATIVE id — a grok sub-agent's own transcript, which
+    /// no listing returns. Lives here only so the sheet doesn't need the client;
+    /// it touches none of this view model's state.
+    func agentSession(agentType: AgentType, sessionId: String) async throws -> AgentSessionDetail {
+        try await client.agentSession(agentType: agentType, sessionId: sessionId)
+    }
+
     /// Adopt the coordinates a response's `turns` arrived under: where they sit in
     /// the full transcript, and which round the server says is running. Pair this
     /// with EVERY `turns = detail.turns` — the array and its window are one

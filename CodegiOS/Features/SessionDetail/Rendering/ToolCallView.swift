@@ -136,7 +136,10 @@ struct ToolCallCard: View {
     private var showsTranscript: Bool {
         !vm.transcript.isEmpty && (vm.state == .running || vm.state == .inputStreaming)
     }
-    private var hasBody: Bool { vm.diffFiles != nil || vm.hasOutput || hasInput || showsTranscript }
+    private var hasBody: Bool {
+        vm.diffFiles != nil || vm.hasOutput || hasInput || showsTranscript
+            || vm.childSession != nil || vm.grokProgress != nil
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -196,6 +199,10 @@ struct ToolCallCard: View {
         } else {
             inputBody
             if showsTranscript { SubAgentTranscript(runs: vm.transcript) }
+            // Grok's sub-agent affordances. Placed above the output so the live
+            // ticker and the way into the child's session don't sit below a long
+            // result once the call settles.
+            SubAgentSection(vm: vm)
             outputBody
         }
     }
@@ -230,6 +237,102 @@ struct ToolCallCard: View {
         case .script: CodexScriptInputBody(vm: vm)
         default: GenericInputBody(vm: vm)
         }
+    }
+}
+
+/// What a Grok sub-agent launch shows in place of a transcript.
+///
+/// Grok runs each `spawn_subagent` child as a standalone session and forwards
+/// none of its chunks or tool calls, so there is nothing to stream into this
+/// card. Two things stand in: a progress ticker while the child works — the only
+/// live signal there is — and a way into the child's own session, which is where
+/// its actual work can be read. Both are no-ops for every other agent.
+private struct SubAgentSection: View {
+    let vm: ToolCallVM
+    @State private var sessionOpen = false
+
+    /// Whether the CHILD is still working — which is not the same question as
+    /// whether the launching call is. A `background: true` spawn settles the
+    /// instant it is acknowledged and the child runs on, so reading the
+    /// launcher's state alone would call every background child finished before
+    /// it did anything; its ack text is the signal instead.
+    ///
+    /// That second arm is bounded to the still-streaming reply, because iOS has
+    /// no background-task lifecycle to retire it with (no `subagent_finished`
+    /// handling, no `[[codeg-background-task]]` marker — the web clears it with
+    /// those). Bounded, it expires on its own at `TurnComplete`; unbounded, the
+    /// ack text persists and the card would claim the child was live forever,
+    /// across reloads. So a background child that outlives its launching turn
+    /// stops reporting progress here — under-claiming, never over-claiming.
+    private var childIsWorking: Bool {
+        if vm.state == .running || vm.state == .inputStreaming { return true }
+        return vm.isLive && GrokSubagent.isBackgroundLaunchAck(vm.output)
+    }
+
+    var body: some View {
+        if vm.grokProgress != nil || vm.childSession != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                // Only while the child works: a frozen tick read as a summary
+                // would compete with the settled card's own result.
+                if childIsWorking, let line = Self.progressLine(vm.grokProgress) {
+                    Text(verbatim: line)
+                        .font(Theme.Typography.metaLabel)
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                if let child = vm.childSession {
+                    Button {
+                        sessionOpen = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "bubble.left.and.text.bubble.right")
+                                .font(.system(size: 11))
+                            Text("Open sub-agent session")
+                                .font(Theme.Typography.metaLabel)
+                        }
+                        .foregroundStyle(Theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .sheet(isPresented: $sessionOpen) {
+                        SubAgentSessionSheet(
+                            sessionId: child.sessionId,
+                            agentType: child.agentType,
+                            subagentType: Self.subagentType(vm),
+                            task: Self.task(vm),
+                            live: childIsWorking
+                        )
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// "7 tools · 2 turns · 1m 3s · ctx 24%" — whichever counters the tick
+    /// carried, in that order. Mirrors the web's `grokProgressLine`.
+    static func progressLine(_ progress: GrokSubagent.Progress?) -> String? {
+        guard let progress else { return nil }
+        var pieces: [String] = []
+        if let tools = progress.toolCallCount { pieces.append("\(tools) tools") }
+        if let turns = progress.turnCount { pieces.append("\(turns) turns") }
+        if let ms = progress.durationMs { pieces.append(DurationFormat.short(Int(ms))) }
+        if let pct = progress.contextUsagePct { pieces.append("ctx \(Int(pct.rounded()))%") }
+        return pieces.isEmpty ? nil : pieces.joined(separator: " · ")
+    }
+
+    private static func subagentType(_ vm: ToolCallVM) -> String? {
+        let args = ToolDerive.effectiveArgs(ToolDerive.parseJSON(vm.input))
+        for key in ["subagent_type", "agent_type"] {
+            if let v = args?[key] as? String, !v.isEmpty { return v }
+        }
+        return nil
+    }
+
+    private static func task(_ vm: ToolCallVM) -> String? {
+        let args = ToolDerive.effectiveArgs(ToolDerive.parseJSON(vm.input))
+        for key in ["description", "prompt", "task"] {
+            if let v = args?[key] as? String, !v.isEmpty { return v }
+        }
+        return nil
     }
 }
 

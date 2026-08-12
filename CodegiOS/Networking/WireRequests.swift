@@ -156,6 +156,14 @@ struct AgentTypeBody: Encodable, Sendable {
     let agentType: AgentType
 }
 
+/// Body for `get_conversation` — a session addressed by its NATIVE id (a string
+/// the agent chose), not by a codeg row id. Distinct from
+/// `ConversationWindowBody`, whose `conversationId` is an `Int` row id.
+struct AgentSessionBody: Encodable, Sendable {
+    let agentType: AgentType
+    let conversationId: String
+}
+
 /// Body for `acp_set_mode` — applies to a live chat `connectionId`.
 struct SetModeBody: Encodable, Sendable {
     let connectionId: String
