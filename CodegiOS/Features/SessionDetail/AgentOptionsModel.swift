@@ -367,13 +367,16 @@ final class AgentOptionsModel {
             // life of the process.
             defer { SelectorApplyRegistry.shared.release(claim) }
             guard let self else { return }
+            var resolution: Task<String, Error>?
             do {
-                let conn = try await self.sharedConnection()
+                let shared = try self.sharedConnection()
+                resolution = shared
+                let conn = try await shared.value
                 try await action(client, conn)
                 // Drop the memoized resolution so the NEXT apply re-validates the
                 // connection's liveness (only concurrent in-flight applies, which
                 // already hold this task, share one resolve).
-                self.connectionTask = nil
+                self.retire(shared)
                 // HTTP 200 only means the command was enqueued — reconcile against
                 // the authoritative snapshot of the EXACT connection we targeted
                 // (by id, so it works even before the connection binds to the
@@ -381,10 +384,10 @@ final class AgentOptionsModel {
                 await self.reconcile(selector: selector, desired: desired, connectionId: conn, agent: agent)
             } catch is CancellationError {
                 self.revert(selector, to: previous, agent: agent)
-                self.connectionTask = nil
+                self.retire(resolution)
             } catch {
                 self.revert(selector, to: previous, agent: agent)
-                self.connectionTask = nil   // re-resolve on the next apply
+                self.retire(resolution)   // re-resolve on the next apply
                 if self.agentType == agent { self.errorNotice = Self.describe(error) }
             }
             // A catalog load that happened WHILE the claim was held skipped this
@@ -418,14 +421,28 @@ final class AgentOptionsModel {
     /// synchronous prologue here is race-free: the first caller installs the task,
     /// later callers await the same one. Cleared after each apply (so the next one
     /// re-validates liveness) and on (re)prepare / teardown.
-    private func sharedConnection() async throws -> String {
-        if let task = connectionTask {
-            return try await task.value
-        }
+    ///
+    /// Hands back the task rather than its value so the caller can retire exactly
+    /// the resolution it used — see ``retire(_:)``.
+    private func sharedConnection() throws -> Task<String, Error> {
+        if let task = connectionTask { return task }
         guard let resolveConnection else { throw APIError.transport("Session closed.") }
         let task = Task { try await resolveConnection() }
         connectionTask = task
-        return try await task.value
+        return task
+    }
+
+    /// Retire a memoized resolution — but only while it is still the one this
+    /// apply used.
+    ///
+    /// An apply outlives the sheet that started it. `prepare()` (reopened, or
+    /// retargeted at another agent) installs a fresh memo, and so does any later
+    /// apply; clearing one of those on the way out would send the next selector
+    /// off to resolve on its own, which on a draft means a second agent process
+    /// with this apply's setting left behind on the first.
+    private func retire(_ used: Task<String, Error>?) {
+        guard let used, connectionTask == used else { return }
+        connectionTask = nil
     }
 
     /// Poll the authoritative snapshot of the targeted connection until it confirms

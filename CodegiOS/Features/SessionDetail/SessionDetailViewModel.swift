@@ -239,6 +239,20 @@ final class SessionDetailViewModel {
     // MARK: - Streaming internals
 
     private var connectionID: String?
+    /// Bumped whenever a resolved connection is deliberately retired (see
+    /// ``resetDraftConnection()``), so one still in flight for the old target
+    /// can't install itself — or be joined — afterwards. Field equality alone
+    /// would call an agent A → B → A switch a match, and it isn't: the
+    /// connection resolved for the first A was explicitly dropped in between.
+    private var connectionGeneration = 0
+    /// A connection resolution in flight, with the context it was made for.
+    ///
+    /// Shared so two callers can never resolve independently: for a draft that
+    /// means two live agent processes, since `spawn_agent` dedups only when it
+    /// is given a session id and a fresh session has none (it is the agent that
+    /// assigns one). Keyed by context so a caller never joins a resolution
+    /// aimed at the agent or folder the user has since switched away from.
+    private var connectionResolution: (context: ConnectionContext, task: Task<String, Error>)?
     /// The conversation row THIS draft's first send created up front (via
     /// `create_conversation`). Held until the prompt is accepted; if the send is
     /// rolled back before then, this row is deleted so no empty conversation
@@ -658,6 +672,10 @@ final class SessionDetailViewModel {
     /// option-apply / first prompt re-resolves against the new agent/folder.
     private func resetDraftConnection() {
         connectionID = nil
+        // A resolution already in flight was made for the target being retired
+        // here. Bumping the generation is what stops it installing itself, or
+        // being joined by an apply for the new one, once it lands.
+        connectionGeneration &+= 1
         // Capabilities belong to the agent that was selected, not to the screen —
         // keeping Grok's after a switch to Claude would encode the next image as
         // an embedded blob for an agent that takes native images.
@@ -1041,33 +1059,121 @@ final class SessionDetailViewModel {
         )
     }
 
-    /// Resolve a live chat connection for out-of-band actions — currently applying
-    /// agent mode/config from the options sheet. Unlike the send path, this does
-    /// NOT trust a cached `connectionID`: it validates liveness via `findConnection`
-    /// (which returns the conversation's bound connection or nil) and only spawns a
-    /// fresh one when none is live, so a mode/config change can't be sent to a
-    /// connection the server has since garbage-collected. The result is cached so
-    /// the next send reuses the same connection.
-    func resolveConnectionForOptions() async throws -> String {
-        if let id = conversationID,
-           let found = try await client.findConnection(
-               conversationId: id,
-               sessionId: summary?.externalId,
-               agentType: agentTypeForUI
-           )?.connectionId {
-            connectionID = found
-            return found
-        }
-        let prefs = preferredSelectors
-        let conn = try await client.connect(
+    /// Everything a connection resolution is *for*: the inputs it is made from,
+    /// plus the generation that retires it wholesale.
+    ///
+    /// A resolution is only this screen's while every one of these still holds.
+    /// The draft's agent and folder are editable until the first send, and that
+    /// send then links a conversation — so an id that comes back afterwards can
+    /// easily be the answer to a question nobody is asking any more.
+    private struct ConnectionContext: Equatable {
+        let generation: Int
+        let conversationID: Int?
+        let agentType: AgentType
+        let workingDir: String?
+        let sessionID: String?
+    }
+
+    private var connectionContext: ConnectionContext {
+        ConnectionContext(
+            generation: connectionGeneration,
+            conversationID: conversationID,
             agentType: agentTypeForUI,
             workingDir: folder?.path,
-            sessionId: summary?.externalId,
+            sessionID: summary?.externalId
+        )
+    }
+
+    /// Resolve a live chat connection for out-of-band actions — currently applying
+    /// agent mode/config from the options sheet. Unlike the send path, this does
+    /// NOT trust a cached `connectionID`: it re-validates liveness first and only
+    /// spawns a fresh one when none is live, so a mode/config change can't be sent
+    /// to a connection the server has since garbage-collected. The result is cached
+    /// so the next send reuses the same connection.
+    ///
+    /// The whole resolution runs against one immutable context, captured here: it
+    /// is what the request is built from, what decides whether the id may be
+    /// cached, and what scopes the sharing below.
+    func resolveConnectionForOptions() async throws -> String {
+        let context = connectionContext
+        let resolution: Task<String, Error>
+        if let inFlight = connectionResolution, inFlight.context == context {
+            resolution = inFlight.task
+        } else {
+            resolution = Task { [weak self] () async throws -> String in
+                guard let self else { throw APIError.transport("Session closed.") }
+                defer { self.retireResolution(for: context) }
+                return try await self.performConnectionResolution(for: context)
+            }
+            connectionResolution = (context, resolution)
+        }
+        let conn = try await resolution.value
+        // Awaiting an unstructured task does not observe THIS caller's own
+        // cancellation, so ask explicitly. An apply torn down mid-resolve has to
+        // fail: its revert is what keeps the remembered selection in step with
+        // the one on screen.
+        try Task.checkCancellation()
+        return conn
+    }
+
+    /// Stop sharing a resolution once it has produced its answer, so the next
+    /// apply re-validates liveness instead of replaying a possibly-dead id.
+    ///
+    /// Keyed by context rather than by task identity because that is exactly as
+    /// precise here: at most one resolution per context can be in flight, since
+    /// a second caller in the same context joins the first instead of installing
+    /// its own.
+    private func retireResolution(for context: ConnectionContext) {
+        if connectionResolution?.context == context { connectionResolution = nil }
+    }
+
+    private func performConnectionResolution(for context: ConnectionContext) async throws -> String {
+        if let id = context.conversationID {
+            // A linked conversation carries its connection, so liveness is just a
+            // lookup: `findConnection` returns the bound one or nil.
+            if let found = try await client.findConnection(
+                conversationId: id,
+                sessionId: context.sessionID,
+                agentType: context.agentType
+            )?.connectionId {
+                adoptResolvedConnection(found, for: context)
+                return found
+            }
+        } else if let existing = connectionID,
+                  let snapshot = try? await client.connectionSnapshot(connectionId: existing),
+                  !snapshot.isConnectionOver {
+            // A draft has no conversation to look a connection up by, so the
+            // cached id is the only handle on the agent already spawned for it —
+            // ask that connection directly instead. Reconnecting blind would
+            // start a SECOND agent process (a fresh session can't dedup) and
+            // leave the setting just applied on the first, which is precisely
+            // the "never spawns a second one" this resolver exists to keep.
+            return existing
+        }
+        let prefs = SelectorPrefsStore.prefs(for: context.agentType)
+        let conn = try await client.connect(
+            agentType: context.agentType,
+            workingDir: context.workingDir,
+            sessionId: context.sessionID,
             preferredModeId: prefs.modeId,
             preferredConfigValues: prefs.configValues
         )
-        connectionID = conn
+        adoptResolvedConnection(conn, for: context)
         return conn
+    }
+
+    /// Cache a resolution only while the screen is still the thing it was resolved
+    /// for. `connectionID` is what the next prompt, the interactive replies and the
+    /// stop button all target, so one that lands late — after the draft moved to
+    /// another agent, or after the first send linked a conversation and resolved
+    /// its own — must not overwrite the connection actually in use.
+    ///
+    /// The resolution itself is still handed back to its caller: an apply made for
+    /// agent A has to reach A's connection either way, or its revert would undo a
+    /// selection the user made deliberately.
+    private func adoptResolvedConnection(_ conn: String, for context: ConnectionContext) {
+        guard connectionContext == context else { return }
+        connectionID = conn
     }
 
     /// How long to keep asking a connection what it accepts, matching the
