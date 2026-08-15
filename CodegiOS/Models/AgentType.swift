@@ -1,43 +1,87 @@
 import SwiftUI
 
 /// The coding agents codeg can drive. Wire value is snake_case (serde
-/// `rename_all = "snake_case"` on the Rust `AgentType` enum). Enum *values*
-/// are unaffected by the decoder's key strategy, so raw values match directly.
-enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
-    case claudeCode = "claude_code"
-    case codex = "codex"
-    case openCode = "open_code"
-    case gemini = "gemini"
-    case openClaw = "open_claw"
-    case cline = "cline"
-    case hermes = "hermes"
-    case codeBuddy = "code_buddy"
-    case kimiCode = "kimi_code"
-    case pi = "pi"
-    case grok = "grok"
-    case cursor = "cursor"
-    /// User-registered ACP agent (`custom:<id>` on the wire). Must not decode
-    /// as Claude or every extra account / future registry agent looks like Claude.
-    case custom = "custom"
+/// `rename_all = "snake_case"` on the Rust `AgentType` enum).
+///
+/// `custom:<id>` and unknown built-in ids keep their original wire token so a
+/// later encode (create conversation, acp_connect, settings writes) does not
+/// collapse to `"custom"` / `"unknown"` or impersonate Claude.
+enum AgentType: Hashable, Sendable, Identifiable {
+    case claudeCode
+    case codex
+    case openCode
+    case gemini
+    case openClaw
+    case cline
+    case hermes
+    case codeBuddy
+    case kimiCode
+    case pi
+    case grok
+    case cursor
+    /// User-registered ACP agent. Associated value is the full wire token
+    /// (`custom:claude-code-2`).
+    case custom(String)
     /// Built-in added on the server after this app shipped, or a typo'd wire
-    /// id. Same rule: never impersonate Claude.
-    case unknown = "unknown"
+    /// id. Associated value is the original token.
+    case unknown(String)
 
-    var id: String { rawValue }
+    var id: String { wireValue }
 
-    /// Decodes `custom:<id>` as `.custom` and any other unknown wire value as
-    /// `.unknown`. Never fall back to `.claudeCode` — that made Grok (on
-    /// builds that predated the `grok` case) and every custom agent render
-    /// with Claude's name and mark.
-    init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        if let known = AgentType(rawValue: raw) {
-            self = known
-        } else if raw.hasPrefix("custom:") {
-            self = .custom
-        } else {
-            self = .unknown
+    /// Built-in cases only. Custom/unknown ids come from the live server list.
+    static var allCases: [AgentType] {
+        [
+            .claudeCode, .codex, .openCode, .gemini, .openClaw, .cline,
+            .hermes, .codeBuddy, .kimiCode, .pi, .grok, .cursor,
+        ]
+    }
+
+    /// The token the server's `AgentType` enum understands.
+    var wireValue: String {
+        switch self {
+        case .claudeCode: return "claude_code"
+        case .codex: return "codex"
+        case .openCode: return "open_code"
+        case .gemini: return "gemini"
+        case .openClaw: return "open_claw"
+        case .cline: return "cline"
+        case .hermes: return "hermes"
+        case .codeBuddy: return "code_buddy"
+        case .kimiCode: return "kimi_code"
+        case .pi: return "pi"
+        case .grok: return "grok"
+        case .cursor: return "cursor"
+        case .custom(let raw), .unknown(let raw): return raw
         }
+    }
+
+    /// Compatibility with call sites that used `String` raw representable.
+    var rawValue: String { wireValue }
+
+    static func parse(_ raw: String) -> AgentType {
+        switch raw {
+        case "claude_code": return .claudeCode
+        case "codex": return .codex
+        case "open_code": return .openCode
+        case "gemini": return .gemini
+        case "open_claw": return .openClaw
+        case "cline": return .cline
+        case "hermes": return .hermes
+        case "code_buddy": return .codeBuddy
+        case "kimi_code": return .kimiCode
+        case "pi": return .pi
+        case "grok": return .grok
+        case "cursor": return .cursor
+        default:
+            if raw.hasPrefix("custom:") {
+                return .custom(raw)
+            }
+            return .unknown(raw)
+        }
+    }
+
+    init?(rawValue: String) {
+        self = Self.parse(rawValue)
     }
 
     var displayName: String {
@@ -54,8 +98,11 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "Pi"
         case .grok: return "Grok"
         case .cursor: return "Cursor"
-        case .custom: return "Custom agent"
-        case .unknown: return "Unknown agent"
+        case .custom(let raw):
+            let id = raw.dropFirst("custom:".count)
+            return id.isEmpty ? "Custom agent" : String(id)
+        case .unknown(let raw):
+            return raw.isEmpty ? "Unknown agent" : raw
         }
     }
 
@@ -98,9 +145,7 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         }
     }
 
-    /// Name of the brand-icon image set in `Assets.xcassets` (the per-agent SVGs
-    /// ported verbatim from the web client's `agent-icon.tsx`). Rendered by
-    /// `AgentIcon`.
+    /// Name of the brand-icon image set in `Assets.xcassets`.
     var iconAsset: String {
         switch self {
         case .claudeCode: return "AgentClaudeCode"
@@ -119,10 +164,6 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         }
     }
 
-    /// Whether the brand asset is a monochrome (template) glyph that should be
-    /// tinted by the caller. Mirrors the web's `MONO_ICONS` set (OpenCode, Cline,
-    /// Hermes, CodeBuddy, Grok, Cursor); the others carry their own brand
-    /// colors/gradients and render as-is.
     var iconIsTemplate: Bool {
         switch self {
         case .openCode, .cline, .hermes, .codeBuddy, .grok, .cursor, .custom, .unknown: return true
@@ -130,27 +171,33 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         }
     }
 
-    /// Accent color used for badges / avatars per agent.
     var accent: Color {
         switch self {
-        case .claudeCode: return Color(red: 0.85, green: 0.52, blue: 0.34) // claude clay
-        case .codex: return Color(red: 0.45, green: 0.78, blue: 0.66)      // teal
-        case .openCode: return Color(red: 0.55, green: 0.62, blue: 0.95)   // indigo
-        case .gemini: return Color(red: 0.50, green: 0.70, blue: 0.98)     // blue
-        case .openClaw: return Color(red: 0.92, green: 0.62, blue: 0.42)   // amber
-        case .cline: return Color(red: 0.62, green: 0.78, blue: 0.50)      // green
-        case .hermes: return Color(red: 0.60, green: 0.50, blue: 0.85)     // violet
-        case .codeBuddy: return Color(red: 0.20, green: 0.47, blue: 0.96)  // tencent blue
-        case .kimiCode: return Color(red: 0.09, green: 0.51, blue: 1.0)    // moonshot blue
-        case .pi: return Color(red: 0.22, green: 0.22, blue: 0.26)         // pi slate
-        // xAI's mark is monochrome (web `bg-neutral-900`); a static near-black
-        // would vanish on the dark card, so tint dynamically — near-black in
-        // light, near-white in dark — mirroring the brand while staying legible.
+        case .claudeCode: return Color(red: 0.85, green: 0.52, blue: 0.34)
+        case .codex: return Color(red: 0.45, green: 0.78, blue: 0.66)
+        case .openCode: return Color(red: 0.55, green: 0.62, blue: 0.95)
+        case .gemini: return Color(red: 0.50, green: 0.70, blue: 0.98)
+        case .openClaw: return Color(red: 0.92, green: 0.62, blue: 0.42)
+        case .cline: return Color(red: 0.62, green: 0.78, blue: 0.50)
+        case .hermes: return Color(red: 0.60, green: 0.50, blue: 0.85)
+        case .codeBuddy: return Color(red: 0.20, green: 0.47, blue: 0.96)
+        case .kimiCode: return Color(red: 0.09, green: 0.51, blue: 1.0)
+        case .pi: return Color(red: 0.22, green: 0.22, blue: 0.26)
         case .grok: return Color(light: Color(white: 0.12), dark: Color(white: 0.92))
-        // Cursor's cube mark is monochrome too (web renders it at plain
-        // `text-foreground`), so it gets the same appearance-following tint.
         case .cursor: return Color(light: Color(white: 0.12), dark: Color(white: 0.92))
         case .custom, .unknown: return Color(light: Color(white: 0.35), dark: Color(white: 0.75))
         }
+    }
+}
+
+extension AgentType: Codable {
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = AgentType.parse(raw)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(wireValue)
     }
 }
