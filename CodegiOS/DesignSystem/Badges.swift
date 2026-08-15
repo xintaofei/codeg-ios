@@ -4,9 +4,10 @@ import SwiftUI
 struct AgentAvatar: View {
     let agent: AgentType
     var size: CGFloat = 36
+    var remoteURL: URL? = nil
 
     var body: some View {
-        AgentIcon(agent: agent)
+        AgentIcon(agent: agent, remoteURL: remoteURL)
             .frame(width: size * 0.56, height: size * 0.56)
             .frame(width: size, height: size)
             .background(agent.accent.opacity(0.16), in: Circle())

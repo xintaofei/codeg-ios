@@ -13,24 +13,42 @@ struct AgentIcon: View {
     let agent: AgentType
     /// Tint applied to monochrome (template) agents. Color agents ignore it.
     var tint: Color
+    /// Remote mark from the server (`icon_url` on a custom agent). Used when
+    /// present so extra accounts do not share Claude's icon.
+    var remoteURL: URL?
 
-    init(agent: AgentType, tint: Color? = nil) {
+    init(agent: AgentType, tint: Color? = nil, remoteURL: URL? = nil) {
         self.agent = agent
         self.tint = tint ?? agent.accent
+        self.remoteURL = remoteURL
     }
 
     var body: some View {
+        if let remoteURL {
+            AsyncImage(url: remoteURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                default:
+                    localMark
+                }
+            }
+        } else {
+            localMark
+        }
+    }
+
+    @ViewBuilder
+    private var localMark: some View {
         if UIImage(named: agent.iconAsset) != nil {
             Image(agent.iconAsset)
-                // Be explicit about intent rather than relying on the asset's
-                // configured rendering intent: mono agents tint, color render as-is.
                 .renderingMode(agent.iconIsTemplate ? .template : .original)
                 .resizable()
                 .scaledToFit()
-                // A template image adopts this; an original (color) image ignores it.
                 .foregroundStyle(tint)
         } else {
-            // Defensive fallback if the brand asset is ever missing/renamed.
             Image(systemName: agent.symbolName)
                 .resizable()
                 .scaledToFit()

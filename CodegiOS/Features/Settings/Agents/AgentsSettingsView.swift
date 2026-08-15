@@ -114,7 +114,11 @@ private struct AgentRow: View {
             HStack(spacing: 12) {
                 Button(action: onOpen) {
                     HStack(spacing: 12) {
-                        AgentAvatar(agent: agent.agentType, size: 40)
+                        AgentAvatar(
+                            agent: agent.agentType,
+                            size: 40,
+                            remoteURL: agent.iconUrl.flatMap(URL.init(string:))
+                        )
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 7) {
                                 Text(agent.name)

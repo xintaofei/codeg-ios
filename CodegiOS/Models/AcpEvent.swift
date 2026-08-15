@@ -392,6 +392,9 @@ struct AcpAgentInfo: Decodable, Identifiable, Hashable, Sendable {
     let registryId: String
     let name: String
     let description: String
+    /// Custom-agent mark from the server. Built-ins leave this nil and use
+    /// the shipped asset.
+    let iconUrl: String?
     let available: Bool
     /// `var` (not `let`) so the agents list model can optimistically flip an
     /// agent's enabled state for the instant row/detail toggle, reverting on a
