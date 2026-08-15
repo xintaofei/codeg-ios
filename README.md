@@ -30,6 +30,17 @@ codeg backend; the app only calls its HTTP + WebSocket API.
 
 Simulator builds do not require an Apple Developer account:
 
+Private tailnet (same privacy as Tailscale on both devices, no Tailscale.app
+on the phone) needs official TailscaleKit. On a Mac:
+
+```bash
+./scripts/bootstrap_tailscalekit.sh   # latest libtailscale, records the SHA
+xcodegen generate
+```
+
+Without that step the app still builds. `*.ts.net` servers then need the
+Tailscale app on the phone, or they fail closed with a rebuild hint.
+
 ```bash
 xcodegen generate            # regenerate CodegiOS.xcodeproj from project.yml
 open CodegiOS.xcodeproj
@@ -107,10 +118,11 @@ Store Connect. To automate that text too, graduate `--archive` to Fastlane
 
 ## Connecting to a server
 
-1. Start a codeg server (`CODEG_PORT` default `3080`). It prints a `CODEG_TOKEN`
-   to stderr on startup.
-2. In the app, tap **+**, enter a name, the server URL (e.g. `http://192.168.1.10:3080`),
-   and the token. Use **Test Connection** to validate, then **Save**.
+1. On the PC, start Web Service and turn on **Private** (Tailscale Serve).
+2. In the app, tap **+** and scan the desktop QR. That fills the `*.ts.net`
+   URL and token. The first time, Codeg opens Tailscale login in Safari,
+   then stays on your tailnet (no Tailscale.app).
+3. Or enter a LAN URL by hand and paste the token. Use **Test Connection**, then **Save**.
 
 ## Architecture
 

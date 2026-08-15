@@ -61,6 +61,11 @@ struct CodegClient: Sendable {
 
     // MARK: - Endpoints
 
+    /// WebSocket session that uses the embedded tailnet when the host is `*.ts.net`.
+    func liveSession() async -> URLSession {
+        await TailnetSession.shared.session(for: baseURL, fallback: session)
+    }
+
     /// Validate connectivity + auth for a server profile. Uses the snappier read
     /// session (15s) so a dead LAN host surfaces as offline in ~15s rather than
     /// the 30s default — this endpoint normally answers in well under a second,
@@ -368,7 +373,10 @@ struct CodegClient: Sendable {
     /// body — used for settings objects that must preserve snake_case keys the
     /// shared encoder/decoder would otherwise mangle (e.g. delegation settings).
     func send(_ path: String, rawBody: Data, session: URLSession? = nil) async throws -> Data {
-        let session = session ?? self.session
+        let session = await TailnetSession.shared.session(
+            for: baseURL,
+            fallback: session ?? self.session
+        )
         let url = baseURL.appendingPathComponent("api").appendingPathComponent(path)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

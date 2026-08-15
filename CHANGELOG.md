@@ -12,6 +12,10 @@ the text as the git tag message and the GitHub Release notes.
 
 ### Added
 
+- Private tailnet inside Codeg: scan the desktop Private QR, sign in once in
+  Safari, then talk to `*.ts.net` over official TailscaleKit. No Tailscale.app
+  on the phone. Build with `scripts/bootstrap_tailscalekit.sh`.
+
 ### Changed
 
 - Apple signing now uses an ignored local configuration instead of a committed

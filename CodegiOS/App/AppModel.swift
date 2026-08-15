@@ -23,6 +23,7 @@ final class AppModel {
             guard oldValue != selectedServerID else { return }
             resetServerScopedState()
             UserDefaults.standard.set(selectedServerID?.uuidString, forKey: Self.lastServerKey)
+            Task { await TailnetSession.shared.prepare(for: selectedServer?.baseURL) }
         }
     }
 
@@ -67,6 +68,7 @@ final class AppModel {
         // anymore — the app must come up already pointed at a server.
         let persisted = UserDefaults.standard.string(forKey: Self.lastServerKey).flatMap(UUID.init)
         self.selectedServerID = store.servers.first { $0.id == persisted }?.id ?? store.servers.first?.id
+        Task { await TailnetSession.shared.prepare(for: selectedServer?.baseURL) }
     }
 
     var selectedServer: ServerProfile? {
