@@ -16,14 +16,28 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
     case pi = "pi"
     case grok = "grok"
     case cursor = "cursor"
+    /// User-registered ACP agent (`custom:<id>` on the wire). Must not decode
+    /// as Claude or every extra account / future registry agent looks like Claude.
+    case custom = "custom"
+    /// Built-in added on the server after this app shipped, or a typo'd wire
+    /// id. Same rule: never impersonate Claude.
+    case unknown = "unknown"
 
     var id: String { rawValue }
 
-    /// Decodes unknown future agent types to `.claudeCode` rather than throwing,
-    /// so one new server-side agent can't break the whole list decode.
+    /// Decodes `custom:<id>` as `.custom` and any other unknown wire value as
+    /// `.unknown`. Never fall back to `.claudeCode` — that made Grok (on
+    /// builds that predated the `grok` case) and every custom agent render
+    /// with Claude's name and mark.
     init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
-        self = AgentType(rawValue: raw) ?? .claudeCode
+        if let known = AgentType(rawValue: raw) {
+            self = known
+        } else if raw.hasPrefix("custom:") {
+            self = .custom
+        } else {
+            self = .unknown
+        }
     }
 
     var displayName: String {
@@ -40,6 +54,8 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "Pi"
         case .grok: return "Grok"
         case .cursor: return "Cursor"
+        case .custom: return "Custom agent"
+        case .unknown: return "Unknown agent"
         }
     }
 
@@ -58,6 +74,8 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "Pi"
         case .grok: return "Grok"
         case .cursor: return "Cursor"
+        case .custom: return "Custom"
+        case .unknown: return "Unknown"
         }
     }
 
@@ -76,6 +94,7 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "pi"
         case .grok: return "line.diagonal"
         case .cursor: return "cursorarrow"
+        case .custom, .unknown: return "questionmark.circle"
         }
     }
 
@@ -96,6 +115,7 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         case .pi: return "AgentPi"
         case .grok: return "AgentGrok"
         case .cursor: return "AgentCursor"
+        case .custom, .unknown: return "AgentUnknown"
         }
     }
 
@@ -105,7 +125,7 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
     /// colors/gradients and render as-is.
     var iconIsTemplate: Bool {
         switch self {
-        case .openCode, .cline, .hermes, .codeBuddy, .grok, .cursor: return true
+        case .openCode, .cline, .hermes, .codeBuddy, .grok, .cursor, .custom, .unknown: return true
         case .claudeCode, .codex, .gemini, .openClaw, .kimiCode, .pi: return false
         }
     }
@@ -130,6 +150,7 @@ enum AgentType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable 
         // Cursor's cube mark is monochrome too (web renders it at plain
         // `text-foreground`), so it gets the same appearance-following tint.
         case .cursor: return Color(light: Color(white: 0.12), dark: Color(white: 0.92))
+        case .custom, .unknown: return Color(light: Color(white: 0.35), dark: Color(white: 0.75))
         }
     }
 }

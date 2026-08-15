@@ -626,6 +626,10 @@ struct AgentConfigSection: View {
         case .cursor:     CursorConfigSection(draft: $draft, client: client)
         case .kimiCode:   KimiConfigSection(model: model, agent: agent, client: client)
         case .pi:         PiConfigSection(model: model, agent: agent, client: client)
+        case .custom, .unknown:
+            Text("This agent has no iOS settings panel yet. Sign in from the desktop agent or its official CLI.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 }
