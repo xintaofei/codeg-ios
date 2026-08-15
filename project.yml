@@ -11,6 +11,12 @@ configFiles:
   Debug: Config/Signing.xcconfig
   Release: Config/Signing.xcconfig
 
+# Written by scripts/bootstrap_tailscalekit.sh after TailscaleKit is built.
+# Optional so a clone still generates without the private-tailnet framework.
+include:
+  - path: project.tailscale.yml
+    optional: true
+
 packages:
   # Native VT100/xterm terminal emulator (the equivalent of the web client's
   # xterm.js) — backs the folder detail's Terminal tab. First SPM dependency in

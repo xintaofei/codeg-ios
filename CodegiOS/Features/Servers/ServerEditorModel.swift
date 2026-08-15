@@ -220,61 +220,21 @@ final class ServerEditorModel {
     // MARK: - QR scan
 
     /// Apply a value decoded from a server QR code, filling the editable fields.
-    ///
-    /// codeg's desktop encodes the bare `http://host:port` address, so the common
-    /// case is a plain URL → the URL field. We're forgiving beyond that:
-    /// - A JSON payload (`{"url"|"address"|"server", "token"?, "name"?}`) fills the
-    ///   matching fields.
-    /// - A plain address may carry a `?token=…` query, which is split out into the
-    ///   token field rather than left in the persisted URL.
-    ///
-    /// Returns `true` when at least a usable, validated URL was extracted (and
-    /// clears any stale test result); `false` if the payload isn't a server
-    /// address, so the sheet can show "not a valid server QR".
+    /// Desktop Private mode sends JSON `{url, token, mode:"private"}`.
     @discardableResult
     func applyScanned(_ raw: String) -> Bool {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-
-        // 1) JSON payload (defensive — codeg encodes a bare URL, but be forgiving).
-        if let data = trimmed.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            let candidate = (object["url"] ?? object["address"] ?? object["server"]) as? String
-            guard let candidate, let normalized = Self.normalizedURL(from: candidate) else { return false }
-            urlString = normalized.absoluteString
-            if let name = (object["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !name.isEmpty, trimmedName.isEmpty {
-                self.name = name
-            }
-            if let token = (object["token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !token.isEmpty {
-                self.token = token
-            }
-            fieldsChanged()
-            return true
+        guard let pairing = CodegPairingParser.parse(raw) else { return false }
+        urlString = pairing.url.absoluteString
+        if let name = pairing.name, !name.isEmpty, trimmedName.isEmpty {
+            self.name = name
         }
-
-        // 2) Plain address, possibly with a `?token=` query item.
-        let (address, scannedToken) = Self.splitToken(from: trimmed)
-        guard let normalized = Self.normalizedURL(from: address) else { return false }
-        urlString = normalized.absoluteString
-        if let scannedToken { self.token = scannedToken }
+        if let token = pairing.token, !token.isEmpty {
+            self.token = token
+        }
+        if pairing.mode == .privateTailnet {
+            Task { await TailnetSession.shared.prepare(for: pairing.url) }
+        }
         fieldsChanged()
         return true
-    }
-
-    /// Pull an optional `token` query item out of an address, returning the
-    /// address without it and the token (if present and non-empty).
-    private static func splitToken(from raw: String) -> (address: String, token: String?) {
-        guard var components = URLComponents(string: raw),
-              let items = components.queryItems, !items.isEmpty else {
-            return (raw, nil)
-        }
-        let token = items.first { $0.name.lowercased() == "token" }?.value
-        let remaining = items.filter { $0.name.lowercased() != "token" }
-        components.queryItems = remaining.isEmpty ? nil : remaining
-        let address = components.string ?? raw
-        let cleanedToken = token?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (address, (cleanedToken?.isEmpty == false) ? cleanedToken : nil)
     }
 }

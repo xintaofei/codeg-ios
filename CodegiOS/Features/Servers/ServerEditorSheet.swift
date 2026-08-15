@@ -190,9 +190,7 @@ struct ServerEditorSheet: View {
         dismiss()
     }
 
-    /// Fill the address from a scanned QR payload, or surface an error if it
-    /// isn't a server address. The token still has to be entered by hand (codeg's
-    /// QR carries only the URL).
+    /// Fill the address (and token, when the desktop QR includes it).
     private func handleScanned(_ code: String) {
         if !model.applyScanned(code) {
             scanError = "That QR code isn’t a codeg server address. Make sure you’re scanning the server URL QR from codeg."
