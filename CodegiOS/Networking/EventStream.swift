@@ -83,6 +83,10 @@ final class EventStream: @unchecked Sendable {
         case detached(reason: String)
         case pong
         case closed(reason: String?)
+        /// Legacy global `{channel, payload}` firehose. `payload` is the
+        /// raw JSON object (never logged). Used for ids-only notifies such
+        /// as `composer-draft://changed`.
+        case global(channel: String, payload: Data)
     }
 
     let frames: AsyncStream<Frame>
@@ -232,7 +236,11 @@ final class EventStream: @unchecked Sendable {
         if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             if let channel = obj["channel"] as? String {
                 if channel == "__ready__" { continuation.yield(.ready) }
-                return // ignore other legacy global events in Phase 1
+                else {
+                    let payload = obj["payload"].flatMap { try? JSONSerialization.data(withJSONObject: $0) } ?? Data()
+                    continuation.yield(.global(channel: channel, payload: payload))
+                }
+                return
             }
             guard obj["type"] is String else { return }
         }
