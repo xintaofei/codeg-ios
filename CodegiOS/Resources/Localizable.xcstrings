@@ -7939,6 +7939,66 @@
         }
       }
     },
+    "Show completed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示已完成"
+          }
+        }
+      }
+    },
+    "Showing completed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在显示已完成"
+          }
+        }
+      }
+    },
+    "Hiding completed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已隐藏已完成"
+          }
+        }
+      }
+    },
+    "View options" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看选项"
+          }
+        }
+      }
+    },
+    "No Unfinished Tasks" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有未完成的任务"
+          }
+        }
+      }
+    },
+    "Completed conversations are hidden. Turn on Show completed to see them." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已完成的会话已隐藏。打开“显示已完成”即可查看。"
+          }
+        }
+      }
+    },
     "Showing the latest %@ commits" : {
 
     },

@@ -98,6 +98,9 @@ struct SessionListView: View {
                     serverTitleMenu(serverSwitcher)
                 }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                filterMenu
+            }
             if let onNewSession {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: onNewSession) {
@@ -116,6 +119,7 @@ struct SessionListView: View {
         // (same UUID, new URL/token → fresh `client`) rebinds the list to the
         // new endpoint and refetches, rather than serving the old endpoint's
         // sessions.
+        .onAppear { viewModel.showCompleted = SessionListPrefs.showCompleted }
         .task(id: serverRevision) {
             await viewModel.reload(client: client)
         }
@@ -327,10 +331,24 @@ struct SessionListView: View {
                 Task { await viewModel.refresh() }
             }
         } else if searching {
+            if viewModel.hasHiddenCompletedMatches(searchText: searchText) {
+                EmptyStateView(
+                    icon: "checkmark.circle",
+                    title: "No Unfinished Tasks",
+                    message: "Completed conversations are hidden. Turn on Show completed to see them."
+                )
+            } else {
+                EmptyStateView(
+                    icon: "magnifyingglass",
+                    title: "No Matches",
+                    message: "No sessions match \"\(searchText)\"."
+                )
+            }
+        } else if viewModel.hiddenCompletedCount > 0 {
             EmptyStateView(
-                icon: "magnifyingglass",
-                title: "No Matches",
-                message: "No sessions match \"\(searchText)\"."
+                icon: "checkmark.circle",
+                title: "No Unfinished Tasks",
+                message: "Completed conversations are hidden. Turn on Show completed to see them."
             )
         } else if let onNewSession {
             EmptyStateView(
@@ -366,6 +384,26 @@ struct SessionListView: View {
 
     private func togglePin(_ conversation: ConversationSummary) {
         Task { await viewModel.setPinned(conversation, pinned: !conversation.isPinned) }
+    }
+
+    /// Same control as desktop sidebar "Show completed conversations".
+    /// Filled icon when the filter is off the default (completed visible).
+    private var filterMenu: some View {
+        Menu {
+            Toggle("Show completed", isOn: Binding(
+                get: { viewModel.showCompleted },
+                set: { viewModel.showCompleted = $0 }
+            ))
+        } label: {
+            Image(systemName: viewModel.showCompleted
+                ? "line.3.horizontal.decrease.circle.fill"
+                : "line.3.horizontal.decrease.circle")
+        }
+        .tint(Theme.accent)
+        .accessibilityLabel("View options")
+        .accessibilityValue(viewModel.showCompleted
+            ? "Showing completed"
+            : "Hiding completed")
     }
 
     /// The big, left-aligned server name rendered as a `Menu` so it's tappable in
