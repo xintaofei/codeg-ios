@@ -114,8 +114,15 @@ final class SessionDetailViewModel {
     /// True once a draft's first send begins — locks the agent/folder pickers.
     private(set) var hasStartedFirstSend = false
 
-    /// Compose-bar text.
-    var draft: String = ""
+    /// Compose-bar text. Changes debounce into `put_composer_draft` so
+    /// desktop/web see the same unsent text (and the reverse via WS).
+    var draft: String = "" {
+        didSet {
+            guard !applyingRemoteDraft else { return }
+            guard draft != lastPutDraft else { return }
+            scheduleComposerDraftPersist()
+        }
+    }
 
     /// Images staged for the next prompt (added via the "+" menu). Cleared when
     /// the optimistic turn is posted; restored if that send is rolled back.
@@ -190,6 +197,16 @@ final class SessionDetailViewModel {
     /// Reset whenever the server confirms a fresh attach (a snapshot/replay
     /// frame). Past `maxStreamReconnects`, recovery gives up and reconciles.
     private var streamReconnects = 0
+
+    // MARK: - Composer draft sync (desktop ↔ this phone)
+
+    private let composerOrigin = ComposerDraftOrigin.id
+    private var lastPutDraft: String = ""
+    private var lastDraftRevision = 0
+    private var applyingRemoteDraft = false
+    private var draftPersistTask: Task<Void, Never>?
+    private var draftListenStream: EventStream?
+    private var draftListenTask: Task<Void, Never>?
     private static let maxStreamReconnects = 6
 
     private init(client: CodegClient, mode: Mode) {
@@ -308,6 +325,7 @@ final class SessionDetailViewModel {
                 phase = .loaded
                 // Initial load lands at the latest message.
                 requestStickToBottom()
+                startComposerDraftSync()
                 // If a turn is still running on this session (started here earlier,
                 // from codeg web, or before an app relaunch), attach so it streams
                 // live and any pending permission/question card surfaces.
@@ -851,6 +869,7 @@ final class SessionDetailViewModel {
         )
         conversationID = id
         draftCreatedConversationID = id
+        startComposerDraftSync()
         currentBranch = folder?.gitBranch
         // Refresh this app's own session list so the new row shows there too.
         notifyConversationsChanged()
@@ -962,6 +981,8 @@ final class SessionDetailViewModel {
                 if isCurrent { resumeReady(throwing: nil) }
             case .pong:
                 break
+            case .global(let channel, let payload):
+                if isCurrent { handleComposerDraftNotify(channel: channel, payload: payload) }
             case .event(let envelope):
                 if isCurrent { handle(event: envelope.event, live: live) }
             case .detached(let reason):
@@ -1134,6 +1155,8 @@ final class SessionDetailViewModel {
                 if let live { for env in events { handle(event: env.event, live: live) } }
             case .pong:
                 break
+            case .global(let channel, let payload):
+                handleComposerDraftNotify(channel: channel, payload: payload)
             case .event(let envelope):
                 // The attach snapshot always precedes events, so `live` is set by now.
                 if let live { handle(event: envelope.event, live: live) }
@@ -1325,6 +1348,7 @@ final class SessionDetailViewModel {
     private func adoptLinkedConversation(_ id: Int) {
         guard conversationID == nil else { return }
         conversationID = id
+        startComposerDraftSync()
         Task { [weak self] in
             guard let self else { return }
             guard let detail = try? await self.client.conversationDetail(id: id),
@@ -1751,7 +1775,116 @@ final class SessionDetailViewModel {
         consumerTask = nil
         agentOptions.teardown()
         insertModel.teardown()
+        closeComposerDraftSync()
         closeStream()
+    }
+
+    // MARK: - Composer draft sync
+
+    private func startComposerDraftSync() {
+        guard conversationID != nil else { return }
+        Task { await pullComposerDraft() }
+        startDraftListenStream()
+    }
+
+    private func closeComposerDraftSync() {
+        draftPersistTask?.cancel()
+        draftPersistTask = nil
+        draftListenTask?.cancel()
+        draftListenTask = nil
+        draftListenStream?.close()
+        draftListenStream = nil
+    }
+
+    private func startDraftListenStream() {
+        draftListenTask?.cancel()
+        draftListenStream?.close()
+        let stream = EventStream(baseURL: client.baseURL, token: client.token)
+        draftListenStream = stream
+        draftListenTask = Task { [weak self] in
+            stream.start()
+            for await frame in stream.frames {
+                guard let self else { return }
+                switch frame {
+                case .global(let channel, let payload):
+                    self.handleComposerDraftNotify(channel: channel, payload: payload)
+                case .closed, .detached:
+                    return
+                default:
+                    break
+                }
+            }
+        }
+    }
+
+    private func scheduleComposerDraftPersist() {
+        draftPersistTask?.cancel()
+        let snapshot = draft
+        draftPersistTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, let self else { return }
+            await self.pushComposerDraft(snapshot)
+        }
+    }
+
+    private func pushComposerDraft(_ text: String) async {
+        guard let id = conversationID else { return }
+        guard text != lastPutDraft else { return }
+        lastPutDraft = text
+        do {
+            let result = try await client.putComposerDraft(
+                conversationId: id,
+                text: text,
+                origin: composerOrigin
+            )
+            lastDraftRevision = max(lastDraftRevision, result.revision)
+        } catch {
+            // Best-effort. Keep lastPutDraft so we do not tight-loop.
+        }
+    }
+
+    private func pullComposerDraft() async {
+        guard let id = conversationID else { return }
+        if let remote = try? await client.getComposerDraft(conversationId: id) {
+            applyRemoteComposerDraft(remote)
+            return
+        }
+        if !draft.isEmpty {
+            await pushComposerDraft(draft)
+        }
+    }
+
+    private func handleComposerDraftNotify(channel: String, payload: Data) {
+        guard channel == ComposerDraftChanged.channel else { return }
+        guard let change = try? CodegJSON.decoder.decode(ComposerDraftChanged.self, from: payload) else { return }
+        guard change.conversationId == conversationID else { return }
+        if !ComposerDraftPolicy.shouldApply(
+            remoteRevision: change.revision,
+            lastAppliedRevision: lastDraftRevision,
+            remoteOrigin: change.origin,
+            localOrigin: composerOrigin
+        ) {
+            lastDraftRevision = max(lastDraftRevision, change.revision)
+            return
+        }
+        Task { await pullComposerDraft() }
+    }
+
+    private func applyRemoteComposerDraft(_ remote: ComposerDraft) {
+        if !ComposerDraftPolicy.shouldApply(
+            remoteRevision: remote.revision,
+            lastAppliedRevision: lastDraftRevision,
+            remoteOrigin: remote.origin,
+            localOrigin: composerOrigin
+        ) {
+            lastDraftRevision = max(lastDraftRevision, remote.revision)
+            return
+        }
+        lastDraftRevision = remote.revision
+        lastPutDraft = remote.text
+        applyingRemoteDraft = true
+        draft = remote.text
+        applyingRemoteDraft = false
     }
 
     // MARK: - Scroll

@@ -105,6 +105,27 @@ struct CodegClient: Sendable {
         try await postJSON("get_folder_conversation", ConversationIdBody(conversationId: id))
     }
 
+    /// Unsent composer text for a persisted conversation. `nil` when no
+    /// client has saved a draft yet. Authenticated GET — the WS notify
+    /// never carries the body.
+    func getComposerDraft(conversationId: Int) async throws -> ComposerDraft? {
+        let data = try await send(
+            "get_composer_draft",
+            body: ConversationIdBody(conversationId: conversationId)
+        )
+        if Self.isJSONNull(data) { return nil }
+        do { return try CodegJSON.decoder.decode(ComposerDraft.self, from: data) }
+        catch { throw APIError.decoding(String(describing: error)) }
+    }
+
+    @discardableResult
+    func putComposerDraft(conversationId: Int, text: String, origin: String) async throws -> ComposerDraftPutResult {
+        try await postJSON(
+            "put_composer_draft",
+            PutComposerDraftBody(conversationId: conversationId, text: text, origin: origin)
+        )
+    }
+
     /// Create a conversation row up front (before the first prompt) and return its
     /// id. The server broadcasts a `conversation_upsert` on creation, so every
     /// connected client (desktop / web) sees the new session immediately — unlike

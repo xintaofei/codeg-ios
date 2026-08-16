@@ -45,6 +45,12 @@ struct ConversationIdBody: Encodable, Sendable {
     let conversationId: Int
 }
 
+struct PutComposerDraftBody: Encodable, Sendable {
+    let conversationId: Int
+    let text: String
+    let origin: String
+}
+
 /// Body for `create_conversation` — creates a server-side conversation row in
 /// `folderId` for `agentType` (optional `title`) BEFORE the first prompt, so the
 /// server broadcasts a `conversation_upsert` to every client (the desktop/web
