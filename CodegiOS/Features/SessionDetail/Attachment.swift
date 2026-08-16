@@ -16,16 +16,37 @@ import UniformTypeIdentifiers
 /// failure path rather than being blocked up front. Capability gating is a
 /// follow-up that depends on modeling live session/capability events.
 struct Attachment: Identifiable, Hashable, Sendable {
+    enum Kind: String, Sendable {
+        case image
+        case file
+    }
+
     let id: UUID
     let name: String
     let mimeType: String
     let data: Data
+    let kind: Kind
+    /// Jail path from `/upload_attachment`. Used for draft sync + hydration.
+    var uploadPath: String?
+    /// `file://` uri for workspace files or uploaded images.
+    var fileURI: String?
 
-    init(id: UUID = UUID(), name: String, mimeType: String, data: Data) {
+    init(
+        id: UUID = UUID(),
+        name: String,
+        mimeType: String,
+        data: Data,
+        kind: Kind = .image,
+        uploadPath: String? = nil,
+        fileURI: String? = nil
+    ) {
         self.id = id
         self.name = name
         self.mimeType = mimeType
         self.data = data
+        self.kind = kind
+        self.uploadPath = uploadPath
+        self.fileURI = fileURI
     }
 
     var byteCount: Int { data.count }
@@ -33,13 +54,52 @@ struct Attachment: Identifiable, Hashable, Sendable {
 
     /// The wire block sent in `acp_prompt`.
     var promptInputBlock: PromptInputBlock {
-        .image(data: base64, mimeType: mimeType, uri: nil)
+        switch kind {
+        case .image:
+            if let fileURI, !fileURI.isEmpty {
+                // Empty payload + jail uri: the server re-inlines the bytes.
+                return .image(data: "", mimeType: mimeType, uri: fileURI)
+            }
+            return .image(data: base64, mimeType: mimeType, uri: nil)
+        case .file:
+            return .resourceLink(uri: fileURI ?? "", name: name, mimeType: mimeType)
+        }
+    }
+
+    func asDraftRef() -> ComposerDraftAttachment? {
+        switch kind {
+        case .image:
+            guard let uploadPath, !uploadPath.isEmpty else { return nil }
+            return ComposerDraftAttachment(
+                id: "image:\(id.uuidString)",
+                kind: "image",
+                name: name,
+                mime: mimeType,
+                size: UInt64(data.count),
+                path: uploadPath,
+                uri: nil
+            )
+        case .file:
+            guard let fileURI, !fileURI.isEmpty else { return nil }
+            return ComposerDraftAttachment(
+                id: "file:\(fileURI)",
+                kind: "file",
+                name: name,
+                mime: mimeType,
+                size: UInt64(data.count),
+                path: nil,
+                uri: fileURI
+            )
+        }
     }
 
     /// The block used to render this image immediately in the optimistic user
     /// turn (decoded by `InlineImageView`).
     var optimisticBlock: ContentBlock {
-        .image(ImageData(data: base64, mimeType: mimeType, uri: nil))
+        if kind == .file {
+            return .text("[\(name)](\(fileURI ?? name))")
+        }
+        return .image(ImageData(data: base64, mimeType: mimeType, uri: nil))
     }
 }
 

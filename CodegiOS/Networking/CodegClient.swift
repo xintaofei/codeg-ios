@@ -119,11 +119,65 @@ struct CodegClient: Sendable {
     }
 
     @discardableResult
-    func putComposerDraft(conversationId: Int, text: String, origin: String) async throws -> ComposerDraftPutResult {
+    func putComposerDraft(
+        conversationId: Int,
+        text: String,
+        origin: String,
+        attachments: [ComposerDraftAttachment]?
+    ) async throws -> ComposerDraftPutResult {
         try await postJSON(
             "put_composer_draft",
-            PutComposerDraftBody(conversationId: conversationId, text: text, origin: origin)
+            PutComposerDraftBody(
+                conversationId: conversationId,
+                text: text,
+                origin: origin,
+                attachments: attachments
+            )
         )
+    }
+
+    func readUploadAttachment(path: String) async throws -> ReadUploadAttachmentResult {
+        try await postJSON("read_upload_attachment", ReadUploadAttachmentBody(path: path))
+    }
+
+    func uploadAttachment(data: Data, fileName: String, mimeType: String, sessionId: String?) async throws -> UploadAttachmentResult {
+        let url = baseURL.appendingPathComponent("api").appendingPathComponent("upload_attachment")
+        let boundary = "codeg-\(UUID().uuidString)"
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 120
+
+        var body = Data()
+        func append(_ string: String) { body.append(Data(string.utf8)) }
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n")
+        append("Content-Type: \(mimeType)\r\n\r\n")
+        body.append(data)
+        append("\r\n")
+        if let sessionId, !sessionId.isEmpty {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"session_id\"\r\n\r\n")
+            append("\(sessionId)\r\n")
+        }
+        append("--\(boundary)--\r\n")
+        request.httpBody = body
+
+        let (responseData, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.transport("Malformed response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 401 { throw APIError.unauthorized }
+            throw APIError.server(
+                status: http.statusCode,
+                code: nil,
+                message: HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+            )
+        }
+        do { return try CodegJSON.decoder.decode(UploadAttachmentResult.self, from: responseData) }
+        catch { throw APIError.decoding(String(describing: error)) }
     }
 
     /// Create a conversation row up front (before the first prompt) and return its

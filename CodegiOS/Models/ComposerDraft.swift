@@ -7,6 +7,30 @@ struct ComposerDraft: Decodable, Sendable {
     let text: String
     let revision: Int
     let origin: String
+    let attachments: [ComposerDraftAttachment]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        conversationId = try c.decode(Int.self, forKey: .conversationId)
+        text = try c.decode(String.self, forKey: .text)
+        revision = try c.decode(Int.self, forKey: .revision)
+        origin = try c.decode(String.self, forKey: .origin)
+        attachments = try c.decodeIfPresent([ComposerDraftAttachment].self, forKey: .attachments) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case conversationId, text, revision, origin, attachments
+    }
+}
+
+struct ComposerDraftAttachment: Codable, Hashable, Sendable {
+    let id: String
+    let kind: String
+    let name: String
+    let mime: String?
+    let size: UInt64?
+    let path: String?
+    let uri: String?
 }
 
 struct ComposerDraftPutResult: Decodable, Sendable {
