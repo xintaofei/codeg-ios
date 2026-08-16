@@ -38,6 +38,15 @@ final class SessionListViewModel {
     /// User-facing error message for the most recent load/refresh/pin, if it failed.
     private(set) var error: String?
 
+    /// Desktop sidebar "Show completed conversations". Default off. Persisted
+    /// so iPhone and iPad keep the same choice. Pinned rows ignore this.
+    var showCompleted: Bool = SessionListPrefs.showCompleted {
+        didSet {
+            guard showCompleted != oldValue else { return }
+            SessionListPrefs.showCompleted = showCompleted
+        }
+    }
+
     /// Monotonic token so a slow fetch can't clobber a newer one's results.
     private var fetchGeneration = 0
 
@@ -102,10 +111,24 @@ final class SessionListViewModel {
     }
 
     /// Pinned conversations across all folders, most-recently-pinned first,
-    /// after applying the search filter.
+    /// after applying the search filter. Completed pins stay visible (desktop).
     func pinned(searchText: String) -> [ConversationSummary] {
         matching(conversations.filter(\.isPinned), searchText)
             .sorted { ($0.pinnedAt ?? .distantPast) > ($1.pinnedAt ?? .distantPast) }
+    }
+
+    /// Completed conversations currently hidden by the default filter. Used
+    /// to tell "no sessions at all" from "only finished ones, flip the toggle".
+    var hiddenCompletedCount: Int {
+        guard !showCompleted else { return 0 }
+        return conversations.filter { $0.status == .completed && !$0.isPinned }.count
+    }
+
+    /// Search hits that exist only among hidden completed rows.
+    func hasHiddenCompletedMatches(searchText: String) -> Bool {
+        guard !showCompleted else { return false }
+        let hidden = conversations.filter { $0.status == .completed && !$0.isPinned }
+        return !matching(hidden, searchText).isEmpty
     }
 
     /// One group per folder (in `sortedFolders` order) holding that folder's
@@ -117,7 +140,7 @@ final class SessionListViewModel {
         // Group by the merge target so a worktree's conversations land under its
         // root folder's header (matching the web), not a hidden worktree row.
         let map = childToParent
-        let unpinnedByGroup = Dictionary(grouping: conversations.filter { !$0.isPinned }) {
+        let unpinnedByGroup = Dictionary(grouping: visibleUnpinned) {
             FolderVisibility.mergedFolderId($0.folderId, childToParent: map)
         }
         return sortedFolders.compactMap { folder in
@@ -135,10 +158,18 @@ final class SessionListViewModel {
     func ungrouped(searchText: String) -> [ConversationSummary] {
         let map = childToParent
         let known = Set(sortedFolders.map(\.id))
-        return matching(conversations.filter {
-            !$0.isPinned && !known.contains(FolderVisibility.mergedFolderId($0.folderId, childToParent: map))
+        return matching(visibleUnpinned.filter {
+            !known.contains(FolderVisibility.mergedFolderId($0.folderId, childToParent: map))
         }, searchText)
         .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Non-pinned conversations after the completed filter.
+    private var visibleUnpinned: [ConversationSummary] {
+        SessionListVisibility.filter(
+            conversations.filter { !$0.isPinned },
+            showCompleted: showCompleted
+        )
     }
 
     private func trimmed(_ s: String) -> String {

@@ -16,6 +16,8 @@ struct SearchView: View {
     @State private var hasSearched = false
     @State private var error: String?
     @State private var recents: [String] = RecentSearches.load()
+    /// Shared with the Chats list so flipping the filter in either place matches.
+    @State private var showCompleted = SessionListPrefs.showCompleted
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -26,9 +28,30 @@ struct SearchView: View {
         }
         .screenTitle("Search", compact: horizontalSizeClass == .compact)
         .searchable(text: $query, prompt: "Search sessions")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Toggle("Show completed", isOn: $showCompleted)
+                } label: {
+                    Image(systemName: showCompleted
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease.circle")
+                }
+                .tint(Theme.accent)
+                .accessibilityLabel("View options")
+            }
+        }
+        .onChange(of: showCompleted) { _, on in
+            SessionListPrefs.showCompleted = on
+        }
+        .onAppear { showCompleted = SessionListPrefs.showCompleted }
         .task(id: query) {
             await runSearch()
         }
+    }
+
+    private var displayedResults: [ConversationSummary] {
+        SessionListVisibility.filter(results, showCompleted: showCompleted)
     }
 
     // MARK: - Content states
@@ -55,6 +78,12 @@ struct SearchView: View {
                 title: "No Matches",
                 message: "No sessions match \"\(trimmedQuery)\"."
             )
+        } else if displayedResults.isEmpty, hasSearched {
+            EmptyStateView(
+                icon: "checkmark.circle",
+                title: "No Unfinished Tasks",
+                message: "Completed conversations are hidden. Turn on Show completed to see them."
+            )
         } else {
             resultsList
         }
@@ -63,7 +92,7 @@ struct SearchView: View {
     private var resultsList: some View {
         ScrollView {
             LazyVStack(spacing: 10) {
-                ForEach(results) { conversation in
+                ForEach(displayedResults) { conversation in
                     SessionRow(
                         conversation: conversation,
                         isSelected: false,

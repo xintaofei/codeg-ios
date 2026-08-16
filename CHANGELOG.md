@@ -12,6 +12,9 @@ the text as the git tag message and the GitHub Release notes.
 
 ### Added
 
+- Chats and Search can hide completed conversations, matching desktop. Off
+  by default; a filter menu turns them back on. Pinned rows stay visible.
+
 ### Changed
 
 - Apple signing now uses an ignored local configuration instead of a committed
