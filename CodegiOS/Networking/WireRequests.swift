@@ -6,9 +6,10 @@ import Foundation
 enum PromptInputBlock: Encodable, Sendable {
     case text(String)
     case image(data: String, mimeType: String, uri: String?)
+    case resourceLink(uri: String, name: String, mimeType: String?)
 
     private enum CodingKeys: String, CodingKey {
-        case type, text, data
+        case type, text, data, name
         case mimeType = "mime_type"
         case uri
     }
@@ -24,6 +25,11 @@ enum PromptInputBlock: Encodable, Sendable {
             try c.encode(data, forKey: .data)
             try c.encode(mimeType, forKey: .mimeType)
             try c.encodeIfPresent(uri, forKey: .uri)
+        case .resourceLink(let uri, let name, let mimeType):
+            try c.encode("resource_link", forKey: .type)
+            try c.encode(uri, forKey: .uri)
+            try c.encode(name, forKey: .name)
+            try c.encodeIfPresent(mimeType, forKey: .mimeType)
         }
     }
 }
@@ -43,6 +49,31 @@ struct ListConversationsBody: Encodable, Sendable {
 
 struct ConversationIdBody: Encodable, Sendable {
     let conversationId: Int
+}
+
+struct PutComposerDraftBody: Encodable, Sendable {
+    let conversationId: Int
+    let text: String
+    let origin: String
+    var attachments: [ComposerDraftAttachment]?
+}
+
+struct ReadUploadAttachmentBody: Encodable, Sendable {
+    let path: String
+}
+
+struct ReadUploadAttachmentResult: Decodable, Sendable {
+    let data: String
+    let name: String
+    let size: UInt64
+    let mimeType: String?
+}
+
+struct UploadAttachmentResult: Decodable, Sendable {
+    let path: String
+    let name: String
+    let size: UInt64
+    let mimeType: String?
 }
 
 /// Body for `create_conversation` — creates a server-side conversation row in

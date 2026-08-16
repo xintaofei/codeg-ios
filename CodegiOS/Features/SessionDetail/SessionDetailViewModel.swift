@@ -114,8 +114,14 @@ final class SessionDetailViewModel {
     /// True once a draft's first send begins — locks the agent/folder pickers.
     private(set) var hasStartedFirstSend = false
 
-    /// Compose-bar text.
-    var draft: String = ""
+    /// Compose-bar text. Changes debounce into `put_composer_draft` so
+    /// desktop/web see the same unsent text (and the reverse via WS).
+    var draft: String = "" {
+        didSet {
+            guard !applyingRemoteDraft else { return }
+            scheduleComposerDraftPersist()
+        }
+    }
 
     /// Images staged for the next prompt (added via the "+" menu). Cleared when
     /// the optimistic turn is posted; restored if that send is rolled back.
@@ -190,6 +196,18 @@ final class SessionDetailViewModel {
     /// Reset whenever the server confirms a fresh attach (a snapshot/replay
     /// frame). Past `maxStreamReconnects`, recovery gives up and reconciles.
     private var streamReconnects = 0
+
+    // MARK: - Composer draft sync (desktop ↔ this phone)
+
+    private let composerOrigin = ComposerDraftOrigin.id
+    private var lastPutDraft: String = ""
+    private var lastPutAttachmentIDs: [String] = []
+    private var lastDraftRevision = 0
+    private var applyingRemoteDraft = false
+    private var draftAttachmentsReady = false
+    private var draftPersistTask: Task<Void, Never>?
+    private var draftListenStream: EventStream?
+    private var draftListenTask: Task<Void, Never>?
     private static let maxStreamReconnects = 6
 
     private init(client: CodegClient, mode: Mode) {
@@ -308,6 +326,7 @@ final class SessionDetailViewModel {
                 phase = .loaded
                 // Initial load lands at the latest message.
                 requestStickToBottom()
+                startComposerDraftSync()
                 // If a turn is still running on this session (started here earlier,
                 // from codeg web, or before an app relaunch), attach so it streams
                 // live and any pending permission/question card surfaces.
@@ -601,7 +620,9 @@ final class SessionDetailViewModel {
             }
             attachments.append(attachment)
             currentBytes += attachment.byteCount
+            Task { await self.uploadDraftAttachment(attachment.id) }
         }
+        scheduleComposerDraftPersist()
         if droppedForCount {
             notice = "You can attach up to \(AttachmentPrep.maxCount) images."
         } else if droppedForSize {
@@ -611,6 +632,7 @@ final class SessionDetailViewModel {
 
     func removeAttachment(_ id: UUID) {
         attachments.removeAll { $0.id == id }
+        scheduleComposerDraftPersist()
     }
 
     // MARK: - Send
@@ -657,8 +679,8 @@ final class SessionDetailViewModel {
         )
         pendingUserTurns.append(userTurn)
         if overrideText == nil {
-            draft = ""
             attachments = []
+            draft = ""
         }
 
         // 2) Live assistant placeholder.
@@ -851,6 +873,7 @@ final class SessionDetailViewModel {
         )
         conversationID = id
         draftCreatedConversationID = id
+        startComposerDraftSync()
         currentBranch = folder?.gitBranch
         // Refresh this app's own session list so the new row shows there too.
         notifyConversationsChanged()
@@ -962,6 +985,8 @@ final class SessionDetailViewModel {
                 if isCurrent { resumeReady(throwing: nil) }
             case .pong:
                 break
+            case .global(let channel, let payload):
+                if isCurrent { handleComposerDraftNotify(channel: channel, payload: payload) }
             case .event(let envelope):
                 if isCurrent { handle(event: envelope.event, live: live) }
             case .detached(let reason):
@@ -1134,6 +1159,8 @@ final class SessionDetailViewModel {
                 if let live { for env in events { handle(event: env.event, live: live) } }
             case .pong:
                 break
+            case .global(let channel, let payload):
+                handleComposerDraftNotify(channel: channel, payload: payload)
             case .event(let envelope):
                 // The attach snapshot always precedes events, so `live` is set by now.
                 if let live { handle(event: envelope.event, live: live) }
@@ -1325,6 +1352,7 @@ final class SessionDetailViewModel {
     private func adoptLinkedConversation(_ id: Int) {
         guard conversationID == nil else { return }
         conversationID = id
+        startComposerDraftSync()
         Task { [weak self] in
             guard let self else { return }
             guard let detail = try? await self.client.conversationDetail(id: id),
@@ -1751,7 +1779,187 @@ final class SessionDetailViewModel {
         consumerTask = nil
         agentOptions.teardown()
         insertModel.teardown()
+        closeComposerDraftSync()
         closeStream()
+    }
+
+    // MARK: - Composer draft sync
+
+    private func startComposerDraftSync() {
+        guard conversationID != nil else { return }
+        Task { await pullComposerDraft() }
+        startDraftListenStream()
+    }
+
+    private func closeComposerDraftSync() {
+        draftPersistTask?.cancel()
+        draftPersistTask = nil
+        draftListenTask?.cancel()
+        draftListenTask = nil
+        draftListenStream?.close()
+        draftListenStream = nil
+    }
+
+    private func startDraftListenStream() {
+        draftListenTask?.cancel()
+        draftListenStream?.close()
+        let stream = EventStream(baseURL: client.baseURL, token: client.token)
+        draftListenStream = stream
+        draftListenTask = Task { [weak self] in
+            stream.start()
+            for await frame in stream.frames {
+                guard let self else { return }
+                switch frame {
+                case .global(let channel, let payload):
+                    self.handleComposerDraftNotify(channel: channel, payload: payload)
+                case .closed, .detached:
+                    return
+                default:
+                    break
+                }
+            }
+        }
+    }
+
+    private func scheduleComposerDraftPersist() {
+        draftPersistTask?.cancel()
+        let snapshot = draft
+        let refs = attachments.compactMap { $0.asDraftRef() }
+        draftPersistTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, let self else { return }
+            await self.pushComposerDraft(snapshot, attachments: refs)
+        }
+    }
+
+    private func pushComposerDraft(_ text: String, attachments refs: [ComposerDraftAttachment]) async {
+        guard let id = conversationID else { return }
+        let ids = refs.map(\.id)
+        guard text != lastPutDraft || ids != lastPutAttachmentIDs else { return }
+        lastPutDraft = text
+        lastPutAttachmentIDs = ids
+        do {
+            let result = try await client.putComposerDraft(
+                conversationId: id,
+                text: text,
+                origin: composerOrigin,
+                attachments: draftAttachmentsReady ? refs : nil
+            )
+            lastDraftRevision = max(lastDraftRevision, result.revision)
+        } catch {
+            // Best-effort. Keep lastPutDraft so we do not tight-loop.
+        }
+    }
+
+    private func pullComposerDraft() async {
+        guard let id = conversationID else { return }
+        if let remote = try? await client.getComposerDraft(conversationId: id) {
+            await applyRemoteComposerDraft(remote)
+            draftAttachmentsReady = true
+            return
+        }
+        draftAttachmentsReady = true
+        if !draft.isEmpty || !attachments.isEmpty {
+            await pushComposerDraft(draft, attachments: attachments.compactMap { $0.asDraftRef() })
+        }
+    }
+
+    private func handleComposerDraftNotify(channel: String, payload: Data) {
+        guard channel == ComposerDraftChanged.channel else { return }
+        guard let change = try? CodegJSON.decoder.decode(ComposerDraftChanged.self, from: payload) else { return }
+        guard change.conversationId == conversationID else { return }
+        if !ComposerDraftPolicy.shouldApply(
+            remoteRevision: change.revision,
+            lastAppliedRevision: lastDraftRevision,
+            remoteOrigin: change.origin,
+            localOrigin: composerOrigin
+        ) {
+            lastDraftRevision = max(lastDraftRevision, change.revision)
+            return
+        }
+        Task { await pullComposerDraft() }
+    }
+
+    private func applyRemoteComposerDraft(_ remote: ComposerDraft) async {
+        if !ComposerDraftPolicy.shouldApply(
+            remoteRevision: remote.revision,
+            lastAppliedRevision: lastDraftRevision,
+            remoteOrigin: remote.origin,
+            localOrigin: composerOrigin
+        ) {
+            lastDraftRevision = max(lastDraftRevision, remote.revision)
+            return
+        }
+        lastDraftRevision = remote.revision
+        lastPutDraft = remote.text
+        lastPutAttachmentIDs = remote.attachments.map(\.id)
+        applyingRemoteDraft = true
+        draft = remote.text
+        attachments = await hydrateRemoteAttachments(remote.attachments)
+        applyingRemoteDraft = false
+    }
+
+    private func hydrateRemoteAttachments(_ refs: [ComposerDraftAttachment]) async -> [Attachment] {
+        var out: [Attachment] = []
+        for ref in refs {
+            if ref.kind == "image", let path = ref.path, !path.isEmpty {
+                let data: Data
+                if let read = try? await client.readUploadAttachment(path: path),
+                   let decoded = Data(base64Encoded: read.data) {
+                    data = decoded
+                } else {
+                    data = Data()
+                }
+                out.append(Attachment(
+                    name: ref.name,
+                    mimeType: ref.mime ?? "image/png",
+                    data: data,
+                    kind: .image,
+                    uploadPath: path,
+                    fileURI: Self.fileURI(fromPath: path)
+                ))
+            } else if ref.kind == "file", let uri = ref.uri, !uri.isEmpty {
+                out.append(Attachment(
+                    name: ref.name,
+                    mimeType: ref.mime ?? "application/octet-stream",
+                    data: Data(),
+                    kind: .file,
+                    uploadPath: nil,
+                    fileURI: uri
+                ))
+            }
+        }
+        return out
+    }
+
+    private func uploadDraftAttachment(_ id: UUID) async {
+        guard let index = attachments.firstIndex(where: { $0.id == id }) else { return }
+        let current = attachments[index]
+        guard current.kind == .image, current.uploadPath == nil, !current.data.isEmpty else { return }
+        do {
+            let uploaded = try await client.uploadAttachment(
+                data: current.data,
+                fileName: current.name,
+                mimeType: current.mimeType,
+                sessionId: conversationID.map(String.init)
+            )
+            if let idx = attachments.firstIndex(where: { $0.id == id }) {
+                attachments[idx].uploadPath = uploaded.path
+                attachments[idx].fileURI = Self.fileURI(fromPath: uploaded.path)
+            }
+            scheduleComposerDraftPersist()
+        } catch {
+            notice = "Could not sync the attached image to this chat."
+        }
+    }
+
+    private static func fileURI(fromPath path: String) -> String {
+        let normalized = path.replacingOccurrences(of: "\\", with: "/")
+        let encoded = normalized
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .map { $0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0) }
+            .joined(separator: "/")
+        return encoded.hasPrefix("/") ? "file://\(encoded)" : "file:///\(encoded)"
     }
 
     // MARK: - Scroll

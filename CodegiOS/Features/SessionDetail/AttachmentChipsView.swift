@@ -48,7 +48,20 @@ private struct AttachmentChip: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        if let image = UIImage(data: attachment.data) {
+        if attachment.kind == .file {
+            ZStack {
+                Color.primary.opacity(0.06)
+                VStack(spacing: 2) {
+                    Image(systemName: "doc")
+                        .font(.system(size: 16))
+                    Text(attachment.name)
+                        .font(.system(size: 8))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(Theme.textTertiary)
+                .padding(4)
+            }
+        } else if let image = UIImage(data: attachment.data) {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
