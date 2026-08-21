@@ -20,10 +20,15 @@ struct SessionDetailView: View {
     @State private var model: SessionDetailViewModel
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showRename = false
     @State private var renameText = ""
     @State private var showDetails = false
     @State private var showDeleteConfirm = false
+    /// Latched when the app is suspended, so returning to the foreground can
+    /// re-attach a stream iOS killed while we were away (see the `scenePhase`
+    /// handler below).
+    @State private var wasBackgrounded = false
 
     init(server: ServerProfile, client: CodegClient, conversationID: Int,
          onOpenSession: ((NewSessionRequest) -> Void)? = nil) {
@@ -131,6 +136,29 @@ struct SessionDetailView: View {
         }
         .task { await model.load() }
         .onDisappear { model.teardown() }
+        // iOS suspends the app on screen lock / app switch, which kills the event
+        // socket while a reply is still streaming. Nothing else re-attaches, so the
+        // transcript would sit on a frozen shimmer until the session is reopened.
+        //
+        // Only a real background round-trip counts: a trip through `.inactive`
+        // alone (control center, the app-switcher peek, an alert) never suspends
+        // us, and reconnecting there would churn a perfectly healthy socket. The
+        // latch is why this doesn't just compare against the previous phase —
+        // returning to the foreground can report `.background` → `.inactive` →
+        // `.active`, so the phase we come back from is not reliably `.background`.
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background:
+                wasBackgrounded = true
+            case .active:
+                if wasBackgrounded {
+                    wasBackgrounded = false
+                    model.resumeStreamAfterForeground()
+                }
+            default:
+                break
+            }
+        }
         // Haptics — the app's marquee "felt" moments, all keyed off existing
         // @Observable state. Vocabulary: success = a reply completed, error = it
         // failed, warning = the agent needs you (a permission / question card
