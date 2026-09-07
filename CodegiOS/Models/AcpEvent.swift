@@ -269,10 +269,19 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     let pendingPermission: PendingPermissionSnapshot?
     let pendingQuestion: PendingQuestionSnapshot?
     let pendingPlanApproval: PendingPlanApprovalSnapshot?
+    /// Whether this agent has the cooperative `check_user_feedback` tool, and
+    /// whether notes instead ride the native `_session/steering` push — the two
+    /// halves of "can this session take a message while it is already replying".
+    /// The backend synthesizes both at launch (from the MCP injection and from
+    /// the `initialize` handshake) and always serializes them as plain bools, so
+    /// a payload without them is an older server and reads as no channel at all.
+    let feedbackToolAvailable: Bool
+    let nativeSteeringAvailable: Bool
 
     private enum CodingKeys: String, CodingKey {
         case connectionId, conversationId, folderId, status, externalId, eventSeq
         case liveMessage, activeToolCalls, pendingPermission, pendingQuestion, pendingPlanApproval
+        case feedbackToolAvailable, nativeSteeringAvailable
     }
 
     init(from decoder: Decoder) throws {
@@ -288,6 +297,8 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         pendingPermission = (try? c.decodeIfPresent(PendingPermissionSnapshot.self, forKey: .pendingPermission)) ?? nil
         pendingQuestion = (try? c.decodeIfPresent(PendingQuestionSnapshot.self, forKey: .pendingQuestion)) ?? nil
         pendingPlanApproval = (try? c.decodeIfPresent(PendingPlanApprovalSnapshot.self, forKey: .pendingPlanApproval)) ?? nil
+        feedbackToolAvailable = try c.decodeIfPresent(Bool.self, forKey: .feedbackToolAvailable) ?? false
+        nativeSteeringAvailable = try c.decodeIfPresent(Bool.self, forKey: .nativeSteeringAvailable) ?? false
     }
 }
 

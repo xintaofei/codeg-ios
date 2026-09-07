@@ -259,6 +259,24 @@ struct CodegClient: Sendable {
         ))
     }
 
+    /// Send a message into the turn already running on `connectionId`, rather
+    /// than waiting for it to end. Returns the note the server stored, whose
+    /// `status` reports how it was delivered: `delivered` = pushed into the
+    /// running turn over the native steering channel (the agent sees it as a user
+    /// message), `pending` = left for the agent's next `check_user_feedback`
+    /// call. The same note is broadcast to every attached client as
+    /// `feedback_submitted`, so the sender's own transcript splice dedups on its id.
+    ///
+    /// Rejected when the session has no delivery channel at all, and when the
+    /// turn ended first — the latter is the expected turn-end race, recognized by
+    /// ``APIError/isNoActiveTurn`` and answered by sending an ordinary prompt.
+    func submitFeedback(connectionId: String, text: String) async throws -> FeedbackNote {
+        try await postJSON("submit_session_feedback", SubmitFeedbackBody(
+            connectionId: connectionId,
+            text: text
+        ))
+    }
+
     /// Find a live connection already bound to a conversation, if any. The
     /// server requires `agentType` and uses `sessionId` (the conversation's
     /// `external_id`) to match a connection before the first prompt binds one.

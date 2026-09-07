@@ -272,6 +272,9 @@ struct SessionDetailView: View {
                     onNotice: { model.notice = $0 },
                     onSend: { model.send() },
                     onStop: { model.cancel() },
+                    midTurnChannel: model.midTurnChannel,
+                    isSendingMidTurn: model.isSendingMidTurn,
+                    onSendMidTurn: { model.sendMidTurn() },
                     onDismissNotice: { model.notice = nil },
                     insertModel: model.insertModel
                 )

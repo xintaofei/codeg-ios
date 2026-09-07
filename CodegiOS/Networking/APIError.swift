@@ -41,6 +41,19 @@ enum APIError: LocalizedError, Sendable {
         return false
     }
 
+    /// A mid-turn message was refused because the turn had already ended. The
+    /// server maps this to a 400 under the generic `invalid_input` code it shares
+    /// with the other feedback rejections (empty text, feature unavailable), so
+    /// the message is the only discriminator — the same marker the web client
+    /// matches. Expected and recoverable: the caller sends the draft as an
+    /// ordinary prompt instead of surfacing an error.
+    var isNoActiveTurn: Bool {
+        if case .server(_, _, let message) = self {
+            return message.lowercased().contains("no active turn")
+        }
+        return false
+    }
+
     /// A remote git operation (push/pull/fetch) failed to authenticate — the
     /// server returns `authentication_failed`, or git's own message leaks through.
     /// Mirrors the web `isAuthError` so the credential-retry flow can decide to
