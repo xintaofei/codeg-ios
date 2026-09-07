@@ -1275,6 +1275,22 @@ final class SessionDetailViewModel {
             // The server echoes our own prompt; we already showed it optimistically.
             break
 
+        case .feedbackSubmitted(let note):
+            // A note that is already `delivered` on submission was pushed INTO the
+            // running turn over the native steering channel, so the agent has the
+            // text as a user message — show it as one, where it interrupted. A
+            // `pending` note is the cooperative `check_user_feedback` pull channel:
+            // the agent reads it as a tool result, never as a message, and it gets
+            // no user turn on reload either.
+            //
+            // `isTurnActive` is the "there is a turn to splice into" guard. The
+            // submission is recorded ungated, so a note can land just after the
+            // turn settled, and appending there would graft it onto a finished
+            // reply. The agent recorded it either way, so a reload still shows it.
+            guard isTurnActive, note.status == "delivered" else { break }
+            live.appendUserMessage(id: note.id, text: note.text, sentAt: note.createdAt ?? Date())
+            requestScrollToBottom()
+
         case .turnComplete(let stopReason):
             finalize(live: live, stopReason: stopReason)
 
@@ -1675,16 +1691,15 @@ final class SessionDetailViewModel {
         guard liveTurn === live else { return }
         turns.append(contentsOf: pendingUserTurns)
         pendingUserTurns.removeAll()
-        // Only fold in an assistant turn that actually has renderable content. A
+        // Usually one assistant turn; a message the user sent mid-turn splits it
+        // into the same user/assistant sequence the server's projection produces.
+        // Turns with no renderable content are dropped by the snapshot itself: a
         // finalized turn can be non-empty *solely* because of an inline error /
-        // "Cancelled." message (which `snapshotAsMessageTurn` can't represent as a
-        // persisted block, since ContentBlock has no error case) — appending its
-        // zero-block snapshot would render as "No content". Such a transient error
-        // placeholder is simply dropped on the next send; the user turn is kept.
-        let snapshot = live.snapshotAsMessageTurn()
-        if !snapshot.blocks.isEmpty {
-            turns.append(snapshot)
-        }
+        // "Cancelled." message (which it can't represent as a persisted block,
+        // since ContentBlock has no error case) and appending that zero-block turn
+        // would render as "No content". Such a transient error placeholder is
+        // simply dropped on the next send; the user turn is kept.
+        turns.append(contentsOf: live.snapshotAsMessageTurns())
         liveTurn = nil
         requestScrollToBottom()
     }
