@@ -93,6 +93,10 @@ enum RenderPart {
     case reasoning(text: String)                        // finalized reasoning
     case liveText(LiveTextRun, streaming: Bool)          // streaming prose (plain, @Bindable)
     case liveReasoning(LiveTextRun, streaming: Bool)
+    /// A message the user sent while the reply was streaming, carried as the user
+    /// turn it renders as. It breaks the grouping runs below, so the answer to it
+    /// never folds into what the agent was saying before it arrived.
+    case userMessage(MessageTurn)
     case tool(ToolCallVM)
     case toolGroup(items: [ToolCallVM], streaming: Bool)
     /// A run of consecutive `get_delegation_status` polls, merged into one card.
@@ -185,6 +189,13 @@ enum MessageRender {
                 parts.append(.liveText(run, streaming: turn.isStreaming && isLast))
             case .thinking(let run):
                 parts.append(.liveReasoning(run, streaming: turn.isStreaming && isLast))
+            case .userMessage(let message):
+                parts.append(.userMessage(MessageTurn(
+                    id: "u-\(message.id)",
+                    role: .user,
+                    blocks: [.text(message.text)],
+                    timestamp: message.sentAt
+                )))
             case .tool(let call):
                 let state: ToolCallState = call.isFinished ? (call.isError ? .error : .done) : .running
                 // Same boundary-marker treatment as the persisted path: codex emits

@@ -89,6 +89,12 @@ final class SessionDetailViewModel {
     /// Revision notes waiting to be sent as a follow-up prompt after a
     /// "request changes" decision (see ``answerPlanApproval(decision:feedback:)``).
     private var pendingPlanFollowUp: String?
+    /// The composer's draft is waiting for the running turn to end so it can go
+    /// as an ordinary prompt — set when a mid-turn send couldn't ride the live
+    /// channel (see ``queueDraftForTurnEnd(notice:)``). There is no message queue
+    /// here, so the draft stays in the composer and this only decides when it
+    /// leaves.
+    private var queuedSendAfterTurn = false
 
     private(set) var summary: ConversationSummary?
     private(set) var sessionStats: SessionStats?
@@ -125,6 +131,48 @@ final class SessionDetailViewModel {
         attachments.count < AttachmentPrep.maxCount
             && attachments.reduce(0) { $0 + $1.byteCount } < AttachmentPrep.maxTotalBytes
     }
+
+    // MARK: - Mid-turn delivery
+
+    /// How a message typed while the agent is still replying would reach it. The
+    /// backend decides this per connection at launch and reports both halves in
+    /// the attach snapshot; it is never re-derived from the agent type here.
+    enum MidTurnChannel: Equatable {
+        /// Pushed into the running turn (`_session/steering`) — the agent takes
+        /// it as a user message, and it appears in the transcript where it landed.
+        case native
+        /// Left as a note the agent collects on its next `check_user_feedback`
+        /// call. It reaches the agent as a tool result, never as a message.
+        case pull
+    }
+
+    /// The server's global "Live feedback" toggle (Settings › Conversation Tools,
+    /// "Send notes and corrections to an agent while it's working"). Read once per
+    /// screen and false until it answers, so a session never offers the action
+    /// while the setting that describes it is off.
+    private var liveFeedbackEnabled = false
+    /// This connection's delivery capability, read from the attach snapshot.
+    private var nativeSteeringAvailable = false
+    private var feedbackToolAvailable = false
+    /// Latches the one downgrade the server signals — a note that comes back
+    /// `pending` on a session we believed was native — so a stale snapshot that
+    /// resolves afterwards can't restore the instant-insert promise.
+    private var nativeSteeringDowngraded = false
+
+    /// The channel a mid-turn message would ride on this session, or nil when it
+    /// has none and the composer must keep its Stop-only form. Nil also while the
+    /// capability is still unknown: an affordance that cannot deliver is worse
+    /// than one that appears a beat late.
+    var midTurnChannel: MidTurnChannel? {
+        guard liveFeedbackEnabled else { return nil }
+        if nativeSteeringAvailable { return .native }
+        if feedbackToolAvailable { return .pull }
+        return nil
+    }
+
+    /// True while a mid-turn message is in flight, so a second tap can't send the
+    /// same draft twice.
+    private(set) var isSendingMidTurn = false
 
     /// Coarse phase of an in-flight send, for the compose status line.
     enum SendState: Equatable {
@@ -165,7 +213,17 @@ final class SessionDetailViewModel {
 
     // MARK: - Streaming internals
 
-    private var connectionID: String?
+    /// The live ACP connection this screen is bound to. Mid-turn delivery is
+    /// decided per connection at launch, so a different one starts from "unknown"
+    /// rather than inheriting the previous agent process's answer.
+    private var connectionID: String? {
+        didSet {
+            guard connectionID != oldValue else { return }
+            nativeSteeringAvailable = false
+            feedbackToolAvailable = false
+            nativeSteeringDowngraded = false
+        }
+    }
     /// The conversation row THIS draft's first send created up front (via
     /// `create_conversation`). Held until the prompt is accepted; if the send is
     /// rolled back before then, this row is deleted so no empty conversation
@@ -289,6 +347,7 @@ final class SessionDetailViewModel {
     private var didLoadDraftOptions = false
 
     func load() async {
+        loadLiveFeedbackSetting()
         switch mode {
         case .existing(let id):
             phase = .loading
@@ -341,6 +400,17 @@ final class SessionDetailViewModel {
             guard !didLoadDraftOptions else { return }
             didLoadDraftOptions = true
             await loadDraftOptions(preselectedFolderID: request.preselectedFolderID)
+        }
+    }
+
+    /// Read the server's global live-feedback toggle in the background — it gates
+    /// the mid-turn send, and the transcript must not wait on it. A failure leaves
+    /// the flag false, which only costs the affordance; the retry button re-runs
+    /// `load()`, so a blip is recoverable without leaving the screen.
+    private func loadLiveFeedbackSetting() {
+        Task { [weak self] in
+            guard let self, let enabled = try? await self.client.feedbackEnabled() else { return }
+            self.liveFeedbackEnabled = enabled
         }
     }
 
@@ -877,6 +947,113 @@ final class SessionDetailViewModel {
         return String(firstLine.prefix(80))
     }
 
+    // MARK: - Mid-turn send
+
+    /// Send the composer's draft to the agent WITHOUT waiting for the running
+    /// turn to finish. Only reachable while ``midTurnChannel`` reports a channel,
+    /// so the affordance never promises a delivery the session can't make.
+    ///
+    /// Images ride neither channel: the pull tool carries plain text, and while
+    /// the native one can take a full draft, a server predating that support
+    /// ignores the field silently instead of rejecting it — which would drop the
+    /// image with no error anywhere. A draft holding any is therefore queued
+    /// whole for the end of the turn rather than sent stripped.
+    func sendMidTurn() {
+        guard !isSendingMidTurn, isInFlight, midTurnChannel != nil,
+              let conn = connectionID else { return }
+        guard attachments.isEmpty else {
+            queueDraftForTurnEnd(notice: "Images can't join a running turn. This will send when the reply finishes.")
+            return
+        }
+        let raw = draft
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        isSendingMidTurn = true
+        notice = nil
+        Task { [weak self] in
+            await self?.runMidTurnSend(conn: conn, text: text, draftSent: raw)
+        }
+    }
+
+    private func runMidTurnSend(conn: String, text: String, draftSent raw: String) async {
+        defer { isSendingMidTurn = false }
+        do {
+            let note = try await client.submitFeedback(connectionId: conn, text: text)
+            // Clear the composer only now that the server holds the message, and
+            // only while it is still the one we sent — the user may have typed on
+            // during the round-trip.
+            if draft == raw { draft = "" }
+            // The draft reached the agent, so an earlier "wait for the turn to
+            // end" no longer applies — leaving it set would fire whatever the
+            // user types next the moment the reply lands.
+            queuedSendAfterTurn = false
+            applyMidTurnNote(note)
+        } catch let error as APIError where error.isNoActiveTurn {
+            // The turn ended inside the race window and nothing was recorded, so
+            // the draft goes as an ordinary prompt instead: immediately if the
+            // stream has already caught up, otherwise the moment it finalizes.
+            if isInFlight {
+                queueDraftForTurnEnd(notice: "The turn just ended. This will send as a new message.")
+            } else {
+                send()
+            }
+        } catch {
+            // Nothing was delivered and the draft is untouched, so it is still on
+            // screen to edit or retry.
+            notice = Self.describe(error)
+        }
+    }
+
+    /// Reconcile the note the server actually stored. Its `status` is the only
+    /// honest report of what happened, and the two outcomes look nothing alike to
+    /// the user.
+    private func applyMidTurnNote(_ note: FeedbackNote) {
+        if note.status == "delivered" {
+            // Pushed into the running turn as a user message — show it where it
+            // landed. The `feedback_submitted` broadcast repeats this for every
+            // attached client, including us, and dedups on the note id.
+            if isTurnActive, let live = liveTurn {
+                live.appendUserMessage(id: note.id, text: note.text, sentAt: note.createdAt ?? Date())
+                requestScrollToBottom()
+            }
+            return
+        }
+        // Pending — and anything unrecognized, which we can't claim was
+        // delivered. The agent has not read it, and a pulled note never becomes a
+        // user turn (here or on reload), so this banner is the only sign it
+        // arrived at all.
+        notice = "Sent as a note. The agent will read it at its next check."
+        if note.status == "pending", nativeSteeringAvailable {
+            // A pending note on a session we believed was native proves the
+            // server has already rerouted to the pull tool. Latch the downgrade
+            // so the composer stops promising an instant insert.
+            nativeSteeringAvailable = false
+            nativeSteeringDowngraded = true
+        }
+    }
+
+    /// Hold the draft for the end of the running turn, then send it as an ordinary
+    /// prompt. There is no message queue on this client, so the composer itself is
+    /// the queue: the text and any staged images stay visible and editable, and
+    /// `finalize` releases them.
+    private func queueDraftForTurnEnd(notice message: String) {
+        queuedSendAfterTurn = true
+        notice = message
+    }
+
+    /// Fold this connection's mid-turn delivery capability out of an attach
+    /// snapshot. Upgrade-only: the flags are fixed at launch, but a snapshot read
+    /// while the agent was still coming up reports false, and that false must
+    /// never retract a capability already seen. Clearing them is the
+    /// `connectionID` observer's job; the one genuine downgrade (native rerouting
+    /// to the pull tool) comes from a submit result, not from here.
+    private func applyMidTurnCapability(from snap: LiveSessionSnapshot) {
+        if snap.feedbackToolAvailable { feedbackToolAvailable = true }
+        if snap.nativeSteeringAvailable, !nativeSteeringDowngraded {
+            nativeSteeringAvailable = true
+        }
+    }
+
     // MARK: - Stream lifecycle
 
     /// Resolved by the consumer loop the moment the socket reports `.ready`, so
@@ -947,6 +1124,7 @@ final class SessionDetailViewModel {
                 // Attach confirmed — a healthy socket. Reset the reconnect budget
                 // and (for the initial connect) release the waiting send.
                 streamReconnects = 0
+                if isCurrent { applyMidTurnCapability(from: snap) }
                 // A mid-turn RECONNECT can drop the socket exactly as a
                 // `permission_request` / `question_request` arrives — losing that
                 // live event. The fresh snapshot still carries the pending card, so
@@ -1109,6 +1287,7 @@ final class SessionDetailViewModel {
             case .snapshot(let snap):
                 // A snapshot means the socket is healthy — reset the reconnect budget.
                 streamReconnects = 0
+                applyMidTurnCapability(from: snap)
                 if let rebuilt = buildLiveTurn(from: snap) {
                     live = rebuilt
                     liveTurn = rebuilt
@@ -1275,6 +1454,22 @@ final class SessionDetailViewModel {
             // The server echoes our own prompt; we already showed it optimistically.
             break
 
+        case .feedbackSubmitted(let note):
+            // A note that is already `delivered` on submission was pushed INTO the
+            // running turn over the native steering channel, so the agent has the
+            // text as a user message — show it as one, where it interrupted. A
+            // `pending` note is the cooperative `check_user_feedback` pull channel:
+            // the agent reads it as a tool result, never as a message, and it gets
+            // no user turn on reload either.
+            //
+            // `isTurnActive` is the "there is a turn to splice into" guard. The
+            // submission is recorded ungated, so a note can land just after the
+            // turn settled, and appending there would graft it onto a finished
+            // reply. The agent recorded it either way, so a reload still shows it.
+            guard isTurnActive, note.status == "delivered" else { break }
+            live.appendUserMessage(id: note.id, text: note.text, sentAt: note.createdAt ?? Date())
+            requestScrollToBottom()
+
         case .turnComplete(let stopReason):
             finalize(live: live, stopReason: stopReason)
 
@@ -1372,7 +1567,16 @@ final class SessionDetailViewModel {
         Task { [weak self] in await self?.refreshAfterTurn(reconciling: live) }
         // The keep-planning turn just ended — deliver the revision notes as the
         // follow-up prompt Grok expects (it discards them on the reply itself).
-        if let planFollowUp { send(overrideText: planFollowUp) }
+        if let planFollowUp {
+            // The queued draft (if any) keeps its flag and rides the NEXT
+            // finalize, since this send occupies the turn it was waiting for.
+            send(overrideText: planFollowUp)
+        } else if queuedSendAfterTurn {
+            // A mid-turn draft that couldn't ride the live channel goes now, as
+            // the ordinary prompt it always was.
+            queuedSendAfterTurn = false
+            send()
+        }
     }
 
     /// Roll back an optimistic send that failed *before the server accepted the
@@ -1675,16 +1879,15 @@ final class SessionDetailViewModel {
         guard liveTurn === live else { return }
         turns.append(contentsOf: pendingUserTurns)
         pendingUserTurns.removeAll()
-        // Only fold in an assistant turn that actually has renderable content. A
+        // Usually one assistant turn; a message the user sent mid-turn splits it
+        // into the same user/assistant sequence the server's projection produces.
+        // Turns with no renderable content are dropped by the snapshot itself: a
         // finalized turn can be non-empty *solely* because of an inline error /
-        // "Cancelled." message (which `snapshotAsMessageTurn` can't represent as a
-        // persisted block, since ContentBlock has no error case) — appending its
-        // zero-block snapshot would render as "No content". Such a transient error
-        // placeholder is simply dropped on the next send; the user turn is kept.
-        let snapshot = live.snapshotAsMessageTurn()
-        if !snapshot.blocks.isEmpty {
-            turns.append(snapshot)
-        }
+        // "Cancelled." message (which it can't represent as a persisted block,
+        // since ContentBlock has no error case) and appending that zero-block turn
+        // would render as "No content". Such a transient error placeholder is
+        // simply dropped on the next send; the user turn is kept.
+        turns.append(contentsOf: live.snapshotAsMessageTurns())
         liveTurn = nil
         requestScrollToBottom()
     }
@@ -1712,6 +1915,10 @@ final class SessionDetailViewModel {
         guard let live = liveTurn else { return }
         let conn = connectionID
         isTurnActive = false
+        // Stopping the agent is an explicit "not now": a draft parked for the end
+        // of this turn stays in the composer instead of firing off the moment the
+        // user hit Stop.
+        queuedSendAfterTurn = false
         clearInteractivePrompts()
         live.flushAllText()
         live.isStreaming = false

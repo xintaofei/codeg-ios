@@ -119,6 +119,19 @@ struct PlanApprovalAnswer: Encodable, Sendable {
     var feedback: String?
 }
 
+/// Body for `submit_session_feedback` — a message delivered to the turn already
+/// running on `connectionId`, instead of waiting for it to finish.
+///
+/// Text only. The server also accepts a `blocks` draft, but only the native
+/// steering channel can carry one (the pull tool delivers plain text), and a
+/// server predating that field ignores it silently rather than rejecting it —
+/// so an attachment sent this way could vanish with no error. Drafts carrying
+/// images go through `acp_prompt` as an ordinary turn instead.
+struct SubmitFeedbackBody: Encodable, Sendable {
+    let connectionId: String
+    let text: String
+}
+
 /// Body for `acp_describe_agent_options`. Takes the agent type + an optional
 /// working dir — NOT a connection id (the server spawns a throwaway probe agent
 /// to enumerate options). camelCase keys, encoded as-is.

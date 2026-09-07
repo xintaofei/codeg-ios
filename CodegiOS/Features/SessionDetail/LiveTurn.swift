@@ -64,20 +64,38 @@ final class LiveToolCall: Identifiable {
     }
 }
 
+/// A message the user sent WHILE the turn was running, delivered to the agent
+/// over the live-steering channel. Not agent output: it marks the point in the
+/// stream where the user interrupted, so the transcript can show it as a user
+/// message there and start the reply to it as a fresh run.
+struct LiveUserMessage {
+    /// The feedback note's id. Also the dedup key — the server broadcasts a
+    /// submission to every attached client, including the one that sent it.
+    let id: String
+    let text: String
+    /// When the note was created (its `created_at`), so the message is stamped
+    /// with the moment it was sent rather than the start of the reply it
+    /// interrupted.
+    let sentAt: Date
+}
+
 /// One ordered piece of an in-flight assistant turn. The live turn is a sequence
-/// of these so text, reasoning, and tool calls render in arrival order, exactly
-/// as a finalized transcript would. The associated reference types expose a
-/// `nonisolated let id`, so the enum's `id` needs no actor hop.
+/// of these so text, reasoning, tool calls, and any message the user sent
+/// mid-turn render in arrival order, exactly as a finalized transcript would.
+/// The associated reference types expose a `nonisolated let id`, so the enum's
+/// `id` needs no actor hop.
 enum LiveSegment: Identifiable {
     case text(LiveTextRun)
     case thinking(LiveTextRun)
     case tool(LiveToolCall)
+    case userMessage(LiveUserMessage)
 
     var id: String {
         switch self {
         case .text(let run): return "t-\(run.id)"
         case .thinking(let run): return "k-\(run.id)"
         case .tool(let call): return "x-\(call.id)"
+        case .userMessage(let message): return "u-\(message.id)"
         }
     }
 }
@@ -167,6 +185,9 @@ final class LiveTurn: Identifiable {
     private(set) var segments: [LiveSegment] = []
     /// Tool-call lookup so `tool_call_update` finds its target in O(1).
     private var toolIndex: [String: LiveToolCall] = [:]
+    /// Feedback-note ids already spliced in as mid-turn user messages, so the
+    /// submit broadcast can be applied idempotently.
+    private var userMessageIDs: Set<String> = []
     /// The agent's live plan/TODO list (`plan_update`). Replaced wholesale per
     /// event (each carries the full list); rendered as a checklist above the turn.
     var livePlan: [PlanEntry] = []
@@ -183,6 +204,15 @@ final class LiveTurn: Identifiable {
 
     /// True before any content has streamed — used to show a "waiting" shimmer.
     var isEmpty: Bool { segments.isEmpty && errorMessage == nil && livePlan.isEmpty }
+
+    /// True while there is nothing from the agent to show yet: before the turn's
+    /// first content, and again right after a mid-turn user message until the
+    /// reply to it starts. Drives the "waiting" shimmer at the tail of the turn,
+    /// so interrupting the agent doesn't leave the transcript looking stalled.
+    var isAwaitingOutput: Bool {
+        if case .userMessage? = segments.last { return true }
+        return isEmpty
+    }
 
     /// Replace the live plan from a `plan_update` event (or snapshot `plan` block).
     func updatePlan(_ entries: [PlanEntry]) {
@@ -209,6 +239,20 @@ final class LiveTurn: Identifiable {
         }
     }
 
+    /// Splice a message the user sent mid-turn into the stream at the point the
+    /// agent received it. It ends the run the agent was writing, so the reply to
+    /// it starts a fresh one instead of continuing the same paragraph — the same
+    /// split the persisted transcript makes for a mid-turn `user_message_chunk`,
+    /// so the live view and a reload agree.
+    ///
+    /// Idempotent by note id: the submit is broadcast to every attached client,
+    /// and one of them may be the sender.
+    func appendUserMessage(id: String, text: String, sentAt: Date) {
+        guard !text.isEmpty, !userMessageIDs.contains(id) else { return }
+        userMessageIDs.insert(id)
+        segments.append(.userMessage(LiveUserMessage(id: id, text: text, sentAt: sentAt)))
+    }
+
     /// Flush every text/reasoning run's pending coalesce immediately. Called when
     /// the turn ends so the finalized render sees complete text (no trailing
     /// reflow) and a snapshot taken right after is whole.
@@ -216,7 +260,7 @@ final class LiveTurn: Identifiable {
         for segment in segments {
             switch segment {
             case .text(let run), .thinking(let run): run.flushNow()
-            case .tool: break
+            case .tool, .userMessage: break
             }
         }
     }
@@ -287,15 +331,37 @@ final class LiveTurn: Identifiable {
         return nil
     }
 
-    /// Snapshot this (finalized) turn as an immutable assistant `MessageTurn`, so a
-    /// reply that finished streaming but isn't yet in the server transcript can be
-    /// folded into the persisted list — surviving a subsequent send — until a
-    /// reconcile replaces it with the authoritative copy. Segment→block mapping
-    /// mirrors `MessageRender.adaptLive` so the folded copy renders the same; a
-    /// tool's diff `content` rides in the result preview (its only persisted slot)
-    /// when there's no separate output text.
-    func snapshotAsMessageTurn() -> MessageTurn {
+    /// Snapshot this (finalized) turn as immutable `MessageTurn`s, so a reply that
+    /// finished streaming but isn't yet in the server transcript can be folded into
+    /// the persisted list — surviving a subsequent send — until a reconcile replaces
+    /// it with the authoritative copy. Segment→block mapping mirrors
+    /// `MessageRender.adaptLive` so the folded copy renders the same; a tool's diff
+    /// `content` rides in the result preview (its only persisted slot) when there's
+    /// no separate output text.
+    ///
+    /// Usually one assistant turn. A message the user sent mid-turn splits it, the
+    /// way the server's own projection does, so the folded copy keeps the message
+    /// in place and the two halves of the reply don't run together. Turns with no
+    /// renderable blocks are omitted: a turn can be non-empty *solely* because of an
+    /// inline error / "Cancelled." message, which `ContentBlock` has no case for,
+    /// and folding in that zero-block turn would render as "No content".
+    func snapshotAsMessageTurns() -> [MessageTurn] {
+        var out: [MessageTurn] = []
         var blocks: [ContentBlock] = []
+
+        func flushAssistant() {
+            guard !blocks.isEmpty else { return }
+            // The first turn keeps the live turn's own id so a `List` row that was
+            // rendering the stream keeps its identity across the handoff.
+            out.append(MessageTurn(
+                id: out.isEmpty ? self.id : "\(self.id)#\(out.count)",
+                role: .assistant,
+                blocks: blocks,
+                timestamp: Date()
+            ))
+            blocks = []
+        }
+
         for segment in segments {
             switch segment {
             case .text(let run):
@@ -310,8 +376,17 @@ final class LiveTurn: Identifiable {
                 blocks.append(.toolUse(id: call.id, name: call.title, inputPreview: call.rawInput, meta: call.meta))
                 let output = call.rawOutput.isEmpty ? call.content : call.rawOutput
                 blocks.append(.toolResult(id: call.id, outputPreview: output, isError: call.isError))
+            case .userMessage(let message):
+                flushAssistant()
+                out.append(MessageTurn(
+                    id: "u-\(message.id)",
+                    role: .user,
+                    blocks: [.text(message.text)],
+                    timestamp: message.sentAt
+                ))
             }
         }
-        return MessageTurn(id: id, role: .assistant, blocks: blocks, timestamp: Date())
+        flushAssistant()
+        return out
     }
 }

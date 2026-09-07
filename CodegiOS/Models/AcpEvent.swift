@@ -40,6 +40,34 @@ enum UserMessageBlock: Hashable, Sendable, Decodable {
     }
 }
 
+/// A live-feedback note (Rust `FeedbackItem`) — a short message the user sent
+/// while the agent was mid-turn.
+///
+/// `status` decides what it *is*. A note that is already `delivered` when it is
+/// submitted was pushed into the running turn over the native steering channel,
+/// so the agent has the text as a user message. A `pending` one is waiting for
+/// the agent to pull it with `check_user_feedback`, which returns it as a tool
+/// result and never as a message. Kept as the raw string so an unknown future
+/// status decodes instead of throwing.
+struct FeedbackNote: Hashable, Sendable, Decodable {
+    let id: String
+    let text: String
+    let status: String
+    /// When the note was created, stamped on the machine the agent runs on.
+    /// Optional: an unparseable instant must not cost us the message.
+    let createdAt: Date?
+
+    private enum CodingKeys: String, CodingKey { case id, text, status, createdAt }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? ""
+        createdAt = (try? c.decodeIfPresent(Date.self, forKey: .createdAt)) ?? nil
+    }
+}
+
 /// A backend→client ACP event (Rust `AcpEvent`, internally tagged `type`).
 /// Decode-only. Unknown event types decode to `.unknown` so a new server event
 /// never breaks the stream.
@@ -56,6 +84,10 @@ enum AcpEvent: Hashable, Sendable, Decodable {
     case usageUpdate(used: UInt64, size: UInt64)
     case userMessage(messageId: String, blocks: [UserMessageBlock])
     case userPromptSent(textPreview: String)
+    /// The user submitted a live-feedback note while the agent is mid-turn.
+    /// Broadcast to every client watching the conversation, including the one
+    /// that sent it.
+    case feedbackSubmitted(note: FeedbackNote)
     case error(message: String, code: String?)
     /// Agent asks the user to approve a tool call before it runs. Also carries
     /// ExitPlanMode — the proposed plan rides inside `toolCall`. Resolve via
@@ -84,7 +116,7 @@ enum AcpEvent: Hashable, Sendable, Decodable {
         case type, text, title, kind, status, content, meta
         case toolCallId, rawInput, rawOutput, rawOutputAppend
         case stopReason, sessionId, conversationId, folderId
-        case used, size, messageId, blocks, message, code, textPreview
+        case used, size, messageId, blocks, message, code, textPreview, item
         case requestId, toolCall, options, questionId, questions, entries
         case approvalId, planMarkdown
     }
@@ -152,6 +184,14 @@ enum AcpEvent: Hashable, Sendable, Decodable {
             )
         case "user_prompt_sent":
             self = .userPromptSent(textPreview: try c.decodeIfPresent(String.self, forKey: .textPreview) ?? "")
+        case "feedback_submitted":
+            // No sensible stand-in for a missing note, so an event without one
+            // degrades to `.unknown` rather than inventing an empty message.
+            if let note = try c.decodeIfPresent(FeedbackNote.self, forKey: .item) {
+                self = .feedbackSubmitted(note: note)
+            } else {
+                self = .unknown(type: type)
+            }
         case "error":
             self = .error(
                 message: try c.decodeIfPresent(String.self, forKey: .message) ?? "Unknown error",
@@ -229,10 +269,19 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     let pendingPermission: PendingPermissionSnapshot?
     let pendingQuestion: PendingQuestionSnapshot?
     let pendingPlanApproval: PendingPlanApprovalSnapshot?
+    /// Whether this agent has the cooperative `check_user_feedback` tool, and
+    /// whether notes instead ride the native `_session/steering` push — the two
+    /// halves of "can this session take a message while it is already replying".
+    /// The backend synthesizes both at launch (from the MCP injection and from
+    /// the `initialize` handshake) and always serializes them as plain bools, so
+    /// a payload without them is an older server and reads as no channel at all.
+    let feedbackToolAvailable: Bool
+    let nativeSteeringAvailable: Bool
 
     private enum CodingKeys: String, CodingKey {
         case connectionId, conversationId, folderId, status, externalId, eventSeq
         case liveMessage, activeToolCalls, pendingPermission, pendingQuestion, pendingPlanApproval
+        case feedbackToolAvailable, nativeSteeringAvailable
     }
 
     init(from decoder: Decoder) throws {
@@ -248,6 +297,8 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         pendingPermission = (try? c.decodeIfPresent(PendingPermissionSnapshot.self, forKey: .pendingPermission)) ?? nil
         pendingQuestion = (try? c.decodeIfPresent(PendingQuestionSnapshot.self, forKey: .pendingQuestion)) ?? nil
         pendingPlanApproval = (try? c.decodeIfPresent(PendingPlanApprovalSnapshot.self, forKey: .pendingPlanApproval)) ?? nil
+        feedbackToolAvailable = try c.decodeIfPresent(Bool.self, forKey: .feedbackToolAvailable) ?? false
+        nativeSteeringAvailable = try c.decodeIfPresent(Bool.self, forKey: .nativeSteeringAvailable) ?? false
     }
 }
 
