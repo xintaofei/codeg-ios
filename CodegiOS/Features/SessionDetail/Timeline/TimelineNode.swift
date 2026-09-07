@@ -187,12 +187,15 @@ enum TranscriptTimeline {
         if !live.livePlan.isEmpty {
             out.append(TimelineNode(id: "\(live.id)#plan", content: .plan(live.livePlan, streaming: live.isStreaming), agent: agent))
         }
-        if live.isEmpty && live.isStreaming {
-            out.append(TimelineNode(id: "\(live.id)#thinking", content: .thinking, agent: agent))
-        }
         out.append(contentsOf: MessageRender.adaptLive(live).enumerated().map { idx, part in
             node(for: part, ownerID: live.id, index: idx, agent: agent)
         })
+        // The "waiting" shimmer sits at the TAIL, after whatever has arrived so
+        // far: nothing has, or the user interrupted and the agent hasn't answered
+        // yet. (With no parts it lands exactly where it always did.)
+        if live.isStreaming && live.isAwaitingOutput {
+            out.append(TimelineNode(id: "\(live.id)#thinking", content: .thinking, agent: agent))
+        }
         if let error = live.errorMessage {
             out.append(TimelineNode(id: "\(live.id)#error", content: .error(error), agent: agent))
         }
@@ -218,6 +221,12 @@ enum TranscriptTimeline {
             return TimelineNode(id: "t-\(run.id)", content: .liveText(run, streaming: streaming), agent: agent)
         case .liveReasoning(let run, let streaming):
             return TimelineNode(id: "k-\(run.id)", content: .liveReasoning(run, streaming: streaming), agent: agent)
+        case .userMessage(let turn):
+            // Keyed by the feedback note (`turn.id` is "u-<note id>"), not the
+            // part index, so the row keeps its identity as the reply grows past
+            // it. `startsGroup` matches a persisted user turn: interrupting the
+            // agent begins a new exchange.
+            return TimelineNode(id: turn.id, content: .user(turn), agent: agent, startsGroup: true)
         case .tool(let vm):
             return TimelineNode(id: "tool-\(vm.id)", content: .tool(vm), agent: agent)
         case .toolGroup(let items, let streaming):
