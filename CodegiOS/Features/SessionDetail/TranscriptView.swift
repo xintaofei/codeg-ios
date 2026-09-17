@@ -76,6 +76,23 @@ struct TranscriptView<Header: View>: View {
     /// auto-follow (only follow streamed tokens when true). Starts true so a fresh
     /// open follows.
     @State private var stuckToBottom = true
+    @State private var isUserScrolling = false
+
+    /// Layout changes must not be mistaken for the user scrolling into history.
+    private struct ScrollMetrics: Equatable {
+        var atBottom: Bool
+        var contentHeight: CGFloat
+        var containerHeight: CGFloat
+        var bottomInset: CGFloat
+
+        init(_ geometry: ScrollGeometry) {
+            contentHeight = geometry.contentSize.height
+            containerHeight = geometry.containerSize.height
+            bottomInset = geometry.contentInsets.bottom
+            atBottom = contentHeight
+                - (geometry.contentOffset.y + containerHeight - bottomInset) <= 80
+        }
+    }
 
     // MARK: Windowing
     //
@@ -273,21 +290,38 @@ struct TranscriptView<Header: View>: View {
             // Publish a scroll capability so a reply's "scroll to question" button
             // (deep inside a row) can move the viewport to the user message.
             .environment(\.transcriptScroll, TranscriptScrollAction { id, anchor in
+                stuckToBottom = false
+                onPinnedChange(false)
                 withAnimation(Theme.Motion.scroll) {
                     proxy.scrollTo(id, anchor: anchor)
                 }
             })
-            // Track bottom-proximity. Mapping geometry to a Bool means `action`
-            // only fires when we cross the threshold (not every scroll pixel).
-            // `contentInsets.bottom` keeps the math correct across keyboard /
-            // compose-bar inset changes.
-            .onScrollGeometryChange(for: Bool.self) { geo in
-                geo.contentSize.height
-                    - (geo.contentOffset.y + geo.containerSize.height - geo.contentInsets.bottom)
-                    <= bottomThreshold
-            } action: { _, atBottom in
-                stuckToBottom = atBottom
-                onPinnedChange(atBottom)
+            .onScrollPhaseChange { _, phase, context in
+                let wasUserScrolling = isUserScrolling
+                isUserScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
+                if isUserScrolling || wasUserScrolling {
+                    let atBottom = ScrollMetrics(context.geometry).atBottom
+                    stuckToBottom = atBottom
+                    onPinnedChange(atBottom)
+                }
+            }
+            // Keep following through keyboard/compose inset changes and late
+            // List row measurement. Only a user scroll can unpin the viewport;
+            // shrinking its visible area or inserting rows cannot revoke intent.
+            .onScrollGeometryChange(for: ScrollMetrics.self) { ScrollMetrics($0) } action: { old, new in
+                if isUserScrolling {
+                    stuckToBottom = new.atBottom
+                    onPinnedChange(new.atBottom)
+                } else if stuckToBottom {
+                    if old.contentHeight != new.contentHeight
+                        || old.containerHeight != new.containerHeight
+                        || old.bottomInset != new.bottomInset {
+                        proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                    }
+                } else if new.atBottom {
+                    stuckToBottom = true
+                    onPinnedChange(true)
+                }
             }
             // Reveal older turns as the user scrolls toward the top. Mapped to a
             // Bool so `action` fires only when crossing into the near-top zone (not
@@ -322,23 +356,16 @@ struct TranscriptView<Header: View>: View {
         }
     }
 
-    /// Scroll to the bottom anchor, then re-assert once on the next runloop so a
-    /// far jump (or a fresh load) still lands when late-measuring rich content
-    /// has grown the transcript after the first pass. `reassert: false` is for
-    /// the streaming follow, which fires every chunk and must stay single-shot.
-    private func scrollToBottom(_ proxy: ScrollViewProxy, reassert: Bool = true) {
+    /// Reassert a far jump after List has realized its destination rows.
+    /// Subsequent layout changes are followed by the geometry observer above.
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
         proxy.scrollTo(bottomAnchor, anchor: .bottom)
-        guard reassert else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(80))
+            guard stuckToBottom, !isUserScrolling else { return }
             proxy.scrollTo(bottomAnchor, anchor: .bottom)
         }
     }
-
-    /// Slack (pt) below which the viewport counts as "at the bottom" — a few body
-    /// lines, comfortably larger than one ~50ms streamed chunk's height delta so
-    /// a single chunk can't flip auto-follow off.
-    private let bottomThreshold: CGFloat = 80
 }
 
 /// Shared chrome for a timeline row: transparent background, no separators, and
