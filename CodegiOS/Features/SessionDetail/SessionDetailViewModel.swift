@@ -243,6 +243,12 @@ final class SessionDetailViewModel {
             guard let self, let id = self.conversationID else { return [] }
             return try await self.client.sessionSnapshot(conversationId: id)?.availableCommands ?? []
         }
+        // Backs the compose bar's inline `@`-mention popup — the same catalog
+        // read `AgentsSettingsModel` uses, independent of any live connection.
+        insertModel.loadAgentsAction = { [weak self] in
+            guard let self else { return [] }
+            return try await self.client.listAgents()
+        }
 
     }
 

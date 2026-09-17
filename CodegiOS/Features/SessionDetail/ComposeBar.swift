@@ -44,6 +44,11 @@ struct ComposeBar: View {
     private var remainingSlots: Int {
         max(0, AttachmentPrep.maxCount - attachments.count)
     }
+    /// The live `@token` at the end of the draft, if any — drives the inline
+    /// mention popup below.
+    private var mentionToken: String? {
+        insertModel.trailingMentionToken(in: text)?.token
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -55,6 +60,8 @@ struct ComposeBar: View {
                 AttachmentChipsView(attachments: attachments, onRemove: onRemoveAttachment)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+
+            mentionSuggestions
 
             GlassEffectContainer(spacing: 8) {
                 HStack(alignment: .bottom, spacing: 8) {
@@ -102,6 +109,12 @@ struct ComposeBar: View {
             photoLibrary: .shared()
         )
         .onChange(of: photoItems) { _, items in handlePhotoItems(items) }
+        .onChange(of: text) { _, newValue in
+            if insertModel.trailingMentionToken(in: newValue) != nil {
+                insertModel.loadAgentsIfNeeded()
+            }
+        }
+        .animation(Theme.Motion.expand, value: mentionToken)
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker { image in addCaptured(image) }
                 .ignoresSafeArea()
@@ -200,6 +213,59 @@ struct ComposeBar: View {
         guard canSend else { return }
         sendHaptic &+= 1
         onSend()
+    }
+
+    // MARK: - Inline `@`-mention popup
+
+    /// A small card of matching agents, sitting directly above the text field —
+    /// mirrors the web composer's inline `@`-mention popup (grouped suggestion
+    /// list), scoped here to agents since files/sessions/commits already have
+    /// their own entry points (attachments, the "+" menu).
+    @ViewBuilder
+    private var mentionSuggestions: some View {
+        if let token = mentionToken {
+            let matches = insertModel.matchingAgents(for: token)
+            if !matches.isEmpty {
+                // All matches stay reachable via scroll rather than truncating the
+                // list — a fixed max height keeps the popup from pushing the text
+                // field off-screen when many agents are configured.
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(Array(matches.enumerated()), id: \.element.id) { index, agent in
+                            if index > 0 {
+                                Rectangle().fill(Theme.hairline).frame(height: 0.75)
+                            }
+                            mentionRow(agent)
+                        }
+                    }
+                }
+                .frame(maxHeight: min(CGFloat(matches.count) * 44, 5.5 * 44))
+                .scrollBounceBehavior(.basedOnSize)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                .hairlineBorder(Theme.Radius.md)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+    }
+
+    private func mentionRow(_ agent: AcpAgentInfo) -> some View {
+        Button {
+            text = insertModel.draftInsertingAgentMention(agent, to: text)
+        } label: {
+            HStack(spacing: 10) {
+                AgentIcon(agent: agent.agentType)
+                    .frame(width: 20, height: 20)
+                Text(agent.name)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Attachment intake

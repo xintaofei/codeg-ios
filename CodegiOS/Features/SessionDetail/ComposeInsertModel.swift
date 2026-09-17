@@ -44,10 +44,16 @@ final class ComposeInsertModel {
     /// known-expert id set for the replace-prefix logic (the web's `expertIdSet`).
     var loadBuiltInExpertsAction: (() async throws -> [ExpertListItem])?
     var loadCommandsAction: (() async throws -> [AvailableCommandInfo])?
+    /// Backs the inline `@`-mention popup (not one of the "+" menu `Source`s,
+    /// which are sheet-presented — this loads lazily the first time the compose
+    /// bar detects a live `@token`).
+    var loadAgentsAction: (() async throws -> [AcpAgentInfo])?
 
     private(set) var quickMessages: [QuickMessage] = []
     private(set) var experts: [ExpertListItem] = []
     private(set) var commands: [AvailableCommandInfo] = []
+    private(set) var agents: [AcpAgentInfo] = []
+    private var agentsTask: Task<Void, Never>?
 
     /// Ids treated as "known experts" when deciding whether to replace an existing
     /// mention prefix. Mirrors the web's `expertIdSet` (built from the built-in
@@ -153,6 +159,31 @@ final class ComposeInsertModel {
     func teardown() {
         for task in tasks.values { task.cancel() }
         tasks.removeAll()
+        agentsTask?.cancel()
+    }
+
+    // MARK: - Inline `@`-mention (agents)
+
+    /// Loads the agent list once and memoizes it; safe to call on every
+    /// keystroke while a mention token is live.
+    func loadAgentsIfNeeded() {
+        guard agents.isEmpty, agentsTask == nil else { return }
+        agentsTask = Task { [weak self] in
+            guard let self, let action = self.loadAgentsAction else { return }
+            guard let list = try? await action() else { return }
+            if Task.isCancelled { return }
+            self.agents = list.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
+        }
+    }
+
+    /// Mentionable agents matching `query` (case-insensitive prefix/substring on
+    /// name), limited to enabled + available — mirroring the web's filter in
+    /// `use-reference-search.ts`.
+    func matchingAgents(for query: String) -> [AcpAgentInfo] {
+        let pool = agents.filter { $0.enabled && $0.available }
+        guard !query.isEmpty else { return pool }
+        let q = query.lowercased()
+        return pool.filter { $0.name.lowercased().contains(q) }
     }
 
     // MARK: - Insertion (pure draft transforms)
@@ -204,6 +235,38 @@ final class ComposeInsertModel {
         }
         guard !id.isEmpty, i < draft.endIndex, draft[i].isWhitespace else { return nil }
         return (id, draft.index(after: i))
+    }
+
+    /// Find a live `@token` at the very end of the draft — the trailing `@`
+    /// (preceded by start-of-string or whitespace) through the rest of the
+    /// string, so long as that rest contains no whitespace yet (still being
+    /// typed). Operates on the tail only: the plain `TextField` this backs
+    /// exposes no caret position, so an `@` earlier in an already-finished
+    /// message won't retrigger the popup — matching the common case of typing
+    /// a mention as you go.
+    func trailingMentionToken(in draft: String) -> (token: String, start: String.Index)? {
+        guard let atIndex = draft.lastIndex(of: "@") else { return nil }
+        if atIndex != draft.startIndex {
+            let before = draft.index(before: atIndex)
+            guard draft[before].isWhitespace else { return nil }
+        }
+        let token = draft[draft.index(after: atIndex)...]
+        guard !token.contains(where: { $0.isWhitespace }) else { return nil }
+        return (String(token), atIndex)
+    }
+
+    /// Replace the trailing `@token` with the agent's markdown reference badge
+    /// (`[@Name](codeg://agent/<type>)`), matching the desktop/web format the
+    /// server parses into a delegation — mirroring `adapters.ts`'s
+    /// `agentToSuggestion` insertion. Falls back to appending when the trailing
+    /// token can't be found (e.g. called from outside the popup flow).
+    func draftInsertingAgentMention(_ agent: AcpAgentInfo, to draft: String) -> String {
+        let badge = "[@\(agent.name)](codeg://agent/\(agent.agentType.rawValue)) "
+        guard let found = trailingMentionToken(in: draft) else {
+            let needsSpace = !draft.isEmpty && !(draft.last?.isWhitespace ?? false)
+            return draft + (needsSpace ? " " : "") + badge
+        }
+        return String(draft[draft.startIndex..<found.start]) + badge
     }
 
     // MARK: - Helpers
