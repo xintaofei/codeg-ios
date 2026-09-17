@@ -333,8 +333,22 @@ struct CodegClient: Sendable {
     }
 
     /// Experts/skills linked to an agent, for the "+" menu's Expert Skills list.
+    ///
+    /// There is no server-side "list for one agent" endpoint — web derives this
+    /// client-side too (`useEnabledSkillIds`): fetch the global catalog plus the
+    /// bulk per-(expert, agent) link-status snapshot, then keep only the entries
+    /// linked to THIS agent. (An earlier version of this call posted to a
+    /// `experts_list_for_agent` route that was never implemented server-side —
+    /// every request 501'd in web/server mode.)
     func experts(agentType: AgentType) async throws -> [ExpertListItem] {
-        try await postJSON("experts_list_for_agent", AgentTypeBody(agentType: agentType))
+        async let catalog = builtInExperts()
+        async let statuses = expertsAllInstallStatuses()
+        let linkedIDs = Set(
+            try await statuses
+                .filter { $0.agentType == agentType && $0.state == .linkedToCodeg }
+                .map(\.expertId)
+        )
+        return try await catalog.filter { linkedIDs.contains($0.id) }
     }
 
     /// The global built-in expert catalog (`experts_list`). Agent-linked experts
@@ -342,6 +356,13 @@ struct CodegClient: Sendable {
     /// deciding whether to replace an existing expert mention in the draft.
     func builtInExperts() async throws -> [ExpertListItem] {
         try await postJSON("experts_list", EmptyBody())
+    }
+
+    /// Bulk (expert, agent) link-status snapshot — the same one call the web
+    /// client fans out to office-tools/science and merges (`use-enabled-skill-ids.ts`);
+    /// this app only manages built-in experts today, so no merge is needed here.
+    func expertsAllInstallStatuses() async throws -> [ExpertInstallStatus] {
+        try await postJSON("experts_list_all_install_statuses", EmptyBody())
     }
 
     // MARK: - Core request plumbing
