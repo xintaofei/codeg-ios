@@ -20,6 +20,10 @@ struct SessionDetailView: View {
     @State private var model: SessionDetailViewModel
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    /// Set on any `.background` frame, consumed on the next `.active` — see the
+    /// `onChange(of: scenePhase)` below for why this beats comparing adjacent phases.
+    @State private var wasBackgrounded = false
     @State private var showRename = false
     @State private var renameText = ""
     @State private var showDetails = false
@@ -131,6 +135,27 @@ struct SessionDetailView: View {
         }
         .task { await model.load() }
         .onDisappear { model.teardown() }
+        // The live WebSocket is suspended (and often killed outright) while
+        // backgrounded, so returning here otherwise leaves a frozen transcript
+        // until the user backs all the way out and re-enters. Returning from the
+        // background almost always lands on `.active` via an intermediate
+        // `.inactive` frame first (`.background` -> `.inactive` -> `.active`), so
+        // comparing only the immediately-prior phase misses most real resumes —
+        // `wasBackgrounded` instead remembers that a `.background` frame happened
+        // at all since the last refresh, however many `.inactive` frames follow it.
+        // A sheet/alert/control-center pull's `.active` -> `.inactive` -> `.active`
+        // blip never sets the flag, so it still won't trigger a spurious refresh.
+        .onChange(of: scenePhase) { _, new in
+            switch new {
+            case .background:
+                wasBackgrounded = true
+            case .active where wasBackgrounded:
+                wasBackgrounded = false
+                Task { await model.refreshOnForeground() }
+            default:
+                break
+            }
+        }
         // Haptics — the app's marquee "felt" moments, all keyed off existing
         // @Observable state. Vocabulary: success = a reply completed, error = it
         // failed, warning = the agent needs you (a permission / question card
