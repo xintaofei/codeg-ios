@@ -257,10 +257,14 @@ final class EventStream: @unchecked Sendable {
     }
 
     static func websocketURL(from baseURL: URL) -> URL {
-        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        // Append the endpoint to the configured server URL so deployments under
+        // a reverse-proxy path (e.g. https://host/codeg) keep their base path.
+        let endpointURL = baseURL
+            .appendingPathComponent("ws")
+            .appendingPathComponent("events")
+        var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false)
         components?.scheme = (baseURL.scheme == "https") ? "wss" : "ws"
-        components?.path = "/ws/events"
         components?.query = nil
-        return components?.url ?? baseURL
+        return components?.url ?? endpointURL
     }
 }
