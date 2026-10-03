@@ -6,11 +6,14 @@ import SwiftUI
 /// opens its session in a single tap, with no App Store-style card/zoom drill-in
 /// in between (Activity favors immediacy — it's backed by a periodic poll that
 /// keeps the list live). It's one plain `List` (UICollectionView cell recycling,
-/// so a busy server's recent list scrolls smoothly) grouped under tinted section
-/// headers. (Pending approvals join this screen once the permission flow lands.)
+/// so a busy server's recent list scrolls smoothly) of session cards grouped
+/// under tinted section headers. (Pending approvals join this screen once the permission flow lands.)
 struct ActivityView: View {
     let activity: ActivityModel
     let client: CodegClient?
+    /// The session that is open (iPad) or was opened last (iPhone); its row is
+    /// marked.
+    var markedConversationID: Int? = nil
     let onOpen: (Int) -> Void
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -125,22 +128,20 @@ struct ActivityView: View {
         .sensoryFeedback(.impact(flexibility: .soft), trigger: pullTick)
     }
 
-    /// One directly-tappable session row (opens in a single tap). Mirrors
-    /// ``SearchView``'s flat result list and ``SessionSectionFullScreen``'s row
-    /// styling — borderless over the screen background.
+    /// One directly-tappable session card (opens in a single tap), as in
+    /// ``SearchView``'s result list and ``SessionSectionFullScreen``.
     private func row(_ conversation: ConversationSummary) -> some View {
         SessionRow(
             conversation: conversation,
-            isSelected: false,
+            isSelected: conversation.id == markedConversationID,
             folderName: activity.folderNames[conversation.folderId],
             onTap: { onOpen(conversation.id) }
         )
-        .plainRow(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+        .plainRow(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
     }
 
-    /// A group header: a tinted circular badge (same 26 pt diameter as the row
-    /// avatars, so the title lines up under the row titles) + the section name +
-    /// a count pill.
+    /// A group header above its cards: a tinted circular badge + the section
+    /// name + a count pill.
     private func sectionHeader(_ title: LocalizedStringKey, count: Int,
                                icon: String, tint: Color) -> some View {
         HStack(spacing: 11) {
@@ -151,7 +152,7 @@ struct ActivityView: View {
             Spacer(minLength: 8)
             CountBadge(count: count)
         }
-        .plainRow(EdgeInsets(top: 14, leading: 16, bottom: 6, trailing: 16))
+        .plainRow(EdgeInsets(top: 16, leading: 18, bottom: 6, trailing: 18))
     }
 }
 

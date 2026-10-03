@@ -171,7 +171,8 @@ struct RootView: View {
                         servers: model.serverStore.servers,
                         selection: $model.selectedServerID,
                         onManage: { model.serversSheetPresented = true }
-                    )
+                    ),
+                    markedConversationID: model.markedConversationID
                 )
                 .id(server.id)
             } else if model.selectedServer != nil {
@@ -220,6 +221,7 @@ struct RootView: View {
             ActivityView(
                 activity: model.activity,
                 client: model.selectedClient(),
+                markedConversationID: model.markedConversationID,
                 onOpen: { model.open(.conversation($0)) }
             )
             .navigationDestination(for: Route.self) { route in
@@ -241,6 +243,7 @@ struct RootView: View {
         NavigationStack(path: navPath(.search)) {
             SearchView(
                 client: model.selectedClient(),
+                markedConversationID: model.markedConversationID,
                 onOpen: { model.open(.conversation($0)) }
             )
             .id(model.selectedServerID)
@@ -306,6 +309,7 @@ struct RootView: View {
             ActivityView(
                 activity: model.activity,
                 client: model.selectedClient(),
+                markedConversationID: model.markedConversationID,
                 onOpen: { model.open(.conversation($0)) }
             )
         case nil:

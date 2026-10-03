@@ -44,6 +44,8 @@ enum Theme {
     /// the prior top-level card fill exactly, so this unifies without a redesign.
     static let surface = Color.primary.opacity(0.05)
     static let surfaceNested = Color.primary.opacity(0.035)
+    /// The highlight laid over a tappable row or card while it is pressed.
+    static let pressed = Color.primary.opacity(0.09)
 
     // Text
     static let textPrimary = Color(light: Color(white: 0.11), dark: Color(white: 0.97))

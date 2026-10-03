@@ -50,6 +50,17 @@ final class AppModel {
     /// pushable (e.g. `codeg://settings/<slug>`).
     var settingsPath: [SettingsLeaf] = []
 
+    /// The conversation opened last, from any list or a link. On iPhone
+    /// nothing stays selected once you go back, so the lists mark this one as
+    /// the session you came from.
+    private(set) var lastOpenedConversationID: Int?
+
+    /// The session the lists mark: the one open in the detail column (iPad),
+    /// or the one opened last (iPhone).
+    var markedConversationID: Int? {
+        isCompact ? lastOpenedConversationID : selectedConversationID
+    }
+
     /// Width class mirrored in by RootView so `open(_:)` can decide between a
     /// push (compact) and a column selection (regular).
     var isCompact = false
@@ -85,6 +96,7 @@ final class AppModel {
     /// Open a destination from any entry point. Compact pushes onto the current
     /// tab's stack; regular routes to the appropriate column.
     func open(_ route: Route) {
+        if case .conversation(let id) = route { lastOpenedConversationID = id }
         if isCompact {
             push(route, on: selectedTab)
             return
@@ -140,6 +152,7 @@ final class AppModel {
         }
         guard let route = Route.from(url: url) else { return }
         if isCompact {
+            if case .conversation(let id) = route { lastOpenedConversationID = id }
             let owner: AppTab = if case .project = route { .projects } else { .chats }
             selectedTab = owner
             paths[owner] = [route]
@@ -169,6 +182,7 @@ final class AppModel {
     /// Dropped when the selected server changes…
     private func resetServerScopedState() {
         selectedConversationID = nil
+        lastOpenedConversationID = nil
         pendingNewSession = nil
         paths = [:]
         settingsPath = []

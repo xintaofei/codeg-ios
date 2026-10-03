@@ -7,6 +7,8 @@ import SwiftUI
 /// tab role gives the field its native placement for free.
 struct SearchView: View {
     let client: CodegClient?
+    /// The session opened last (or open, on iPad); its row is marked.
+    var markedConversationID: Int? = nil
     let onOpen: (Int) -> Void
 
     @State private var query = ""
@@ -62,11 +64,11 @@ struct SearchView: View {
 
     private var resultsList: some View {
         ScrollView {
-            LazyVStack(spacing: 10) {
+            LazyVStack(spacing: 8) {
                 ForEach(results) { conversation in
                     SessionRow(
                         conversation: conversation,
-                        isSelected: false,
+                        isSelected: conversation.id == markedConversationID,
                         folderName: folderNames[conversation.folderId],
                         onTap: { open(conversation) }
                     )
