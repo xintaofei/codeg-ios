@@ -1,10 +1,11 @@
 import SwiftUI
 import Observation
 
-// The composer's inline `/` (and Codex `$`) command/skill menu — ported from
-// web `message-input.tsx`. The compose bar reports text + caret; this model
-// detects the trigger, gathers what the menu lists, and turns a pick into an
-// edit.
+// The composer's inline `/` (and Codex `$`) command/skill menu and `@` mention
+// panel — ported from web `message-input.tsx` (the `/` menu) and
+// `composer/suggestion/*` + `use-reference-search.ts` (the `@` panel, files and
+// agents only). The compose bar reports text + caret; this model detects the
+// trigger, gathers what the menu lists, and turns a pick into an edit.
 
 /// What the composer menus have already seen, kept for the life of the process
 /// so a cold session still offers the commands an earlier one advertised.
@@ -28,18 +29,38 @@ final class ComposerCatalog {
     /// Disk skills per `server|agent|folder` (only for agents that do not
     /// advertise their skills as commands).
     var skills: [String: SkillsEntry] = [:]
+    /// `acp_list_agents` per server.
+    var agents: [String: [AcpAgentInfo]] = [:]
 }
 
-/// One selectable row in the menu.
+/// An agent the `@` panel offers (web `agentToSuggestion`).
+struct MentionAgent: Hashable, Sendable, Identifiable {
+    let agentType: AgentType
+    let label: String
+    let detail: String?
+    var id: String { agentType.rawValue }
+}
+
+/// The `@` panel's tabs, in the web's built-in order: agent first (handing a
+/// subtask to another agent is what `@` is for), then files.
+enum MentionTab: String, CaseIterable, Hashable, Sendable {
+    case agent, file
+}
+
+/// One selectable row in either menu.
 enum ComposerSuggestionRow: Hashable, Identifiable {
     /// `skill`: the agent marked the command as a skill.
     case command(AvailableCommandInfo, skill: Bool)
     case skill(AgentSkillItem, prefix: InvocationPrefix)
+    case file(WorkspaceFileEntry)
+    case agent(MentionAgent)
 
     var id: String {
         switch self {
         case .command(let command, _): return "cmd:\(command.name)"
         case .skill(let skill, _): return "skill:\(skill.scope.rawValue):\(skill.id)"
+        case .file(let entry): return "file:\(entry.path)"
+        case .agent(let agent): return "agent:\(agent.id)"
         }
     }
 }
@@ -52,6 +73,11 @@ struct ComposerPanelState: Equatable {
         /// `skillColumn`: some command is a skill, so every row keeps an icon
         /// column and the tokens line up.
         case commands(rows: [ComposerSuggestionRow], loading: Bool, skillColumn: Bool)
+        /// `stale`: the file rows answer an earlier query (narrowed to this
+        /// one) while the search for this one runs; they can be tapped, but
+        /// Return does not pick one.
+        case mention(tab: MentionTab, rows: [ComposerSuggestionRow], counts: [MentionTab: Int],
+                     loading: Bool, stale: Bool, truncated: Bool, hasWorkspace: Bool)
     }
 
     let content: Content
@@ -59,7 +85,7 @@ struct ComposerPanelState: Equatable {
 
     var rows: [ComposerSuggestionRow] {
         switch content {
-        case .commands(let rows, _, _): return rows
+        case .commands(let rows, _, _), .mention(_, let rows, _, _, _, _, _): return rows
         }
     }
 }
@@ -103,13 +129,20 @@ final class ComposerSuggestionModel {
 
     private(set) var trigger: ComposerTrigger?
     private var highlightedIndex = 0
+    /// The tab the user picked, or nil to follow the first non-empty one.
+    private var pinnedTab: MentionTab?
     @ObservationIgnored private var lastText = ""
     @ObservationIgnored private var lastCaret: Int?
     /// Closed (Escape, or a pick) on this exact text: stays closed until the
     /// text changes, so a caret move cannot reopen it.
     @ObservationIgnored private var closedOnText: String?
 
-    // MARK: Commands / skills
+    // MARK: Mentions in the draft
+
+    /// The tokens the draft's mentions read as, and what each is sent as.
+    private(set) var references: [ComposerReference] = []
+
+    // MARK: Commands / skills / agents
 
     /// Fetches in flight per catalog key — the `/` panel's loading row.
     private var commandFetches: [String: Int] = [:]
@@ -117,6 +150,33 @@ final class ComposerSuggestionModel {
     /// so a `/` that found nothing does not ask again on every keystroke.
     @ObservationIgnored private var commandsAsked: [Bool: Set<String>] = [:]
     @ObservationIgnored private var skillsScanned: Set<String> = []
+    /// Observed: the agents tab shows "Searching…" while it is set and no list
+    /// has arrived, and must stop when a failed request clears it.
+    private var agentsRequested = false
+
+    // MARK: File search
+
+    struct FileResult: Equatable {
+        let root: String
+        let query: String
+        /// As the server ranked them — up to one more than shown, the extra
+        /// one only signalling "more".
+        let entries: [WorkspaceFileEntry]
+    }
+
+    private var fileResult: FileResult?
+    /// One consumer per screen; the generation strictly increases on it.
+    private let consumerID = UUID().uuidString
+    @ObservationIgnored private var fileGeneration: UInt64 = 0
+    @ObservationIgnored private var fileSearchTask: Task<Void, Never>?
+    @ObservationIgnored private var fileQueryRequested: (root: String, query: String)?
+    /// The search the server may still be running — what closing cancels.
+    @ObservationIgnored private var fileSearchOutstanding: WorkspaceSearchRequest?
+
+    private static let fileDebounce: Duration = .milliseconds(150)
+    /// Rows per group (web `MAX_PER_GROUP`); the server is asked for one more.
+    static let maxPerGroup = 50
+    private static let maxQueryBytes = 2048
 
     init(client: CodegClient) {
         self.client = client
@@ -224,11 +284,43 @@ final class ComposerSuggestionModel {
         }
     }
 
+    // MARK: - Agents
+
+    private func ensureAgents() {
+        guard !agentsRequested else { return }
+        agentsRequested = true
+        let server = serverKey
+        Task { [weak self] in
+            guard let self else { return }
+            guard let list = try? await self.client.listAgents() else {
+                self.agentsRequested = false
+                return
+            }
+            self.catalog.agents[server] = list
+        }
+    }
+
+    /// Only enabled agents are mentionable (web `buildReferenceGroups`).
+    private var mentionAgents: [MentionAgent] {
+        (catalog.agents[serverKey] ?? [])
+            .enumerated()
+            .filter { $0.element.enabled }
+            .sorted { ($0.element.sortOrder, $0.offset) < ($1.element.sortOrder, $1.offset) }
+            .map { item in
+                let agent = item.element
+                return MentionAgent(agentType: agent.agentType,
+                                    label: agent.name.isEmpty ? agent.agentType.label : agent.name,
+                                    detail: agent.description.isEmpty ? nil : agent.description)
+            }
+    }
+
     // MARK: - Text and caret
 
     /// Report the field's text and caret (UTF-16; nil for a ranged selection).
     func update(text: String, caretUTF16: Int?, focused: Bool) {
         if let closed = closedOnText, closed != text { closedOnText = nil }
+        // A sent (or cleared) draft takes its mentions with it.
+        if text.isEmpty, !references.isEmpty { references.removeAll() }
         lastText = text
         lastCaret = caretUTF16
         if focused, closedOnText == nil, let caret = caretUTF16 {
@@ -245,21 +337,44 @@ final class ComposerSuggestionModel {
     }
 
     private func detect(_ text: String, caret: Int) -> ComposerTrigger? {
-        guard let found = ComposerTrigger.detect(text: text, caretUTF16: caret, agent: context().agent),
-              case .command = found else { return nil }
+        guard let found = ComposerTrigger.detect(text: text, caretUTF16: caret, agent: context().agent) else { return nil }
+        // The caret inside a mention picked earlier is not a new `@`.
+        if case .mention(_, let range) = found, isInsideReference(text, at: range.lowerBound, caret: caret) {
+            return nil
+        }
         return found
     }
 
+    private func isInsideReference(_ text: String, at start: Int, caret: Int) -> Bool {
+        let units = Array(text.utf16)
+        return references.contains { reference in
+            let token = Array(reference.token.utf16)
+            let end = start + token.count
+            return end <= units.count && caret <= end && units[start..<end].elementsEqual(token)
+        }
+    }
+
     private func setTrigger(_ next: ComposerTrigger?) {
-        guard next != trigger else { return }
+        let previous = trigger
+        guard next != previous else { return }
         trigger = next
         highlightedIndex = 0
-        if case .command(let prefix, _, _)? = next {
+        let wasMention: Bool
+        if case .mention? = previous { wasMention = true } else { wasMention = false }
+        switch next {
+        case .command(let prefix, _, _)?:
+            if wasMention { closeFileSearch() }
             let ctx = context()
             if prefix == .slash, commands.isEmpty, !commandsLoading {
                 startCommandFetch(key: catalogKey(ctx), allowProbe: true)
             }
             if ComposerInvocations.diskSkillTrigger(ctx.agent) == prefix { ensureSkills() }
+        case .mention(let query, _)?:
+            if !wasMention { pinnedTab = nil }
+            ensureAgents()
+            scheduleFileSearch(query)
+        case nil:
+            if wasMention { closeFileSearch() }
         }
     }
 
@@ -269,7 +384,8 @@ final class ComposerSuggestionModel {
     var panel: ComposerPanelState? {
         switch trigger {
         case .command(let prefix, let query, _)?: return commandPanel(prefix: prefix, query: query)
-        default: return nil
+        case .mention(let query, _)?: return mentionPanel(query: query)
+        case nil: return nil
         }
     }
 
@@ -312,6 +428,57 @@ final class ComposerSuggestionModel {
             highlighted: clamped(rows.count))
     }
 
+    private func mentionPanel(query: String) -> ComposerPanelState {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let agentMatches = mentionAgents.filter { agent in
+            q.isEmpty
+                || agent.label.lowercased().contains(q)
+                || agent.agentType.rawValue.lowercased().contains(q)
+                || (agent.detail?.lowercased().contains(q) ?? false)
+        }
+        let agentRows = agentMatches.prefix(Self.maxPerGroup).map { ComposerSuggestionRow.agent($0) }
+
+        let root = context().workspaceRoot
+        let hasWorkspace = !(root ?? "").isEmpty
+        var fileRows: [ComposerSuggestionRow] = []
+        var truncated = false
+        var fresh = false
+        if hasWorkspace, let result = fileResult, result.root == root {
+            fresh = result.query == query
+            // The panel's substring semantics over what the server ranked
+            // (web `buildReferenceGroups`); an earlier query's rows narrow to
+            // this one while its own search runs.
+            for entry in result.entries {
+                if !q.isEmpty, !entry.name.lowercased().contains(q), !entry.path.lowercased().contains(q) { continue }
+                if fileRows.count >= Self.maxPerGroup {
+                    truncated = true
+                    break
+                }
+                fileRows.append(.file(entry))
+            }
+        }
+        let filesLoading = hasWorkspace && !fresh
+        let agentsLoading = agentsRequested && catalog.agents[serverKey] == nil
+        let counts: [MentionTab: Int] = [.agent: agentRows.count, .file: fileRows.count]
+        // Follow the first non-empty tab until the user picks one; with both
+        // empty, the files tab says it is still searching.
+        let firstNonEmpty = MentionTab.allCases.first(where: { (counts[$0] ?? 0) > 0 })
+        let tab: MentionTab = pinnedTab ?? firstNonEmpty ?? (hasWorkspace ? .file : .agent)
+        let rows: [ComposerSuggestionRow] = tab == .agent ? agentRows : fileRows
+        return ComposerPanelState(
+            content: .mention(tab: tab, rows: rows, counts: counts,
+                              loading: tab == .file ? filesLoading : agentsLoading,
+                              stale: tab == .file && !fresh, truncated: tab == .file && truncated,
+                              hasWorkspace: hasWorkspace),
+            highlighted: clamped(rows.count))
+    }
+
+    /// Switch the `@` panel's tab (and keep it, whatever the query matches).
+    func selectTab(_ tab: MentionTab) {
+        pinnedTab = tab
+        highlightedIndex = 0
+    }
+
     // MARK: - Hardware keys
 
     /// A hardware key while the field has focus. `text` is the field's text
@@ -323,23 +490,47 @@ final class ComposerSuggestionModel {
             return .handled
         }
         let rows = panel.rows
-        guard !rows.isEmpty else {
-            // The loading row owns the navigation keys, inserting nothing.
-            let navigation: [KeyEquivalent] = [.upArrow, .downArrow, .return, .tab]
-            return navigation.contains(key) ? .handled : .ignored
-        }
-        switch key {
-        case .downArrow:
-            highlightedIndex = (panel.highlighted + 1) % rows.count
-            return .handled
-        case .upArrow:
-            highlightedIndex = (panel.highlighted - 1 + rows.count) % rows.count
-            return .handled
-        case .return, .tab:
-            guard let result = pick(rows[panel.highlighted], in: text) else { return .handled }
-            return .replace(text: result.text, caretUTF16: result.caret)
-        default:
-            return .ignored
+        switch panel.content {
+        case .commands:
+            guard !rows.isEmpty else {
+                // The loading row owns the navigation keys, inserting nothing.
+                let navigation: [KeyEquivalent] = [.upArrow, .downArrow, .return, .tab]
+                return navigation.contains(key) ? .handled : .ignored
+            }
+            switch key {
+            case .downArrow:
+                highlightedIndex = (panel.highlighted + 1) % rows.count
+                return .handled
+            case .upArrow:
+                highlightedIndex = (panel.highlighted - 1 + rows.count) % rows.count
+                return .handled
+            case .return, .tab:
+                guard let result = pick(rows[panel.highlighted], in: text) else { return .handled }
+                return .replace(text: result.text, caretUTF16: result.caret)
+            default:
+                return .ignored
+            }
+        case .mention(let tab, _, _, _, let stale, _, _):
+            switch key {
+            case .downArrow:
+                if !rows.isEmpty { highlightedIndex = (panel.highlighted + 1) % rows.count }
+                return .handled
+            case .upArrow:
+                if !rows.isEmpty { highlightedIndex = (panel.highlighted - 1 + rows.count) % rows.count }
+                return .handled
+            case .tab:
+                let tabs = MentionTab.allCases
+                let at = tabs.firstIndex(of: tab) ?? 0
+                selectTab(tabs[(at + (shift ? -1 : 1) + tabs.count) % tabs.count])
+                return .handled
+            case .return:
+                // No fresh row: decline, so the key is the field's newline.
+                guard !rows.isEmpty, !stale,
+                      let result = pick(rows[panel.highlighted], in: text) else { return .ignored }
+                return .replace(text: result.text, caretUTF16: result.caret)
+            default:
+                return .ignored
+            }
         }
     }
 
@@ -354,13 +545,24 @@ final class ComposerSuggestionModel {
             lastText = text
             lastCaret = lastCaret.map { min($0, text.utf16.count) }
         }
-        guard let caret = lastCaret, case .command(_, _, let range)? = detect(lastText, caret: caret) else { return nil }
+        guard let caret = lastCaret, let trigger = detect(lastText, caret: caret) else { return nil }
         let edit: ComposerEdit
-        switch row {
-        case .command(let command, _):
+        switch (row, trigger) {
+        case (.command(let command, _), .command(_, _, let range)):
             edit = invocationEdit(ComposerInvocations.commandInvocationToken(command.name), replacing: range)
-        case .skill(let skill, let prefix):
+        case (.skill(let skill, let prefix), .command(_, _, let range)):
             edit = invocationEdit(prefix.rawValue + skill.id, replacing: range)
+        case (.file(let entry), .mention(_, let range)):
+            guard let root = context().workspaceRoot, !root.isEmpty else { return nil }
+            let reference = ComposerReference.file(name: entry.name, relativePath: entry.path, workspaceRoot: root)
+            register(reference)
+            edit = ComposerEdit(range: range, replacement: reference.token + " ")
+        case (.agent(let agent), .mention(_, let range)):
+            let reference = ComposerReference.agent(agent.agentType, label: agent.label)
+            register(reference)
+            edit = ComposerEdit(range: range, replacement: reference.token + " ")
+        default:
+            return nil
         }
         guard let text = edit.apply(to: lastText) else { return nil }
         closedOnText = text
@@ -378,9 +580,71 @@ final class ComposerSuggestionModel {
         return ComposerEdit(range: range, replacement: token + (followedBySpace ? "" : " "))
     }
 
+    // MARK: - Mentions on the wire
+
+    private func register(_ reference: ComposerReference) {
+        references.removeAll { $0.token == reference.token }
+        references.append(reference)
+    }
+
+    /// The draft as it is sent: each mention token as its Markdown link.
+    func encode(_ text: String) -> String {
+        ComposerReferenceCodec.encode(text, references: references)
+    }
+
+    /// A sent message coming back to the composer: its links become tokens
+    /// again (and are registered), so re-sending reproduces the original.
+    func restore(_ wire: String) -> String {
+        let decoded = ComposerReferenceCodec.decode(wire, workspaceRoot: context().workspaceRoot)
+        decoded.references.forEach(register)
+        return decoded.text
+    }
+
+    // MARK: - File search
+
+    private func scheduleFileSearch(_ query: String) {
+        guard let root = context().workspaceRoot, !root.isEmpty else { return }
+        if let result = fileResult, result.root == root, result.query == query { return }
+        if let requested = fileQueryRequested, requested.root == root, requested.query == query { return }
+        fileQueryRequested = (root, query)
+        fileSearchTask?.cancel()
+        guard query.utf8.count <= Self.maxQueryBytes else {
+            fileResult = FileResult(root: root, query: query, entries: [])
+            return
+        }
+        fileSearchTask = Task { [weak self] in
+            try? await Task.sleep(for: ComposerSuggestionModel.fileDebounce)
+            guard let self, !Task.isCancelled else { return }
+            self.fileGeneration &+= 1
+            let request = WorkspaceSearchRequest(consumerId: self.consumerID, generation: self.fileGeneration)
+            self.fileSearchOutstanding = request
+            // A failed search reads as no matches (web: `.catch(() => [])`).
+            let entries = (try? await self.client.searchWorkspaceFiles(
+                path: root, query: query, limit: ComposerSuggestionModel.maxPerGroup + 1, request: request)) ?? []
+            if self.fileSearchOutstanding == request { self.fileSearchOutstanding = nil }
+            guard !Task.isCancelled, request.generation == self.fileGeneration else { return }
+            self.fileResult = FileResult(root: root, query: query, entries: entries)
+        }
+    }
+
+    /// The panel closed: stop waiting, and tell the server to stop too. Only
+    /// here — a newer query already supersedes an older one server-side.
+    private func closeFileSearch() {
+        fileSearchTask?.cancel()
+        fileSearchTask = nil
+        fileQueryRequested = nil
+        fileResult = nil
+        if let outstanding = fileSearchOutstanding {
+            fileSearchOutstanding = nil
+            let client = self.client
+            Task { try? await client.cancelWorkspaceFileSearch(request: outstanding) }
+        }
+    }
+
     /// The screen went away.
     func teardown() {
         setTrigger(nil)
+        closeFileSearch()
     }
 }
 

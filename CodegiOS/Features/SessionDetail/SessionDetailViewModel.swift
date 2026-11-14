@@ -49,7 +49,8 @@ final class SessionDetailViewModel {
     /// Which replies are folded in the activity timeline. A send folds every
     /// reply above it; see ``ReplyFoldStore``.
     let replyFolds = ReplyFoldStore()
-    /// The composer's inline `/`·`$` command and skill menu.
+    /// The composer's inline `/`·`$` menu and `@` panel, and the mention
+    /// tokens the draft holds (encoded into links on every send).
     let composer: ComposerSuggestionModel
 
     // MARK: - Observable state
@@ -1407,7 +1408,10 @@ final class SessionDetailViewModel {
     /// `shouldQueueDirectSend`): it goes out on its own once the agent is free,
     /// and never ahead of what was written before it.
     func send(overrideText: String? = nil) {
-        let text = (overrideText ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
+        // The composer's `@` mentions leave as the web's Markdown links — from
+        // here on (the queue included) the text is in its wire form.
+        let typed = overrideText ?? composer.encode(draft)
+        let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         let sending = overrideText == nil ? attachments : []
         guard !text.isEmpty || !sending.isEmpty else { return }
         // Identity comes from the loaded summary (existing conversation) or the
@@ -1746,7 +1750,9 @@ final class SessionDetailViewModel {
         guard let item = queue.remove(id) else { return }
         if queue.isEmpty { queueHeld = false }
         let current = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft = current.isEmpty ? item.text : current + "\n\n" + item.text
+        // Queued text is in its wire form; its mention links read as tokens again.
+        let restored = composer.restore(item.text)
+        draft = current.isEmpty ? restored : current + "\n\n" + restored
         addAttachments(item.attachments)
     }
 
@@ -1764,14 +1770,17 @@ final class SessionDetailViewModel {
     /// Text only: images ride the native wire alone and the pull one refuses
     /// them, so a draft with attachments is sent (queued) the ordinary way.
     func steerDraft() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, attachments.isEmpty, canSteer, !isSteering, let conn = connectionID else { return }
+        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty, attachments.isEmpty, canSteer, !isSteering, let conn = connectionID else { return }
+        // Sent (and queued, if the turn ended first) in its wire form; the
+        // composer is compared against what it showed.
+        let text = composer.encode(typed)
         isSteering = true
         let channel = steerChannel
         Task { [weak self] in
             guard let self else { return }
             defer { self.isSteering = false }
-            let draftStillSent = { self.draft.trimmingCharacters(in: .whitespacesAndNewlines) == text }
+            let draftStillSent = { self.draft.trimmingCharacters(in: .whitespacesAndNewlines) == typed }
             do {
                 let item = try await self.client.submitSessionFeedback(connectionId: conn, text: text)
                 if draftStillSent() { self.draft = "" }
@@ -2189,7 +2198,9 @@ final class SessionDetailViewModel {
     /// (first non-empty line, capped to 80 chars) — mirrors the web client. nil →
     /// the server titles it later from the session.
     private static func draftTitle(from text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Mention links fold to their labels first, as the web's title seed
+        // does — never a raw `[README.md](file://…)`, nor one cut in half.
+        let trimmed = ComposerReferenceCodec.foldLinks(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let firstLine = trimmed.split(whereSeparator: \.isNewline).first.map(String.init) ?? trimmed
         return String(firstLine.prefix(80))
@@ -3039,7 +3050,8 @@ final class SessionDetailViewModel {
         if conversationID == nil { hasStartedFirstSend = false }
         // Don't clobber a fresh draft the user may have started typing.
         if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            draft = text
+            // The text left in its wire form; its mention links read as tokens.
+            draft = composer.restore(text)
         }
         // Restore the staged images too, unless the user has since added new ones.
         if attachments.isEmpty, !sent.isEmpty {
@@ -4299,7 +4311,7 @@ extension SessionDetailViewModel {
     }
 }
 
-// MARK: - Composer suggestions (inline `/` menu)
+// MARK: - Composer suggestions (inline `/` menu + `@` panel)
 
 extension SessionDetailViewModel {
     /// Point the composer's suggestion model at this screen: whose agent and

@@ -4,7 +4,7 @@ import Testing
 @testable import Codeg
 
 /// The suggestion model end to end, without a server: what each trigger
-/// lists and what a pick writes.
+/// lists, what a pick writes, and the mention tokens it registers.
 @MainActor
 @Suite struct ComposerSuggestionModelTests {
     /// Each model talks to a server of its own: the catalog is process-wide
@@ -24,6 +24,13 @@ import Testing
         try CodegJSON.decoder.decode(AgentSkillItem.self, from: Data("""
         {"id":"\(id)","name":"\(id.capitalized)","scope":"project","layout":"skill_directory",
          "path":"/s/\(id)","read_only":false}
+        """.utf8))
+    }
+
+    private func agent(_ type: String, _ name: String, sortOrder: Int, enabled: Bool = true) throws -> AcpAgentInfo {
+        try CodegJSON.decoder.decode(AcpAgentInfo.self, from: Data("""
+        {"agent_type":"\(type)","registry_id":"\(type)","name":"\(name)","description":"\(name) agent",
+         "available":true,"enabled":\(enabled),"sort_order":\(sortOrder)}
         """.utf8))
     }
 
@@ -146,5 +153,75 @@ import Testing
         #expect(picked.text == "$ship ")
         type(model, "/")
         #expect(model.panel?.rows.map(\.id) == ["cmd:review"])
+    }
+
+    // MARK: - `@`
+
+    @Test func atListsEnabledAgentsAndPicksAMentionToken() throws {
+        let (model, server) = makeModel()
+        ComposerCatalog.shared.agents[server] = [
+            try agent("codex", "Codex", sortOrder: 2),
+            try agent("claude_code", "Claude Code", sortOrder: 1),
+            try agent("gemini", "Gemini", sortOrder: 0, enabled: false),
+        ]
+        type(model, "ask @")
+        let all = try #require(model.panel)
+        guard case .mention(let tab, let rows, _, _, _, _, _) = all.content else {
+            Issue.record("not the mention panel")
+            return
+        }
+        #expect(tab == .agent)
+        #expect(rows.map(\.id) == ["agent:claude_code", "agent:codex"])
+
+        type(model, "ask @codex")
+        let row = try #require(model.panel?.rows.first)
+        let picked = try #require(model.pick(row, in: "ask @codex"))
+        #expect(picked.text == "ask @Codex ")
+        #expect(picked.caret == 11)
+        #expect(model.encode(picked.text) == "ask [@Codex](codeg://agent/codex) ")
+    }
+
+    @Test func theCaretInsideAPickedMentionDoesNotReopenThePanel() throws {
+        let (model, server) = makeModel()
+        ComposerCatalog.shared.agents[server] = [try agent("codex", "Codex", sortOrder: 0)]
+        type(model, "@co")
+        let row = try #require(model.panel?.rows.first)
+        let picked = try #require(model.pick(row, in: "@co"))
+        type(model, picked.text + "x")
+        type(model, picked.text + "x", caret: 3)
+        #expect(model.panel == nil)
+    }
+
+    @Test func tabSwitchesTheMentionTab() throws {
+        let (model, server) = makeModel()
+        ComposerCatalog.shared.agents[server] = [try agent("codex", "Codex", sortOrder: 0)]
+        type(model, "@")
+        guard case .handled = model.handleKey(.tab, shift: false, text: "@") else {
+            Issue.record("tab")
+            return
+        }
+        guard case .mention(let tab, let rows, _, _, _, _, _)? = model.panel?.content else {
+            Issue.record("not the mention panel")
+            return
+        }
+        #expect(tab == .file)
+        #expect(rows.isEmpty)
+        guard case .ignored = model.handleKey(.return, shift: false, text: "@") else {
+            Issue.record("an empty tab declines Return")
+            return
+        }
+    }
+
+    // MARK: - Restore
+
+    @Test func aRestoredMessageReadsAsTokensAndSendsAsItWas() {
+        let (model, _) = makeModel(root: "/repo")
+        let wire = "see [app.ts](file:///repo/src/app.ts) and [@Codex](codeg://agent/codex)"
+        let shown = model.restore(wire)
+        #expect(shown == "see @src/app.ts and @Codex")
+        #expect(model.references.count == 2)
+        #expect(model.encode(shown) == wire)
+        model.update(text: "", caretUTF16: 0, focused: true)
+        #expect(model.references.isEmpty, "a cleared draft takes its mentions with it")
     }
 }

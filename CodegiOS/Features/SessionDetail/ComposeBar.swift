@@ -44,8 +44,8 @@ struct ComposeBar: View {
     /// placeholder; "Use" (or a bare hardware Tab) fills it in — never sends.
     var suggestion: String? = nil
     var onUseSuggestion: () -> Void = {}
-    /// Backs the inline `/`·`$` command menu shown above the field. Nil turns
-    /// it off.
+    /// Backs the inline `/`·`$` command menu and `@` mention panel shown above
+    /// the field. Nil turns both off.
     var suggestions: ComposerSuggestionModel? = nil
 
     @FocusState private var focused: Bool
@@ -99,7 +99,8 @@ struct ComposeBar: View {
             if let suggestions, let panel = suggestions.panel {
                 ComposerSuggestionPanel(
                     state: panel,
-                    onPick: { pickSuggestion($0, from: suggestions) }
+                    onPick: { pickSuggestion($0, from: suggestions) },
+                    onSelectTab: { suggestions.selectTab($0) }
                 )
             }
 
@@ -188,7 +189,7 @@ struct ComposeBar: View {
         .animation(.snappy(duration: 0.26), value: focused)
         .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: sendHaptic)
         .sensoryFeedback(.selection, trigger: suggestionHaptic)
-        // The inline `/`·`$` triggers read the text before the caret.
+        // The inline `/`·`$`·`@` triggers read the text before the caret.
         .onChange(of: text) { _, _ in refreshSuggestions() }
         .onChange(of: selection) { _, _ in refreshSuggestions() }
         .onChange(of: focused) { _, _ in refreshSuggestions() }
