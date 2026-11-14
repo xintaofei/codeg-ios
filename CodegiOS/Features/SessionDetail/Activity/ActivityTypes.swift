@@ -153,10 +153,12 @@ enum ActivityText {
     case live(LiveTextRun, streaming: Bool)
 }
 
-/// Answer-shaped parts that landed between steps — prose, a turn error. They
-/// stay where they were written, as notes.
+/// Answer-shaped parts that landed between steps — prose, a proposed plan, a
+/// turn error. They stay where they were written, as notes.
 enum ActivityNote {
     case text(ActivityText)
+    /// A codex Plan-mode `<proposed_plan>` block (settled prose only).
+    case proposedPlan(markdown: String, streaming: Bool)
     case turnError(String)
 }
 

@@ -6808,6 +6808,16 @@
         }
       }
     },
+    "Planning…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "规划中…"
+          }
+        }
+      }
+    },
     "Prefix" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -6892,6 +6902,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "提示词"
+          }
+        }
+      }
+    },
+    "Proposed plan" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "计划提案"
           }
         }
       }
@@ -8433,6 +8453,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "收起"
+          }
+        }
+      }
+    },
+    "Show more" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "展开"
           }
         }
       }

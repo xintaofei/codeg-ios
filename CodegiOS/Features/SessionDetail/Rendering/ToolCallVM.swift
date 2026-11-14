@@ -237,6 +237,11 @@ struct ToolCallVM: Identifiable {
 /// timeline node and `NodeBody` renders it.
 enum RenderPart {
     case text(String)                                   // finalized prose → block markdown
+    /// A codex Plan-mode `<proposed_plan>` block lifted out of settled prose
+    /// (`ProposedPlan.extract`). `streaming`: the block is still open in a
+    /// reply that is still being written. Live prose is split by its leaf view
+    /// instead (see `LiveTextNode`), so it never reaches here.
+    case proposedPlan(markdown: String, streaming: Bool)
     case reasoning(text: String)                        // finalized reasoning
     case liveText(LiveTextRun, streaming: Bool)          // streaming prose (plain, @Bindable)
     case liveReasoning(LiveTextRun, streaming: Bool)
@@ -283,7 +288,21 @@ enum MessageRender {
         for (idx, block) in blocks.enumerated() where !consumed.contains(idx) {
             switch block {
             case .text(let t):
-                if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(.text(t)) }
+                // codex Plan mode writes its plan as a `<proposed_plan>` block in
+                // the prose; it becomes a card, the prose around it stays prose.
+                // Only a reply still being written in the running round can
+                // have a block that is merely not closed YET.
+                if let segments = ProposedPlan.extract(t, isStreaming: liveness == .round) {
+                    for segment in segments {
+                        switch segment {
+                        case .text(let prose): parts.append(.text(prose))
+                        case .plan(let markdown, let streaming):
+                            parts.append(.proposedPlan(markdown: markdown, streaming: streaming))
+                        }
+                    }
+                } else if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    parts.append(.text(t))
+                }
             case .thinking(let t):
                 if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(.reasoning(text: t)) }
             case .image(let img):

@@ -35,11 +35,12 @@ enum BuildActivity {
     // MARK: - Answer split
 
     /// Parts that ARE the reply's answer rather than the process that produced
-    /// it: prose, a generated image, the failure line. Exhaustive on purpose,
-    /// so a new part kind has to be classified here.
+    /// it: prose, the codex Plan-mode document the user has to read, a
+    /// generated image, the failure line. Exhaustive on purpose, so a new part
+    /// kind has to be classified here.
     static func isAnswerPart(_ part: RenderPart) -> Bool {
         switch part {
-        case .text, .liveText, .image, .turnError:
+        case .text, .liveText, .proposedPlan, .image, .turnError:
             return true
         case .reasoning, .liveReasoning, .tool, .toolGroup, .delegationStatusGroup, .taskGroup,
              .compaction, .unknown:
@@ -114,6 +115,7 @@ enum BuildActivity {
         case .text(let t): return "text:\(t)"
         case .reasoning(let t): return "reasoning:\(t)"
         case .turnError(let message): return "turn-error:\(message)"
+        case .proposedPlan(let markdown, let streaming): return "proposed-plan:\(markdown):\(streaming)"
         case .image(let image, let caption):
             return "image:\(caption ?? ""):\(image.uri ?? ""):\(image.data.prefix(160))"
         case .compaction(let before, let after, _):
@@ -149,6 +151,8 @@ enum BuildActivity {
                 }
             case .liveText(let run, let streaming):
                 steps.append(.note(key: key("note"), .text(.live(run, streaming: streaming))))
+            case .proposedPlan(let markdown, let streaming):
+                steps.append(.note(key: key("note"), .proposedPlan(markdown: markdown, streaming: streaming)))
             case .turnError(let message):
                 steps.append(.note(key: key("note"), .turnError(message)))
             case .reasoning(let t):

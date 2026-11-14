@@ -57,6 +57,10 @@ struct TimelineNode: Identifiable {
         case system(MessageTurn)
         case assistantText(String)
         case liveText(LiveTextRun, streaming: Bool)
+        /// A codex Plan-mode `<proposed_plan>` block lifted out of settled
+        /// prose, drawn as a plan card. (A live run's blocks are split by its
+        /// `liveText` leaf, which alone reads the run's text.)
+        case proposedPlan(markdown: String, streaming: Bool)
         case reasoning(String)
         case liveReasoning(LiveTextRun, streaming: Bool)
         case tool(ToolCallVM)
@@ -119,7 +123,7 @@ struct TimelineNode: Identifiable {
         case .image: return .image
         case .compaction: return .compaction
         case .footer: return .footer
-        case .plan: return .plan
+        case .plan, .proposedPlan: return .plan
         case .thinking: return .thinking
         case .error: return .error
         case .unsupported: return .system
@@ -448,6 +452,8 @@ enum TranscriptTimeline {
             return TimelineNode(id: base, content: .assistantText(s), agent: agent)
         case .note(_, .text(.live(let run, let streaming))):
             return TimelineNode(id: "t-\(run.id)", content: .liveText(run, streaming: streaming), agent: agent)
+        case .note(_, .proposedPlan(let markdown, let streaming)):
+            return TimelineNode(id: base, content: .proposedPlan(markdown: markdown, streaming: streaming), agent: agent)
         case .note(_, .turnError(let message)):
             return TimelineNode(id: base, content: .error(message, details: nil), agent: agent)
         case .image(_, let image, let caption):
@@ -503,6 +509,8 @@ enum TranscriptTimeline {
             return TimelineNode(id: base,
                                 content: .compaction(before: before, after: after, running: running),
                                 agent: agent)
+        case .proposedPlan(let markdown, let streaming):
+            return TimelineNode(id: base, content: .proposedPlan(markdown: markdown, streaming: streaming), agent: agent)
         case .turnError(let message):
             return TimelineNode(id: base, content: .error(message, details: nil), agent: agent)
         case .unknown(let type):

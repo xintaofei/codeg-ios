@@ -20,6 +20,8 @@ struct NodeBody: View {
             MarkdownContent(raw: s)
         case .liveText(let run, let streaming):
             LiveTextNode(run: run, streaming: streaming)
+        case .proposedPlan(let markdown, let streaming):
+            ProposedPlanCard(markdown: markdown, streaming: streaming)
         case .reasoning(let t):
             ReasoningBlock(text: t)
         case .liveReasoning(let run, let streaming):
@@ -144,12 +146,25 @@ enum SystemText {
 /// in its own body so each ~50 ms coalesced publish re-renders just this node
 /// (and only the trailing segment carries the typing caret). The text MUST be
 /// read here, not snapshotted into the node, or streaming stops updating.
+///
+/// A codex Plan-mode `<proposed_plan>` block is lifted out HERE for a live
+/// run, not by the timeline builder: reading the run's text while assembling
+/// the timeline would subscribe the whole transcript to every token. Plan and
+/// prose are both answer-shaped (`BuildActivity.isAnswerPart`), so splitting
+/// the run inside its own node changes nothing about where the run sits in the
+/// reply. Once the reply settles, the persisted adapter makes the same split
+/// into nodes of their own.
 private struct LiveTextNode: View {
     @Bindable var run: LiveTextRun
     let streaming: Bool
 
     var body: some View {
-        MarkdownContent(raw: run.text, streaming: streaming)
+        let text = run.text
+        if let segments = ProposedPlan.extract(text, isStreaming: streaming) {
+            ProposedPlanSegmentsView(segments: segments, streaming: streaming)
+        } else {
+            MarkdownContent(raw: text, streaming: streaming)
+        }
     }
 }
 
