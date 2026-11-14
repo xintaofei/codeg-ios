@@ -45,6 +45,8 @@
 	<string>Codeg uses the camera to take photos for your messages and to scan a server's QR code.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Codeg connects to your codeg server, which may run on your local network.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Codeg saves images from a conversation to your photo library when you ask it to.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Codeg attaches photos you pick to your message to the agent.</string>
 	<key>UIApplicationSceneManifest</key>

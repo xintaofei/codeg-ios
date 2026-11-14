@@ -17,7 +17,7 @@ struct NodeBody: View {
         case .system(let turn):
             SystemNodeBody(turn: turn)
         case .assistantText(let s):
-            MarkdownContent(raw: s)
+            MarkdownContent(raw: s, assistantReply: true)
         case .liveText(let run, let streaming):
             LiveTextNode(run: run, streaming: streaming)
         case .proposedPlan(let markdown, let streaming):
@@ -170,7 +170,7 @@ private struct LiveTextNode: View {
         if let segments = ProposedPlan.extract(text, isStreaming: streaming) {
             ProposedPlanSegmentsView(segments: segments, streaming: streaming)
         } else {
-            MarkdownContent(raw: text, streaming: streaming)
+            MarkdownContent(raw: text, streaming: streaming, assistantReply: true)
         }
     }
 }

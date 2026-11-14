@@ -82,6 +82,8 @@ targets:
           NSAllowsArbitraryLoads: true
         NSLocalNetworkUsageDescription: "Codeg connects to your codeg server, which may run on your local network."
         NSPhotoLibraryUsageDescription: "Codeg attaches photos you pick to your message to the agent."
+        # Saving a transcript image from its share sheet ("Save Image").
+        NSPhotoLibraryAddUsageDescription: "Codeg saves images from a conversation to your photo library when you ask it to."
         NSCameraUsageDescription: "Codeg uses the camera to take photos for your messages and to scan a server's QR code."
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

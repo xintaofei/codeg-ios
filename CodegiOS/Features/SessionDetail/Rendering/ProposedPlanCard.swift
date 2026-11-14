@@ -118,7 +118,7 @@ struct ProposedPlanSegmentsView: View {
             ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
                 switch segment {
                 case .text(let prose):
-                    MarkdownContent(raw: prose, streaming: streaming && index == lastIndex)
+                    MarkdownContent(raw: prose, streaming: streaming && index == lastIndex, assistantReply: true)
                 case .plan(let markdown, let planStreaming):
                     ProposedPlanCard(markdown: markdown, streaming: planStreaming)
                 }

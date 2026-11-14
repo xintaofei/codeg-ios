@@ -173,6 +173,17 @@
         }
       }
     },
+    "Copy image" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制图片"
+          }
+        }
+      }
+    },
     "Couldn’t insert into the current turn" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -283,6 +294,17 @@
         }
       }
     },
+    "Interactive card" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可交互卡片"
+          }
+        }
+      }
+    },
     "Limit reached" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -290,6 +312,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已达限制"
+          }
+        }
+      }
+    },
+    "Not completed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未完成"
           }
         }
       }
@@ -378,6 +411,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "剩余"
+          }
+        }
+      }
+    },
+    "Rendered on desktop and web" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在桌面端和网页端渲染"
           }
         }
       }
@@ -521,6 +565,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "会话异常"
+          }
+        }
+      }
+    },
+    "Share" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分享"
           }
         }
       }

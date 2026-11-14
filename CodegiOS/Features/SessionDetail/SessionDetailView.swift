@@ -160,6 +160,9 @@ struct SessionDetailView: View {
         .environment(\.agentSessionLoader, AgentSessionLoader { agent, sessionId in
             try await model.agentSession(agentType: agent, sessionId: sessionId)
         })
+        // Images in the transcript's Markdown: read through this server, with
+        // relative paths resolved against the conversation's own folder.
+        .markdownImages(client: client, root: model.folder?.path)
         // `onAppear`/`onDisappear` are the lifetime pair: both run synchronously
         // and only when the view really appears/disappears — including when this
         // screen pushes another route over itself, which keeps the same `@State`

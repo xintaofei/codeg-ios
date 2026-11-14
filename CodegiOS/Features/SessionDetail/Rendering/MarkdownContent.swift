@@ -7,12 +7,37 @@ import SwiftUI
 enum MarkdownBlock {
     case paragraph(AttributedString)
     case heading(level: Int, AttributedString)
-    case bulletList([AttributedString])
-    case numberedList([(marker: String, content: AttributedString)])
+    /// Consecutive list items. Nested items of either kind belong to the list
+    /// they are nested in; at the top level a switch between bullets and
+    /// numbers starts a new list.
+    case list([MarkdownListItem])
     case quote([AttributedString])
-    case code(language: String?, code: String)
+    /// A fenced code block. `closed` once its closing fence has arrived — a
+    /// streaming reply's last fence is open until then (and a reply that ends
+    /// mid-fence stays open). Renderers that must not draw half a source
+    /// (Mermaid, HTML, json-render) wait for it.
+    case code(language: String?, code: String, closed: Bool)
     case rule
     case table(header: [AttributedString], rows: [[AttributedString]])
+    /// An image, lifted out of its paragraph to stand on its own.
+    case image(MarkdownImageRef)
+}
+
+/// One list item: its marker, its nesting depth, and — for a GFM task item —
+/// whether it is checked.
+struct MarkdownListItem {
+    enum Marker: Equatable {
+        case bullet
+        /// The item's number as written, normalised to `N.`.
+        case ordered(String)
+    }
+
+    let marker: Marker
+    /// 0 (top level) to `MarkdownContent.maxListLevel`.
+    let level: Int
+    /// `- [ ] …` → false, `- [x] …` → true; nil for an ordinary item.
+    let checked: Bool?
+    let content: AttributedString
 }
 
 /// Block-level Markdown for finalized assistant text. Unlike `MarkdownText`
@@ -26,6 +51,10 @@ enum MarkdownBlock {
 /// Streaming text uses this too, via `LiveTextNode` with `streaming: true`, which
 /// parses directly and bypasses the block cache (the partial strings would only
 /// churn it); the finalized turn re-renders once through the cached path.
+///
+/// Images render as blocks of their own (`MarkdownImageBlock`), loaded through
+/// the transcript's `MarkdownImageLoader` when there is one in the environment;
+/// GFM task items draw a checkbox in place of their bullet.
 struct MarkdownContent: View {
     let raw: String
     /// While a reply is streaming, parse directly (skip the block LRU): the text
@@ -33,6 +62,17 @@ struct MarkdownContent: View {
     /// evict useful finalized entries). The finalized turn re-renders once through
     /// the cached path.
     var streaming: Bool = false
+    /// This is an assistant reply's own text — the one place a ```` ```spec ````
+    /// fence is a json-render card rather than code (as on the web, where
+    /// `JsonRenderScope` wraps only reply text: not user messages, tool output
+    /// or reasoning).
+    var assistantReply: Bool = false
+
+    /// Deepest list nesting drawn; deeper items draw at this depth.
+    static let maxListLevel = 4
+    /// Marker column (14) + its spacing (6): a nested item's marker sits under
+    /// its parent's text.
+    private static let listIndent: CGFloat = 20
 
     private var blocks: [MarkdownBlock] {
         streaming ? MarkdownContent.parseBlocks(raw) : MarkdownContent.blocks(for: raw)
@@ -84,17 +124,10 @@ struct MarkdownContent: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 2)
 
-        case .bulletList(let items):
+        case .list(let items):
             VStack(alignment: .leading, spacing: Theme.Typography.listItemSpacing) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    listRow(marker: "•", content: item)
-                }
-            }
-
-        case .numberedList(let items):
-            VStack(alignment: .leading, spacing: Theme.Typography.listItemSpacing) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    listRow(marker: item.marker, content: item.content)
+                    listRow(item)
                 }
             }
 
@@ -115,27 +148,36 @@ struct MarkdownContent: View {
                 }
             }
 
-        case .code(let lang, let code):
-            CodeBlockView(code: code, language: lang)
+        case .code(let lang, let code, _):
+            // `closed` is not read yet: a folded spec card is fine while the
+            // fence is still arriving, and plain code always is.
+            if assistantReply, MarkdownSpec.isSpecFence(language: lang, code: code) {
+                SpecFenceCard(source: code)
+            } else {
+                CodeBlockView(code: code, language: lang)
+            }
 
         case .rule:
             Rectangle().fill(Theme.hairline).frame(height: 0.5).padding(.vertical, 2)
 
         case .table(let header, let rows):
             MarkdownTable(header: header, rows: rows)
+
+        case .image(let image):
+            MarkdownImageBlock(image: image)
         }
     }
 
-    private func listRow(marker: String, content: AttributedString) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Text(marker)
-                .font(Theme.Typography.messageBody)
-                .foregroundStyle(Theme.textTertiary)
+    private func listRow(_ item: MarkdownListItem) -> some View {
+        // First-baseline, not top: a task item's checkbox is a symbol, and
+        // its baseline is what lines it up with the first line of text.
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            listMarker(item)
                 // Marker hugs the block's left edge (no leading indent) so lists
                 // line up with paragraphs/headings; the small min-width keeps
                 // multi-line item text aligned past the marker.
                 .frame(minWidth: 14, alignment: .leading)
-            Text(content)
+            Text(item.content)
                 .font(Theme.Typography.messageBody)
                 .lineSpacing(Theme.Typography.messageLineSpacing)
                 .foregroundStyle(Theme.textPrimary)
@@ -143,6 +185,49 @@ struct MarkdownContent: View {
                 .tint(Theme.accent)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.leading, CGFloat(item.level) * Self.listIndent)
+        .modifier(TaskItemAccessibility(checked: item.checked))
+    }
+
+    /// The bullet or number — or, for a task item, a read-only checkbox in its
+    /// place (checked items are not struck through, as on the web).
+    @ViewBuilder
+    private func listMarker(_ item: MarkdownListItem) -> some View {
+        if let checked = item.checked {
+            Image(systemName: checked ? "checkmark.square.fill" : "square")
+                .font(Theme.Typography.messageBody)
+                .foregroundStyle(checked ? Theme.accent : Theme.textTertiary)
+                .accessibilityHidden(true)
+        } else {
+            Text(verbatim: Self.markerText(item))
+                .font(Theme.Typography.messageBody)
+                .foregroundStyle(Theme.textTertiary)
+        }
+    }
+
+    /// `•` at even depths and `◦` at odd ones; numbers as written.
+    static func markerText(_ item: MarkdownListItem) -> String {
+        switch item.marker {
+        case .bullet: return item.level.isMultiple(of: 2) ? "•" : "◦"
+        case .ordered(let number): return number
+        }
+    }
+}
+
+/// A task item reads as one element with its state as the value — the
+/// checkbox glyph itself is hidden from VoiceOver.
+private struct TaskItemAccessibility: ViewModifier {
+    let checked: Bool?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let checked {
+            content
+                .accessibilityElement(children: .combine)
+                .accessibilityValue(checked ? Text("Completed") : Text("Not completed"))
+        } else {
+            content
         }
     }
 }
@@ -255,21 +340,45 @@ extension MarkdownContent {
         var i = 0
         func inline(_ s: String) -> AttributedString { MarkdownText.attributed(from: s) }
 
+        /// A paragraph, cut at its images: each image becomes a block of its
+        /// own between the text around it.
+        func appendParagraph(_ text: String) {
+            guard let segments = MarkdownInlineImages.split(text) else {
+                blocks.append(.paragraph(inline(text)))
+                return
+            }
+            for segment in segments {
+                switch segment {
+                case .text(let piece):
+                    let trimmed = piece.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { blocks.append(.paragraph(inline(trimmed))) }
+                case .image(let image):
+                    blocks.append(.image(image))
+                }
+            }
+        }
+
         while i < lines.count {
             let line = lines[i]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-            // Fenced code block.
-            if let fence = fenceMarker(trimmed) {
-                let lang = String(trimmed.dropFirst(fence.count)).trimmingCharacters(in: .whitespaces)
+            // Fenced code block. It closes on a fence of the same character at
+            // least as long as the opening one (so a ```` fence can show ```
+            // inside it); its lines lose the opening fence's indentation, as in
+            // a fence nested in a list item.
+            if let fence = fenceOpening(trimmed) {
+                let indent = leadingSpaces(line)
                 var bodyLines: [String] = []
+                var closed = false
                 i += 1
                 while i < lines.count {
                     let t = lines[i].trimmingCharacters(in: .whitespaces)
-                    if t.hasPrefix(fence), t.allSatisfy({ $0 == fence.first }) { i += 1; break }
-                    bodyLines.append(lines[i]); i += 1
+                    if closesFence(t, fence) { closed = true; i += 1; break }
+                    bodyLines.append(dropLeadingSpaces(lines[i], upTo: indent)); i += 1
                 }
-                blocks.append(.code(language: lang.isEmpty ? nil : lang, code: bodyLines.joined(separator: "\n")))
+                blocks.append(.code(language: fence.info.isEmpty ? nil : fence.info,
+                                    code: bodyLines.joined(separator: "\n"),
+                                    closed: closed))
                 continue
             }
 
@@ -309,27 +418,30 @@ extension MarkdownContent {
                 continue
             }
 
-            // Bulleted list.
-            if bulletContent(trimmed) != nil {
-                var items: [String] = []
+            // List: consecutive bullet / numbered items. Each item's depth comes
+            // from its indentation relative to the items above it (any step —
+            // 2, 3 or 4 columns — opens a level), capped at `maxListLevel`.
+            if let first = listLine(trimmed) {
+                var items: [MarkdownListItem] = []
+                var indents: [Int] = []
                 while i < lines.count {
-                    let t = lines[i].trimmingCharacters(in: .whitespaces)
-                    guard let c = bulletContent(t) else { break }
-                    items.append(c); i += 1
+                    let itemLine = lines[i]
+                    guard let item = listLine(itemLine.trimmingCharacters(in: .whitespaces)) else { break }
+                    var open = indents
+                    let level = nestingLevel(indentWidth(itemLine), open: &open)
+                    // Back at the top level, bullets and numbers are two lists.
+                    if level == 0, !items.isEmpty, item.ordered != first.ordered { break }
+                    indents = open
+                    let task = taskMarker(item.content)
+                    items.append(MarkdownListItem(
+                        marker: item.ordered ? .ordered(item.marker) : .bullet,
+                        level: min(level, maxListLevel),
+                        checked: task?.checked,
+                        content: inline(task?.rest ?? item.content)
+                    ))
+                    i += 1
                 }
-                blocks.append(.bulletList(items.map(inline)))
-                continue
-            }
-
-            // Numbered list.
-            if orderedContent(trimmed) != nil {
-                var items: [(marker: String, content: AttributedString)] = []
-                while i < lines.count {
-                    let t = lines[i].trimmingCharacters(in: .whitespaces)
-                    guard let (m, c) = orderedContent(t) else { break }
-                    items.append((marker: m, content: inline(c))); i += 1
-                }
-                blocks.append(.numberedList(items))
+                blocks.append(.list(items))
                 continue
             }
 
@@ -339,26 +451,126 @@ extension MarkdownContent {
                 let l = lines[i]
                 let t = l.trimmingCharacters(in: .whitespaces)
                 if t.isEmpty { break }
-                if fenceMarker(t) != nil { break }
+                if fenceOpening(t) != nil { break }
                 if heading(t) != nil { break }
                 if isRule(t) { break }
                 if t.hasPrefix(">") { break }
-                if bulletContent(t) != nil { break }
-                if orderedContent(t) != nil { break }
+                if listLine(t) != nil { break }
                 if i + 1 < lines.count, l.contains("|"), isTableSeparator(lines[i + 1]) { break }
                 para.append(l); i += 1
             }
-            if !para.isEmpty { blocks.append(.paragraph(inline(para.joined(separator: "\n")))) }
+            if !para.isEmpty { appendParagraph(para.joined(separator: "\n")) }
         }
         return blocks
     }
 
     // MARK: line classifiers
 
-    private static func fenceMarker(_ trimmed: String) -> String? {
-        if trimmed.hasPrefix("```") { return "```" }
-        if trimmed.hasPrefix("~~~") { return "~~~" }
+    /// An opening code fence: three or more backticks or tildes, then the info
+    /// string. A backtick fence's info string can't contain a backtick (that
+    /// line is inline code, not a fence).
+    struct Fence {
+        let character: Character
+        let length: Int
+        let info: String
+    }
+
+    static func fenceOpening(_ trimmed: String) -> Fence? {
+        guard let first = trimmed.first, first == "`" || first == "~" else { return nil }
+        let length = trimmed.prefix(while: { $0 == first }).count
+        guard length >= 3 else { return nil }
+        let info = String(trimmed.dropFirst(length)).trimmingCharacters(in: .whitespaces)
+        if first == "`", info.contains("`") { return nil }
+        return Fence(character: first, length: length, info: info)
+    }
+
+    private static func closesFence(_ trimmed: String, _ fence: Fence) -> Bool {
+        trimmed.count >= fence.length && trimmed.allSatisfy { $0 == fence.character }
+    }
+
+    private static func leadingSpaces(_ line: String) -> Int {
+        var n = 0
+        for u in line.unicodeScalars {
+            guard u == " " else { break }
+            n += 1
+        }
+        return n
+    }
+
+    private static func dropLeadingSpaces(_ line: String, upTo limit: Int) -> String {
+        guard limit > 0 else { return line }
+        var idx = line.startIndex
+        var dropped = 0
+        while dropped < limit, idx < line.endIndex, line[idx] == " " {
+            idx = line.index(after: idx)
+            dropped += 1
+        }
+        return dropped == 0 ? line : String(line[idx...])
+    }
+
+    /// Leading indentation in columns (a tab advances to the next multiple of 4).
+    static func indentWidth(_ line: String) -> Int {
+        var width = 0
+        for u in line.unicodeScalars {
+            if u == " " {
+                width += 1
+            } else if u == "\t" {
+                width = (width / 4 + 1) * 4
+            } else {
+                break
+            }
+        }
+        return width
+    }
+
+    /// The depth of an item indented `indent` columns, given the indents of
+    /// the levels open above it (updated in place): deeper than the innermost
+    /// opens a level, otherwise it closes levels until one is no deeper than
+    /// it. An item left of the list's first one stays at the top level.
+    static func nestingLevel(_ indent: Int, open: inout [Int]) -> Int {
+        guard let innermost = open.last else {
+            open = [indent]
+            return 0
+        }
+        if indent > innermost {
+            open.append(indent)
+            return open.count - 1
+        }
+        while open.count > 1, indent < open[open.count - 1] { open.removeLast() }
+        if indent > open[open.count - 1] { open.append(indent) }
+        return open.count - 1
+    }
+
+    private struct ListLine {
+        let ordered: Bool
+        /// `N.` for a numbered item; unused for a bullet.
+        let marker: String
+        let content: String
+    }
+
+    private static func listLine(_ trimmed: String) -> ListLine? {
+        if let content = bulletContent(trimmed) {
+            return ListLine(ordered: false, marker: "", content: dropLeadingBlanks(content))
+        }
+        if let (marker, content) = orderedContent(trimmed) {
+            return ListLine(ordered: true, marker: marker, content: dropLeadingBlanks(content))
+        }
         return nil
+    }
+
+    private static func dropLeadingBlanks(_ s: String) -> String {
+        guard let first = s.first, first == " " || first == "\t" else { return s }
+        return String(s.drop(while: { $0 == " " || $0 == "\t" }))
+    }
+
+    /// A GFM task item's `[ ]` / `[x]` / `[X]` and the whitespace after it.
+    static func taskMarker(_ content: String) -> (checked: Bool, rest: String)? {
+        let head = Array(content.unicodeScalars.prefix(4))
+        guard head.count == 4, head[0] == "[", head[2] == "]",
+              head[1] == " " || head[1] == "x" || head[1] == "X",
+              head[3] == " " || head[3] == "\t" else { return nil }
+        let rest = String(content.unicodeScalars.dropFirst(4))
+        return (head[1] != " ", dropLeadingBlanks(rest))
     }
 
     private static func heading(_ trimmed: String) -> (Int, String)? {
