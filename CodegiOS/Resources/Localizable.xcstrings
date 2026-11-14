@@ -9811,6 +9811,292 @@
           }
         }
       }
+    },
+    "This project is already trusted" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此项目已被信任"
+          }
+        }
+      }
+    },
+    "This project ships pi resources" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此项目自带 pi 资源"
+          }
+        }
+      }
+    },
+    "A parent folder was trusted, so pi will load this repo's own configuration and run any extensions it ships. pi won't start until you answer." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上级文件夹被信任过，因此 pi 会加载本仓库自己的配置并运行它携带的扩展。在你作答之前 pi 不会启动。"
+          }
+        }
+      }
+    },
+    "pi will load this repo's own configuration and run any extensions it ships. pi won't start until you answer." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pi 会加载本仓库自己的配置并运行它携带的扩展。在你作答之前 pi 不会启动。"
+          }
+        }
+      }
+    },
+    "pi is skipping them. Trusting this project runs the code it ships at every pi startup." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pi 正在跳过它们。信任此项目后，它携带的代码会在每次 pi 启动时运行。"
+          }
+        }
+      }
+    },
+    "pi is skipping them until you trust this project." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在你信任此项目之前，pi 会跳过它们。"
+          }
+        }
+      }
+    },
+    "Project trust" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "项目信任"
+          }
+        }
+      }
+    },
+    "Decided at" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "决定于"
+          }
+        }
+      }
+    },
+    "Trust file" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "信任文件"
+          }
+        }
+      }
+    },
+    "What pi would load" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pi 将会加载的内容"
+          }
+        }
+      }
+    },
+    "Anything marked “runs code” executes at every pi startup, with your permissions, before you send anything." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "标记为「会执行代码」的内容会在每次 pi 启动时以你的权限运行，早于你发送任何消息。"
+          }
+        }
+      }
+    },
+    "runs code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会执行代码"
+          }
+        }
+      }
+    },
+    "Keep trusting this project" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继续信任此项目"
+          }
+        }
+      }
+    },
+    "Revoke trust" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销信任"
+          }
+        }
+      }
+    },
+    "Trust this project" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "信任此项目"
+          }
+        }
+      }
+    },
+    "Not this project" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不信任此项目"
+          }
+        }
+      }
+    },
+    "No projects are trusted. pi skips a project’s own configuration, skills, and extensions until you trust it from that session." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚无被信任的项目。在你从该会话中信任它之前，pi 会跳过项目自己的配置、技能和扩展。"
+          }
+        }
+      }
+    },
+    "A trusted folder covers everything under it, so a repo cloned into one is trusted before you ever open it. Revoking removes the entry from pi’s trust.json; pi picks it up the next time it starts." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "被信任的文件夹覆盖其下的一切，因此克隆进去的仓库在你打开之前就已被信任。撤销会从 pi 的 trust.json 中移除该条目；pi 会在下次启动时生效。"
+          }
+        }
+      }
+    },
+    "Trusted" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已信任"
+          }
+        }
+      }
+    },
+    "Revoke" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销"
+          }
+        }
+      }
+    },
+    "Failed to revoke project trust" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销项目信任失败"
+          }
+        }
+      }
+    },
+    "Stop trusting this project" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止信任此项目"
+          }
+        }
+      }
+    },
+    "Decision saved." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择已保存。"
+          }
+        }
+      }
+    },
+    "Saved. pi reads this when it starts, so any pi already running for this session keeps the previous setting until it next starts." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已保存。pi 在启动时读取该设置，因此本会话中已在运行的 pi 会保持先前的设置，直到它下次启动。"
+          }
+        }
+      }
+    },
+    "pi reads trust once, when it starts. Your answer applies to this folder and everything under it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pi 只在启动时读取一次信任设置。你的选择对该文件夹及其下所有内容生效。"
+          }
+        }
+      }
+    },
+    "pi reads trust once, when it starts. Your answer applies to this folder and everything under it — the parent folder's own setting is left alone." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pi 只在启动时读取一次信任设置。你的选择对该文件夹及其下所有内容生效——上级文件夹自身的设置保持不变。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

@@ -24,6 +24,8 @@ struct SessionDetailView: View {
     @State private var renameText = ""
     @State private var showDetails = false
     @State private var showDeleteConfirm = false
+    /// What the project-trust sheet is showing, captured when it opens.
+    @State private var piTrustSheet: PiTrustSheetInput?
 
     init(server: ServerProfile, client: CodegClient, conversationID: Int,
          onOpenSession: ((NewSessionRequest) -> Void)? = nil) {
@@ -129,6 +131,29 @@ struct SessionDetailView: View {
                 SessionDetailsSheet(summary: summary, stats: model.sessionStats, folder: model.folder)
             }
         }
+        // Presented from a SNAPSHOT taken when it opens, not from the live
+        // `piTrustNotice`: answering clears that notice, and a sheet whose body
+        // is `if let notice` would then render empty — leaving the user staring
+        // at a blank sheet exactly when it has something to tell them (that the
+        // answer needs pi restarted). The snapshot keeps the project and its
+        // resource list on screen until the sheet is dismissed.
+        .sheet(item: $piTrustSheet) { input in
+            PiTrustSheet(
+                notice: input.notice,
+                state: input.state,
+                answered: model.piTrustNotice == nil,
+                disabled: model.piTrustActionsDisabled,
+                busy: model.piTrustApplying,
+                onDecide: { trusted in
+                    Task { await answerPiTrust { await model.decidePiTrust(trusted) } }
+                },
+                onKeep: {
+                    Task { await answerPiTrust { await model.keepPiTrustGrant() } }
+                },
+                errorMessage: model.piTrustError,
+                savedNotApplied: model.piTrustSavedNotApplied
+            )
+        }
         // A sub-agent's session is fetched by a tool card deep inside the
         // transcript, which has no business holding a client — publish the
         // capability instead, the same way the transcript publishes scrolling.
@@ -167,6 +192,20 @@ struct SessionDetailView: View {
             new != nil ? .warning : nil
         }
         .sensoryFeedback(.selection, trigger: model.userToggleTick)
+    }
+
+    /// Run a project-trust answer and decide whether the sheet has done its job.
+    ///
+    /// It closes only when the model says there is nothing left to ask AND the
+    /// answer needs no restart. Closing on the first alone would hide the caveat
+    /// that comes with every other answer — pi reads trust at startup, so one
+    /// already running keeps the previous setting — and the sheet is where that
+    /// is said.
+    private func answerPiTrust(_ answer: () async -> Void) async {
+        await answer()
+        if model.piTrustNotice == nil, !model.piTrustSavedNotApplied {
+            piTrustSheet = nil
+        }
     }
 
     private var content: some View {
@@ -265,6 +304,21 @@ struct SessionDetailView: View {
                         await model.answerPlanApproval(decision: decision, feedback: feedback)
                     }
                     .id(approval.approvalId)
+                    .transition(.opacity)
+                    .zIndex(2)
+                }
+                // Below the prompt cards: pi's trust question is about the next
+                // launch, not a turn that is blocked right now, so it must never
+                // push a live request the agent is waiting on off screen.
+                if let trust = model.piTrustNotice, let state = model.piTrustState {
+                    PiTrustNoticeView(
+                        notice: trust,
+                        state: state,
+                        disabled: model.piTrustActionsDisabled,
+                        busy: model.piTrustApplying,
+                        onReview: { piTrustSheet = PiTrustSheetInput(notice: trust, state: state) },
+                        onDismiss: { model.dismissPiTrustNotice() }
+                    )
                     .transition(.opacity)
                     .zIndex(2)
                 }

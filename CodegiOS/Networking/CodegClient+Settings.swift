@@ -228,6 +228,37 @@ extension CodegClient {
         _ = try await send("acp_uninstall_pi_binary", body: TaskIdBody(taskId: taskId), session: Self.installSession)
     }
 
+    // MARK: pi project trust
+
+    /// Read whether pi may load this workspace's own `.pi/*`, and whether anyone
+    /// here has confirmed it. Read-only probe: a failure means "don't prompt",
+    /// never an error worth showing.
+    func piProjectTrustState(workspace: String) async throws -> PiProjectTrustState {
+        try await postJSON("acp_pi_project_trust_state", PiWorkspaceBody(workspace: workspace))
+    }
+
+    /// Record a verdict for a workspace. `true` grants, `false` declines, `nil`
+    /// revokes an existing grant. The backend keeps codeg's acknowledgement in
+    /// step: a grant counts as answered, while a decline or revoke clears the
+    /// record so a later grant is disclosed again instead of riding on a stale
+    /// "seen".
+    func setPiProjectTrust(workspace: String, trusted: Bool?) async throws {
+        _ = try await send("acp_pi_set_project_trust",
+                           body: PiSetProjectTrustBody(workspace: workspace, trusted: trusted))
+    }
+
+    /// Keep a grant that is already in force. pi's own `trust.json` is untouched
+    /// — this only records that the user has now answered for it, which is what
+    /// releases the launch gate.
+    func acknowledgePiProjectTrust(workspace: String) async throws {
+        _ = try await send("acp_pi_acknowledge_project_trust", body: PiWorkspaceBody(workspace: workspace))
+    }
+
+    /// Every decision in pi's `trust.json`, for review and revocation.
+    func listPiTrustEntries() async throws -> [PiTrustEntry] {
+        try await postJSON("acp_pi_list_trust_entries", EmptyBody())
+    }
+
     // MARK: Custom (user-registered) ACP agent definitions
 
     /// Fields of a listed definition that are DERIVED server-side rather than

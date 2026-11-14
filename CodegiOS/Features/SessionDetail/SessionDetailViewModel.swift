@@ -152,6 +152,34 @@ final class SessionDetailViewModel {
     /// updated optimistically on checkout / new-branch.
     private(set) var currentBranch: String?
 
+    // MARK: - pi project trust
+
+    /// Last project-trust probe, PAIRED with the directory it was made for.
+    ///
+    /// The pair is the point: the backend answers about a canonical path that can
+    /// differ from the one asked about, and the draft's folder is editable, so a
+    /// slow reply must never be read as describing whatever folder is selected
+    /// when it lands — that would show one project's files while writing the
+    /// decision to another.
+    private(set) var piTrust: (requestedFor: String, state: PiProjectTrustState)?
+    /// Bumped whenever the probe's inputs change, retiring anything in flight.
+    private var piTrustGeneration = 0
+    /// Dismissed with the X — for this screen only, and NEVER a decision. An
+    /// undecided project stays undecided (the safe state) and a disclosed grant
+    /// returns next time, because dismissing is not acknowledging.
+    private(set) var piTrustDismissed = false
+    private(set) var piTrustApplying = false
+    /// Set when an answer NEEDS pi restarted before it takes effect — which is
+    /// knowable from the answer itself — as opposed to whether it already has
+    /// been, which is not: nothing this client can observe distinguishes a
+    /// running pi from none, and it has no safe way to end one (see
+    /// ``answerPiTrust(_:restart:)``). The message it drives is phrased
+    /// conditionally for exactly that reason.
+    private(set) var piTrustSavedNotApplied = false
+    /// Surfaced only for a WRITE that failed — the read-only probe stays silent.
+    var piTrustError: String?
+    private var piTrustTask: Task<Void, Never>?
+
     // MARK: - Draft new-session selection
 
     /// The draft's chosen agent (new session only; nil for existing). The
@@ -722,6 +750,9 @@ final class SessionDetailViewModel {
                 currentBranch = detail.summary.gitBranch ?? folder?.gitBranch
                 insertModel.agentType = detail.summary.agentType
                 phase = .loaded
+                // The agent and folder are only known now, and they are what
+                // decides whether pi has anything to ask about.
+                refreshPiTrust()
                 // Initial load lands at the latest message — but not when this
                 // load was superseded; the transcript belongs to something else.
                 if !stale { requestStickToBottom() }
@@ -772,6 +803,145 @@ final class SessionDetailViewModel {
         }
     }
 
+    // MARK: - pi project trust
+
+    /// What this workspace needs answered before pi can load what it ships, if
+    /// anything.
+    enum PiTrustNotice: Equatable {
+        /// Nothing covers this folder, so pi is skipping the repo's `.pi/*`.
+        case undecided
+        /// A grant is in force that nobody here confirmed — written for this
+        /// folder by an older codeg, or inherited from an ancestor it seeded
+        /// (which covers repos cloned into that ancestor long afterwards). pi
+        /// runs `.pi/extensions` at startup, so a warning after connecting would
+        /// come too late: the backend REFUSES to launch pi while this stands,
+        /// and answering is what releases it.
+        case undisclosedGrant
+    }
+
+    /// The notice to show above the composer, or nil when there is nothing to
+    /// decide. Deliberately does not require a live connection — the gate's whole
+    /// job is to stop one from existing until this is answered.
+    var piTrustNotice: PiTrustNotice? {
+        guard !piTrustDismissed, agentTypeForUI == .pi,
+              let probe = piTrust, probe.requestedFor == folder?.path,
+              !probe.state.resources.isEmpty else { return nil }
+        if probe.state.decision == nil { return .undecided }
+        if probe.state.decision == true, !probe.state.acknowledged { return .undisclosedGrant }
+        return nil
+    }
+
+    /// The probed state behind ``piTrustNotice`` (resource list, deciding folder,
+    /// trust file) for the detail sheet.
+    var piTrustState: PiProjectTrustState? { piTrustNotice == nil ? nil : piTrust?.state }
+
+    /// True while a turn is running: pi cannot be restarted underneath it, so
+    /// every answer is disabled rather than half-applied.
+    var piTrustActionsDisabled: Bool { piTrustApplying || isInFlight }
+
+    /// The probe's inputs changed (screen opened, or the draft's agent/folder
+    /// edited). Retires anything in flight, forgets the old answer, and un-dismisses
+    /// — a notice dismissed for one project says nothing about the next.
+    func refreshPiTrust() {
+        piTrustGeneration &+= 1
+        piTrust = nil
+        piTrustDismissed = false
+        startPiTrustProbe()
+    }
+
+    /// Re-read the state WITHOUT disturbing the dismissal — used after an answer,
+    /// where the point is to see the decision take.
+    private func startPiTrustProbe() {
+        piTrustTask?.cancel()
+        guard agentTypeForUI == .pi, let dir = folder?.path, !dir.isEmpty else { return }
+        let issuedAt = piTrustGeneration
+        let lifetime = lifecycle
+        piTrustTask = Task { [weak self] in
+            // Read-only probe: a failure simply means "don't prompt". Never
+            // surface it — it would fire on every reconnect for a transient error.
+            guard let state = try? await self?.client.piProjectTrustState(workspace: dir) else { return }
+            // The generation is belt-and-braces: the `cancel()` above already
+            // makes a superseded probe throw out of the call, and `piTrustNotice`
+            // re-checks the folder at render time. It is kept because
+            // cancellation is best-effort and what a stale reply would produce
+            // here is one project's files shown against another's decision.
+            guard let self, lifetime == self.lifecycle, issuedAt == self.piTrustGeneration else { return }
+            self.piTrust = (requestedFor: dir, state: state)
+        }
+    }
+
+    func dismissPiTrustNotice() { piTrustDismissed = true }
+
+    /// Record a verdict. `true` grants, `false` declines, `nil` revokes a grant.
+    /// Returns whether the answer is in effect already — true only when it needs
+    /// no restart at all, never a claim about a process.
+    @discardableResult
+    func decidePiTrust(_ trusted: Bool?) async -> Bool {
+        // Whether a restart is REQUIRED turns on what pi would load, not on the
+        // verdict's value.
+        // Exactly one answer changes nothing: declining a project pi was already
+        // skipping, because with nothing decided it never loaded the resources
+        // and there is no process state to correct. Declining a grant that is IN
+        // FORCE is the opposite case — a pi running under it has the repo's
+        // extensions loaded, and only a restart drops them. Captured before the
+        // write, while the notice still describes what was answered.
+        let wasAlreadySkipping = piTrustNotice == .undecided
+        return await answerPiTrust { [weak self] workspace in
+            // Always the CANONICAL workspace the probe reported, never the path
+            // asked about: pi keys `trust.json` by realpath, so writing the
+            // requested one would record a decision pi never reads.
+            try await self?.client.setPiProjectTrust(workspace: workspace, trusted: trusted)
+        } restart: { !(trusted == false && wasAlreadySkipping) }
+    }
+
+    /// Keep a grant that is already in force. pi's own `trust.json` is untouched;
+    /// this records only that the user has answered, which is what releases the
+    /// launch gate — so it has to get pi running too.
+    @discardableResult
+    func keepPiTrustGrant() async -> Bool {
+        await answerPiTrust { [weak self] workspace in
+            try await self?.client.acknowledgePiProjectTrust(workspace: workspace)
+        } restart: { true }
+    }
+
+    /// Write an answer and report whether it is in effect immediately.
+    ///
+    /// Deliberately touches no connection. pi reads trust once at startup, so an
+    /// answer reaches a process only when that process next starts; there is no
+    /// safe way for this client to force that (see `piTrustSavedNotApplied`), and
+    /// dropping the cached id would not help — a bound conversation rediscovers
+    /// the same process, and a draft's connection is unbound, so dropping it
+    /// strands a running agent nothing can find again.
+    private func answerPiTrust(
+        _ write: @escaping (String) async throws -> Void,
+        restart: () -> Bool
+    ) async -> Bool {
+        guard let workspace = piTrust?.state.workspace, !piTrustActionsDisabled else { return false }
+        piTrustApplying = true
+        piTrustError = nil
+        piTrustSavedNotApplied = false
+        defer { piTrustApplying = false }
+        do { try await write(workspace) } catch {
+            piTrustError = Self.describe(error)
+            return false
+        }
+        // Whether pi has to be restarted for this answer to take effect — NOT
+        // whether it already has. Nothing observable from here can establish the
+        // latter: `connectionID == nil` is not proof that no process exists (a
+        // reattach clears it the moment it finds an idle one, and a lookup that
+        // errors is indistinguishable from a miss), and there is no atomic
+        // "restart if running" to ask for. So this reports the requirement, which
+        // is knowable, instead of an outcome, which is not.
+        let needsRestart = restart()
+        piTrustSavedNotApplied = needsRestart
+        // AWAITED, not fire-and-forget: the caller decides what to show from
+        // `piTrustNotice`, and an un-awaited probe would leave it reading the
+        // state from before the answer.
+        startPiTrustProbe()
+        await piTrustTask?.value
+        return !needsRestart
+    }
+
     /// Populate the draft's folder/agent lists and pick sensible defaults
     /// (preselected folder → most-recent folder; its default agent → first
     /// installed). Failures leave the full `AgentType` fallback in place.
@@ -811,6 +981,7 @@ final class SessionDetailViewModel {
             }
         }
         if let agent = selectedAgent { insertModel.agentType = agent }
+        refreshPiTrust()
     }
 
     // MARK: - Draft selection (new session only)
@@ -822,6 +993,7 @@ final class SessionDetailViewModel {
         selectedAgent = agent
         insertModel.agentType = agent
         resetDraftConnection()
+        refreshPiTrust()
     }
 
     /// Change the draft's folder before the first send. The folder is the agent's
@@ -831,6 +1003,7 @@ final class SessionDetailViewModel {
         folder = newFolder
         currentBranch = newFolder.gitBranch
         resetDraftConnection()
+        refreshPiTrust()
     }
 
     /// Drop a connection the options sheet resolved before any send, so the next
@@ -2650,6 +2823,8 @@ final class SessionDetailViewModel {
         loadTask = nil
         olderTurnsTask?.cancel()
         olderTurnsTask = nil
+        piTrustTask?.cancel()
+        piTrustTask = nil
         sendTask?.cancel()
         sendTask = nil
         consumerTask?.cancel()

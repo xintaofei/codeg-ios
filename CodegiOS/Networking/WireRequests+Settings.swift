@@ -287,6 +287,27 @@ struct ValidatePiCommandBody: Encodable, Sendable {
     let command: String
 }
 
+/// `acp_pi_project_trust_state` / `acp_pi_acknowledge_project_trust`.
+struct PiWorkspaceBody: Encodable, Sendable {
+    let workspace: String
+}
+
+/// `acp_pi_set_project_trust`. `trusted` is three-valued: `true` grants,
+/// `false` declines, and an explicit `null` REVOKES codeg's entry for this exact
+/// folder rather than recording a verdict — so it is encoded even when nil,
+/// never omitted.
+struct PiSetProjectTrustBody: Encodable, Sendable {
+    let workspace: String
+    let trusted: Bool?
+
+    enum CodingKeys: String, CodingKey { case workspace, trusted }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(workspace, forKey: .workspace)
+        try c.encode(trusted, forKey: .trusted)
+    }
+}
+
 /// `acp_download_agent_binary` / shared install shape. `version` is sent as
 /// explicit `null` for "latest" (web parity).
 struct AgentInstallBody: Encodable, Sendable {

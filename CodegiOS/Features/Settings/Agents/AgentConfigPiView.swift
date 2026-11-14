@@ -36,9 +36,9 @@ struct PiConfigSection: View {
     @State private var savingCreds = false
     @State private var loadingCreds = true
 
-    // Workspace trust
-    @State private var trustWorkspace: Bool
-    @State private var savingTrust = false
+    // Project trust (pi's own ~/.pi/agent/trust.json), listed for review
+    @State private var trustEntries: [PiTrustEntry]?
+    @State private var revoking: String?
 
     @State private var banner: Banner?
 
@@ -55,7 +55,6 @@ struct PiConfigSection: View {
         _command = State(initialValue: cmd)
         _configDir = State(initialValue: env[PiEnvKeys.configDir] ?? "")
         _sessionDir = State(initialValue: env[PiEnvKeys.sessionDir] ?? "")
-        _trustWorkspace = State(initialValue: (env[PiEnvKeys.trustWorkspace] ?? "1") != "0")
     }
 
     // MARK: Derived
@@ -270,20 +269,59 @@ struct PiConfigSection: View {
 
     // MARK: Trust card
 
+    /// Review + revoke the per-project decisions in pi's own `trust.json`.
+    ///
+    /// Replaces the old "auto-trust opened workspaces" switch, which is gone
+    /// along with the behaviour: codeg marked every folder it opened as trusted,
+    /// and a trusted folder is one whose `.pi/extensions` pi executes at startup.
+    /// Grants are now made per project, in the session, and this is where the
+    /// standing ones — including anything that switch wrote — can be taken back.
     private var trustCard: some View {
-        EditorSection(title: "Auto-trust opened workspaces") {
-            Toggle(isOn: Binding(get: { trustWorkspace }, set: { toggleTrust($0) })) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Auto-trust opened workspaces").font(.subheadline).foregroundStyle(Theme.textPrimary)
-                    Text("When codeg connects pi to a folder, mark that folder trusted so pi loads the project’s local config and skills without a separate prompt.")
-                        .font(.caption).foregroundStyle(Theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+        EditorSection(title: "Project trust") {
+            if let entries = trustEntries {
+                if entries.isEmpty {
+                    caption("No projects are trusted. pi skips a project’s own configuration, skills, and extensions until you trust it from that session.")
+                } else {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        if index > 0 { InsetDivider(leading: 16) }
+                        trustRow(entry)
+                    }
+                    caption("A trusted folder covers everything under it, so a repo cloned into one is trusted before you ever open it. Revoking removes the entry from pi’s trust.json; pi picks it up the next time it starts.")
                 }
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading…").font(.caption).foregroundStyle(Theme.textTertiary)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 13)
             }
-            .tint(Theme.accent)
-            .disabled(savingTrust)
-            .padding(.horizontal, 16).padding(.vertical, 13)
-            caption("Only folders you open here are trusted, never your whole machine — and this affects config loading only, not what pi is allowed to run.")
         }
+        .task { await loadTrustEntries() }
+    }
+
+    private func trustRow(_ entry: PiTrustEntry) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.path)
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2).truncationMode(.middle)
+                Text(entry.trusted ? "Trusted" : "Declined")
+                    .font(.caption2)
+                    .foregroundStyle(entry.trusted ? Theme.warning : Theme.textTertiary)
+            }
+            Spacer(minLength: 0)
+            if revoking == entry.path {
+                ProgressView().controlSize(.small)
+            } else {
+                Button("Revoke") { revokeTrust(entry.path) }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.danger)
+                    .disabled(revoking != nil)
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 11)
     }
 
     // MARK: Banner + shared rows
@@ -475,21 +513,24 @@ struct PiConfigSection: View {
         }
     }
 
-    /// Self-persisting toggle: default on ⇒ omit the key when enabling (absence =
-    /// default), write "0" when disabling. Reverts on failure.
-    private func toggleTrust(_ next: Bool) {
-        trustWorkspace = next
-        var env = agent.env ?? [:]
-        if next { env.removeValue(forKey: PiEnvKeys.trustWorkspace) } else { env[PiEnvKeys.trustWorkspace] = "0" }
-        savingTrust = true
+    /// Read-only listing: a failure shows as "no projects trusted" rather than an
+    /// error, matching the web — there is nothing the user can do about it here.
+    private func loadTrustEntries() async {
+        trustEntries = (try? await client?.listPiTrustEntries()) ?? []
+    }
+
+    /// `nil` is the revoke verdict: it removes codeg's entry for this exact
+    /// folder rather than recording a decision.
+    private func revokeTrust(_ path: String) {
+        revoking = path
         Task {
             do {
-                try await model.update(agent, enabled: agent.enabled, env: env, modelProviderId: agent.modelProviderId)
+                try await client?.setPiProjectTrust(workspace: path, trusted: nil)
+                await loadTrustEntries()
             } catch {
-                trustWorkspace = !next
-                banner = Banner(text: "Failed to save workspace trust", isError: true)
+                banner = Banner(text: "Failed to revoke project trust", isError: true)
             }
-            savingTrust = false
+            revoking = nil
         }
     }
 }
