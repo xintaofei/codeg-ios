@@ -54,7 +54,8 @@ struct MarkdownListItem {
 ///
 /// Images render as blocks of their own (`MarkdownImageBlock`), loaded through
 /// the transcript's `MarkdownImageLoader` when there is one in the environment;
-/// GFM task items draw a checkbox in place of their bullet.
+/// GFM task items draw a checkbox in place of their bullet. Fences that claim a
+/// renderer of their own (Mermaid, json-render) are routed by `MarkdownFence`.
 struct MarkdownContent: View {
     let raw: String
     /// While a reply is streaming, parse directly (skip the block LRU): the text
@@ -85,7 +86,8 @@ struct MarkdownContent: View {
             ForEach(Array(parsed.enumerated()), id: \.offset) { idx, block in
                 // Streaming "typing" caret rides the trailing paragraph only —
                 // a code/list/table tail is self-evidently in progress already.
-                view(for: block, caret: streaming && idx == lastIndex && Self.isParagraph(block))
+                view(for: block, caret: streaming && idx == lastIndex && Self.isParagraph(block),
+                     isLast: idx == lastIndex)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -97,7 +99,7 @@ struct MarkdownContent: View {
     }
 
     @ViewBuilder
-    private func view(for block: MarkdownBlock, caret: Bool = false) -> some View {
+    private func view(for block: MarkdownBlock, caret: Bool = false, isLast: Bool = false) -> some View {
         switch block {
         case .paragraph(let a):
             if caret {
@@ -148,12 +150,18 @@ struct MarkdownContent: View {
                 }
             }
 
-        case .code(let lang, let code, _):
-            // `closed` is not read yet: a folded spec card is fine while the
-            // fence is still arriving, and plain code always is.
-            if assistantReply, MarkdownSpec.isSpecFence(language: lang, code: code) {
+        case .code(let lang, let code, let closed):
+            // A folded spec card is fine while the fence is still arriving, and
+            // plain code always is; a diagram waits for its final source.
+            let settled = MarkdownFence.isSettled(closed: closed, streaming: streaming, isLastBlock: isLast,
+                                                  sourceEndsWithNewline: raw.hasSuffix("\n"))
+            switch MarkdownFence.kind(language: lang, code: code, closed: closed, settled: settled,
+                                      assistantReply: assistantReply) {
+            case .mermaid(let ready):
+                MermaidBlock(source: code, ready: ready)
+            case .spec:
                 SpecFenceCard(source: code)
-            } else {
+            case .code:
                 CodeBlockView(code: code, language: lang)
             }
 

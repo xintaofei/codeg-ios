@@ -40,6 +40,14 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: CodegiOS
+        excludes:
+          - "Resources/Mermaid/**"
+      # The vendored Mermaid bundle (mermaid.min.js, ~3.6 MB, offline) that the
+      # diagram renderer loads into its off-screen WebKit page. Listed on its
+      # own so the .js is pinned to Copy Bundle Resources — it must never be
+      # treated as a source to compile. Files land at the bundle root.
+      - path: CodegiOS/Resources/Mermaid
+        buildPhase: resources
     dependencies:
       - package: SwiftTerm
     settings:

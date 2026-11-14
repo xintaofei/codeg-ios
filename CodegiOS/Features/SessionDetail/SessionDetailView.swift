@@ -169,6 +169,9 @@ struct SessionDetailView: View {
         // Images in the transcript's Markdown: read through this server, with
         // relative paths resolved against the conversation's own folder.
         .markdownImages(client: client, root: model.folder?.path)
+        // Mermaid diagrams (and HTML previews) open full screen from here, so
+        // a recycled or settling row doesn't take an open viewer with it.
+        .richBlockViewers()
         // "Fork from here" for the replies' footers, and its confirmation.
         .modifier(ReplyForkChrome(model: model))
         // `onAppear`/`onDisappear` are the lifetime pair: both run synchronously
