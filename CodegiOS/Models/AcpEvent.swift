@@ -89,6 +89,22 @@ enum AcpEvent: Hashable, Sendable, Decodable {
     case planApprovalResolved(approvalId: String)
     /// The agent's live plan / TODO list (display only; does not block the turn).
     case planUpdate(entries: [PlanEntry])
+    /// A retry the agent makes on its own, keeping the turn alive: codex's
+    /// `_meta.codex.error` (cause only) or pi's auto-retry (counters only).
+    case turnRetrying(TurnRetryState)
+    /// A raw Claude SDK message. Only `system/api_retry` means anything here:
+    /// it is the retry line's richest source, and any other one clears it (web
+    /// `parseClaudeApiRetryEvent`).
+    case claudeApiRetry(TurnRetryState?)
+    /// A JetBrains AIR typed failure upsert (see ``SessionFailures``).
+    case sessionFailure(SessionFailureRecord)
+    /// An ACP Session Notice — advisory text, told once.
+    case sessionNotice(SessionNoticeInfo)
+    /// Plugins Claude Code could not load.
+    case pluginLoadFailures([PluginLoadFailure])
+    /// `session/load` failed in a way codeg will not paper over; a
+    /// `status_changed: error` follows.
+    case sessionLoadFailed(sessionId: String, message: String, code: String)
     case unknown(type: String)
 
     private enum CodingKeys: String, CodingKey {
@@ -98,6 +114,7 @@ enum AcpEvent: Hashable, Sendable, Decodable {
         case used, size, messageId, blocks, message, code, details, textPreview
         case requestId, toolCall, options, questionId, questions, entries
         case approvalId, planMarkdown
+        case attempt, maxRetries, retryDelayMs, errorStatus, record, notice, failures
     }
 
     init(from decoder: Decoder) throws {
@@ -202,6 +219,38 @@ enum AcpEvent: Hashable, Sendable, Decodable {
             self = .planApprovalResolved(approvalId: try c.decodeIfPresent(String.self, forKey: .approvalId) ?? "")
         case "plan_update":
             self = .planUpdate(entries: try c.decodeIfPresent([PlanEntry].self, forKey: .entries) ?? [])
+        case "turn_retrying":
+            let message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
+            self = .turnRetrying(TurnRetryState(
+                attempt: try? c.decodeIfPresent(Int.self, forKey: .attempt),
+                maxRetries: try? c.decodeIfPresent(Int.self, forKey: .maxRetries),
+                // pi sends no text at all — no blank error slot for it.
+                error: message.isEmpty ? nil : message,
+                errorStatus: try? c.decodeIfPresent(Int.self, forKey: .errorStatus),
+                retryDelayMs: try? c.decodeIfPresent(Double.self, forKey: .retryDelayMs),
+                reportsError: !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+        case "claude_sdk_message":
+            self = .claudeApiRetry(TurnRetryState.fromClaudeSdkMessage(
+                (try? c.decodeIfPresent(AnyJSON.self, forKey: .message)) ?? nil))
+        case "session_failure":
+            guard let record = try? c.decodeIfPresent(SessionFailureRecord.self, forKey: .record) else {
+                self = .unknown(type: type)
+                return
+            }
+            self = .sessionFailure(record)
+        case "session_notice":
+            guard let notice = try? c.decodeIfPresent(SessionNoticeInfo.self, forKey: .notice) else {
+                self = .unknown(type: type)
+                return
+            }
+            self = .sessionNotice(notice)
+        case "plugin_load_failures":
+            self = .pluginLoadFailures((try? c.decodeIfPresent([PluginLoadFailure].self, forKey: .failures)) ?? [])
+        case "session_load_failed":
+            self = .sessionLoadFailed(
+                sessionId: try c.decodeIfPresent(String.self, forKey: .sessionId) ?? "",
+                message: try c.decodeIfPresent(String.self, forKey: .message) ?? "",
+                code: try c.decodeIfPresent(String.self, forKey: .code) ?? "")
         default:
             self = .unknown(type: type)
         }
@@ -255,11 +304,14 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     /// server-side on the next prompt, so on a still-live connection it always
     /// belongs to the turn being attached to — never a stale one from before.
     let lastError: SessionLastError?
+    /// The AIR failure table, resolved entries included (they are the
+    /// revision watermarks). Merged by the same rule as the live upserts.
+    let sessionFailures: [SessionFailureRecord]
 
     private enum CodingKeys: String, CodingKey {
         case connectionId, conversationId, folderId, status, externalId, eventSeq
         case liveMessage, activeToolCalls, pendingPermission, pendingQuestion, pendingPlanApproval
-        case lastError
+        case lastError, sessionFailures
     }
 
     init(from decoder: Decoder) throws {
@@ -276,6 +328,7 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         pendingQuestion = (try? c.decodeIfPresent(PendingQuestionSnapshot.self, forKey: .pendingQuestion)) ?? nil
         pendingPlanApproval = (try? c.decodeIfPresent(PendingPlanApprovalSnapshot.self, forKey: .pendingPlanApproval)) ?? nil
         lastError = (try? c.decodeIfPresent(SessionLastError.self, forKey: .lastError)) ?? nil
+        sessionFailures = ((try? c.decodeIfPresent([SessionFailureRecord].self, forKey: .sessionFailures)) ?? nil) ?? []
     }
 }
 

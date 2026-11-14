@@ -243,6 +243,29 @@ final class SessionDetailViewModel {
     /// A transient, non-fatal notice (e.g. "a turn is already running").
     var notice: String?
 
+    /// The AIR session-failure table of the attached connection (web
+    /// `sessionFailures`): upserts merged per id, resolution inferred here
+    /// (see ``SessionFailures``). The dock under the transcript draws only
+    /// what is still in progress — an incident the adapter is retrying, and a
+    /// short "recovered" line after it.
+    private(set) var sessionFailures: [SessionFailureRecord] = []
+    /// The connection `sessionFailures` belongs to — their ids (and so the
+    /// revision watermarks) mean nothing on another one.
+    private var sessionFailuresConnection: String?
+    /// The retry the agent is making on its own right now (web
+    /// `claudeApiRetry`), cleared by the next output or the turn's end.
+    private(set) var turnRetry: TurnRetryState?
+
+    /// What the dock under the transcript shows (web `ComposerStatusStrips`).
+    var sessionFailureDock: SessionFailures.DockView {
+        SessionFailures.dock(sessionFailures, turnRunning: isTurnActive, retryLineShown: turnRetry != nil)
+    }
+
+    /// Close a dock strip — every record it stands for.
+    func dismissSessionFailures(_ ids: [String]) {
+        sessionFailures = SessionFailures.dismiss(sessionFailures, ids: ids)
+    }
+
     /// Monotonic token used to scroll-to-bottom; bump it to request a scroll.
     /// The transcript follows this *only while pinned to the bottom* (so streamed
     /// tokens don't yank a user who has scrolled up to read).
@@ -1743,6 +1766,7 @@ final class SessionDetailViewModel {
                 // and (for the initial connect) release the waiting send.
                 streamReconnects = 0
                 if isCurrent, let seq = snap.eventSeq { live.lastSeq = seq }
+                if isCurrent { hydrateSessionFailures(from: snap, connection: conn) }
                 // A reconnect answered with a snapshot rather than a replay —
                 // first attach after a drop with no cursor, or a gap too large
                 // to replay. Either the turn ended while the socket was down, or
@@ -1941,6 +1965,7 @@ final class SessionDetailViewModel {
             case .snapshot(let snap):
                 // A snapshot means the socket is healthy — reset the reconnect budget.
                 streamReconnects = 0
+                hydrateSessionFailures(from: snap, connection: conn)
                 if let rebuilt = buildLiveTurn(from: snap) {
                     live = rebuilt
                     liveTurn = rebuilt
@@ -2161,6 +2186,7 @@ final class SessionDetailViewModel {
         default:
             break
         }
+        trackFailureLifecycle(event)
         switch event {
         case .contentDelta(let text, let parent):
             live.appendText(text, parentToolUseId: parent)
@@ -2212,6 +2238,10 @@ final class SessionDetailViewModel {
             break
 
         case .turnComplete(let stopReason):
+            // Warnings settle at a CLEAN end only: any other exit did not
+            // recover, and a failed turn's terminal record already escalated
+            // the same id just before this event.
+            if stopReason == "end_turn" { sessionFailures = SessionFailures.settle(sessionFailures, .warnings) }
             finalize(live: live, stopReason: stopReason)
 
         case .error(let message, let code, let details):
@@ -2268,9 +2298,79 @@ final class SessionDetailViewModel {
             live.updatePlan(entries)
             requestScrollToBottom()
 
+        case .turnRetrying(let retry):
+            turnRetry = retry
+        case .claudeApiRetry(let retry):
+            turnRetry = retry
+
+        case .sessionFailure(let record):
+            let stored = sessionFailures.first { $0.id == record.id }
+            sessionFailures = SessionFailures.merge(sessionFailures, [record])
+            switch SessionFailures.notice(stored: stored, incoming: record) {
+            case .terminal?:
+                // The turn closes on the adapter's own account of it — the
+                // title its transcript keeps too (web `TURN_FAILED`). No notice
+                // as well: the failure line already says it on this screen.
+                markTurnFailed(live, message: record.ownTitle ?? record.categoryLabel,
+                               details: record.details, fromAgent: record.ownTitle != nil)
+            case .advisory?:
+                notice = SessionNotices.present(record)
+            case nil:
+                break
+            }
+
+        case .sessionNotice(let info):
+            if let text = SessionNotices.present(info) { notice = text }
+
+        case .pluginLoadFailures(let failures):
+            if let text = SessionNotices.present(failures) { notice = text }
+
+        case .sessionLoadFailed(let sessionId, let message, let code):
+            // A `status_changed: error` follows and ends the turn — with this
+            // as its reason rather than a generic "connection errored".
+            let agent = summary?.agentType
+            let text = SessionNotices.sessionLoadFailure(
+                code: code, message: message, sessionId: sessionId,
+                agent: agent?.label ?? String(localized: "The agent"), agentIsCodex: agent == .codex)
+            live.lastNonFatalError = (text, nil)
+
         case .sessionStarted, .conversationStatusChanged, .userPromptSent, .unknown:
             break
         }
+    }
+
+    /// The failure table's and retry line's lifecycle, per event (web
+    /// `acp-connections-context`): output proves an in-flight retry incident
+    /// recovered and ends the retry line; a new prompt acknowledges every
+    /// failure; leaving `prompting` or any error ends the retry.
+    private func trackFailureLifecycle(_ event: AcpEvent) {
+        switch event {
+        case .contentDelta, .thinking, .toolCall:
+            if SessionFailures.hasActiveRetryIncident(sessionFailures) {
+                sessionFailures = SessionFailures.settle(sessionFailures, .retryIncidents)
+            }
+            turnRetry = nil
+        case .toolCallUpdate, .planUpdate:
+            turnRetry = nil
+        case .statusChanged(.prompting):
+            turnRetry = nil
+            sessionFailures = SessionFailures.settle(sessionFailures, .all)
+        case .statusChanged, .turnComplete, .error:
+            turnRetry = nil
+        default:
+            break
+        }
+    }
+
+    /// Adopt a snapshot's failure table (merged by the live rule). A different
+    /// connection starts a fresh table — ids are per connection.
+    private func hydrateSessionFailures(from snap: LiveSessionSnapshot, connection conn: String) {
+        if sessionFailuresConnection != conn {
+            sessionFailuresConnection = conn
+            sessionFailures = []
+            turnRetry = nil
+        }
+        sessionFailures = SessionFailures.merge(sessionFailures, snap.sessionFailures)
     }
 
     /// A new task's first prompt creates the server-side conversation; adopt
@@ -2973,6 +3073,8 @@ final class SessionDetailViewModel {
         stream?.detach(subscriptionId: subscriptionID)
         stream?.close()
         stream = nil
+        // Nothing can be retrying on a stream that is gone.
+        turnRetry = nil
     }
 
     /// Tear down all live work — call from `.onDisappear` / deinit paths.

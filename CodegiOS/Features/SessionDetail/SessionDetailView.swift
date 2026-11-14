@@ -323,6 +323,20 @@ struct SessionDetailView: View {
                     .transition(.opacity)
                     .zIndex(2)
                 }
+                // What the session is doing about a failure right now: the
+                // agent's own retry, or an incident it is reconnecting through.
+                let dock = model.sessionFailureDock
+                if model.turnRetry != nil || !dock.isEmpty {
+                    SessionStatusStrips(
+                        retry: model.turnRetry,
+                        dock: dock,
+                        onDismiss: { model.dismissSessionFailures($0) }
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+                    .transition(.opacity)
+                    .zIndex(2)
+                }
                 if !model.isPinnedToBottom {
                     JumpToLatestButton { model.userTappedScrollToBottom() }
                         .padding(.bottom, 10)
