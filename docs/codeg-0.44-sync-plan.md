@@ -131,3 +131,16 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
 - **未移植**：opencode code-mode 委派判定、恢复委派被拒绝的判定、后台任务（`TaskOutput`）分组、goal 运行、proposed-plan、单轮超长时的行窗口化（`List` 已回收）。
 - **验证**：模拟器对 mock 截图（折叠/展开的历史回复、中文、直播中的回复）；Codex 审查三轮（2 个 Important + 1 个遗留全部修复，第三轮 APPROVED），对应集成测试在 `TimelineFoldingTests`。
 
+### 阶段三实际做法与偏差（2026-11-14，进行中）
+
+已提交到 `main`：失败/重试提示条（a698d99）、提问卡折叠（7d0abbd）。其余四项在 `phase3-integration` 分支上各一个提交，**尚未一起编译和跑测试**（磁盘/内存紧张，构建暂停），验证通过后再快进 `main`。
+
+- **失败/重试提示条**：`Models/SessionFailures.swift` 照搬 web `session-failures.ts`（按 id 单调合并、同 revision 只能 resolved false→true、三种 settle 范围、dismissed≠recovered）。composer 上方只画「进行中」的事：重试行（Claude `system/api_retry` 与 `turn_retrying` 共用，任何输出/离开 prompting/关流即清）、一条 AIR 事件条 +N、自愈后 10 秒自动消失的「已恢复」。终态记录走 TURN_FAILED，提示类走 notice。
+- **权限卡**：reason 取 `_meta.permission.description`；标题先 `_meta.claudeCode.title` 后 `_meta.permission.title`，标题等于命令时换回模型自己的 `rawInput.description`；`defaultToNo: true`（严格的布尔 true）把实心按钮让给拒绝；Claude 沙箱网络请求按 host 呈现——请求本身不带工具名，靠 live 调用合并（web `mergePermissionToolCallWithLiveInfo`，含调用晚于请求到达的情况、被剥掉的 Edit 文本回填）。
+- **选项按钮**：按钮显示模型/强度/模式摘要；只读 live snapshot 或已有目录，**从不为摘要起 probe agent**。超过阈值的列表推到可搜索子页，模型按 `provider/` 分组，标出 `recommended_value`。
+- **`<proposed_plan>`**：`Activity/ProposedPlan.swift` 逐条照搬 web 规则（行首、≤3 列缩进、不在围栏/行内代码中；未闭合时流式中为「规划中…」卡）。直播文本在自身叶子视图里拆，不让整条时间线订阅每个 token。
+- **回合中发消息**：
+  - 队列在 VM（`MessageQueue`）：回合中或队列非空时发送进队尾；空闲时逐条发；409 退回（队头回队头、composer 的进队尾）+1 秒退避；其它失败把队列**暂停**（web 是丢弃不重试，iOS 改为保留并要用户「立即发送」，免得排队的消息丢失）。Stop 后先等一个退避再发。turn 死掉（failLive）也暂停。
+  - steering：长按回合中的发送按钮 →「插入当前回合」（native）/「发送留言」（pull），文字为准，有图片时只能排队（iOS 不发 `blocks`）。native 的 `feedback_submitted{delivered}` 在 live 中插入 `.steering` 段，时间线和折叠副本都在此切成「回复 → 用户消息 → 回复」。握手 snapshot 的留言属于上一轮，不采用；`user_message` 清空。
+  - 已知局限：离开会话页面后队列随 VM 丢失（web 关 tab 同样）；对方客户端长时间占用回合时每秒重试一次（web 同样）。
+
