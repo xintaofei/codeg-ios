@@ -45,8 +45,16 @@ struct PermissionRequestCard: View {
             header
 
             if bodyScrolls {
-                ScrollView { bodyContent }
-                    .frame(maxHeight: 300)
+                // Scrolls only when the body does not fit under the cap; a
+                // short one keeps its own height instead of a blank band
+                // around it (a scroll view, like `.frame(maxHeight:)`, takes
+                // all the height it is offered).
+                HeightCap(limit: 300) {
+                    ViewThatFits(in: .vertical) {
+                        bodyContent
+                        ScrollView { bodyContent }
+                    }
+                }
             } else {
                 bodyContent
             }
@@ -354,5 +362,23 @@ struct PermissionRequestCard: View {
             failed = true
             submittingOptionId = nil
         }
+    }
+}
+
+/// Offers its content at most `limit` points of height and takes only what the
+/// content uses — unlike `.frame(maxHeight:)`, which grows to the limit
+/// whenever more is on offer.
+private struct HeightCap: Layout {
+    let limit: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let content = subviews.first else { return .zero }
+        let offered = min(proposal.height ?? limit, limit)
+        let size = content.sizeThatFits(ProposedViewSize(width: proposal.width, height: offered))
+        return CGSize(width: size.width, height: min(size.height, offered))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }
