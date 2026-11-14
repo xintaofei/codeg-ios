@@ -1,109 +1,9 @@
 import SwiftUI
 
-// This file owns the tool-call cards (`ToolCallCard` / `ToolGroupCard`) and their
-// per-tool input/output bodies. The transcript timeline renders these directly as
+// This file owns the tool-call card (`ToolCallCard`) and its per-tool
+// input/output bodies. The transcript timeline renders these directly as
 // node bodies (`NodeBody`); the streaming text/reasoning leaves and the old
 // `RenderPartsView` aggregator moved to `Timeline/TimelineNodeBody.swift`.
-
-// MARK: - Tool group
-
-/// A collapsed summary of a run of consecutive tool calls
-/// ("Read 3 files · Edited 2 files"), expanding to the individual cards.
-struct ToolGroupCard: View {
-    let items: [ToolCallVM]
-    let streaming: Bool
-    @State private var expanded = false
-
-    private var errorCount: Int { items.filter(\.isError).count }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            header
-            if expanded {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(items) { ToolCallCard(vm: $0, nested: true) }
-                }
-            }
-        }
-        .padding(12)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
-        .hairlineBorder(Theme.Radius.md)
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation(Theme.Motion.expand) { expanded.toggle() } }
-    }
-
-    private var header: some View {
-        // The gutter marker carries the stacked-tools icon for this group node;
-        // the card header shows just the summary + state, no duplicate icon.
-        HStack(spacing: 8) {
-            Text(ToolGroupSummary.text(items))
-                .font(Theme.Typography.cardTitle)
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .minimumScaleFactor(0.85)
-            if streaming {
-                LivePulse()
-            } else if errorCount > 0 {
-                Text("\(errorCount) failed")
-                    .font(Theme.Typography.microLabel)
-                    .foregroundStyle(Theme.danger)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Theme.danger.opacity(0.16), in: Capsule())
-            }
-            Spacer(minLength: 4)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(Theme.textTertiary)
-                .rotationEffect(.degrees(expanded ? 90 : 0))
-        }
-    }
-}
-
-/// Builds the "Read 3 files · Edited 2 files" summary for a tool group.
-enum ToolGroupSummary {
-    static func text(_ items: [ToolCallVM]) -> String {
-        var counts: [ToolKindBucket: Int] = [:]
-        for it in items { counts[tally(it.bucket), default: 0] += 1 }
-        let order: [ToolKindBucket] = [.read, .edit, .search, .execute, .web, .todo, .task, .taskMgmt, .other]
-        let phrases = order.compactMap { b -> String? in
-            guard let c = counts[b], c > 0 else { return nil }
-            return phrase(b, c)
-        }
-        return phrases.isEmpty ? "\(items.count) tools" : phrases.joined(separator: " · ")
-    }
-
-    /// Buckets that exist for RENDERING but not for counting. A `wait` continues
-    /// a background shell an earlier `exec_command` started, so it belongs with
-    /// the commands in the tally (as web `classifyToolKind` has it); an
-    /// undecomposable code-mode script is just another tool. Neither deserves a
-    /// phrase of its own in a one-line summary.
-    private static func tally(_ b: ToolKindBucket) -> ToolKindBucket {
-        switch b {
-        case .session: return .execute
-        case .script: return .other
-        default: return b
-        }
-    }
-
-    private static func phrase(_ b: ToolKindBucket, _ c: Int) -> String {
-        let s = c > 1
-        switch b {
-        case .read: return "Read \(c) file\(s ? "s" : "")"
-        case .edit: return "Edited \(c) file\(s ? "s" : "")"
-        case .search: return "\(c) search\(s ? "es" : "")"
-        case .execute: return "Ran \(c) command\(s ? "s" : "")"
-        case .web: return "\(c) web request\(s ? "s" : "")"
-        case .todo: return "Updated todos"
-        case .task: return "\(c) task\(s ? "s" : "")"
-        // Task-management calls never enter a generic group (they form their own
-        // `taskGroup`); this keeps the switch exhaustive.
-        case .taskMgmt: return "\(c) task update\(s ? "s" : "")"
-        // Folded into `.execute` / `.other` by `tally(_:)` before counting.
-        case .session, .script, .other: return "\(c) tool\(s ? "s" : "")"
-        }
-    }
-}
 
 // MARK: - Single tool card
 
@@ -113,7 +13,6 @@ enum ToolGroupSummary {
 /// visible without a tap.
 struct ToolCallCard: View {
     let vm: ToolCallVM
-    var nested: Bool = false
 
     @State private var userExpanded: Bool?
 
@@ -147,7 +46,8 @@ struct ToolCallCard: View {
             if isExpanded, hasBody { bodyContent }
         }
         .padding(12)
-        .modifier(CardSurface(nested: nested))
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .hairlineBorder(Theme.Radius.md)
     }
 
     private var header: some View {
@@ -426,24 +326,6 @@ private struct SubAgentRunRow: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-/// A flat tinted surface for a top-level card; a fainter inset when nested
-/// inside a group. Shadowless by design (no Liquid Glass) so grouped tool
-/// components read as calm boxes rather than floating cards.
-private struct CardSurface: ViewModifier {
-    let nested: Bool
-    func body(content: Content) -> some View {
-        if nested {
-            content
-                .background(Theme.surfaceNested, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
-                .hairlineBorder(Theme.Radius.md, color: Theme.hairline)
-        } else {
-            content
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
-                .hairlineBorder(Theme.Radius.md)
         }
     }
 }

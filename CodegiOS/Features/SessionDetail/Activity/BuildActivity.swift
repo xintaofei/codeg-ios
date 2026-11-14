@@ -42,7 +42,7 @@ enum BuildActivity {
         switch part {
         case .text, .liveText, .proposedPlan, .image, .turnError:
             return true
-        case .reasoning, .liveReasoning, .tool, .toolGroup, .delegationStatusGroup, .taskGroup,
+        case .reasoning, .liveReasoning, .tool, .delegationStatusGroup, .taskGroup,
              .compaction, .unknown:
             return false
         }
@@ -97,7 +97,7 @@ enum BuildActivity {
         for part in parts {
             switch part {
             case .tool(let vm): return vm.id
-            case .delegationStatusGroup(let polls), .taskGroup(let polls), .toolGroup(let polls, _):
+            case .delegationStatusGroup(let polls), .taskGroup(let polls):
                 if let first = polls.first { return first.id }
             default: continue
             }
@@ -123,7 +123,7 @@ enum BuildActivity {
         case .unknown(let type): return "unknown:\(type)"
         case .liveText(let run, _), .liveReasoning(let run, _): return "run:\(run.id)"
         case .tool(let vm): return "tool:\(vm.id)"
-        case .toolGroup, .delegationStatusGroup, .taskGroup: return "group"
+        case .delegationStatusGroup, .taskGroup: return "group"
         }
     }
 
@@ -164,10 +164,6 @@ enum BuildActivity {
                                       streaming: isStreaming && streaming))
             case .tool(let vm):
                 steps.append(.tool(toolStep(vm, awaiting: awaiting.contains(vm.id))))
-            case .toolGroup(let items, _):
-                // Not expected (the caller hands over ungrouped parts); taken
-                // apart so its calls are grouped by this model's rules.
-                for vm in items { steps.append(.tool(toolStep(vm, awaiting: awaiting.contains(vm.id)))) }
             case .delegationStatusGroup(let polls):
                 guard let first = polls.first else { continue }
                 steps.append(.delegationPolls(key: "dpoll:\(first.id)", polls: polls,

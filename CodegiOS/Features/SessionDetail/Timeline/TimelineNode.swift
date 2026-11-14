@@ -64,7 +64,6 @@ struct TimelineNode: Identifiable {
         case reasoning(String)
         case liveReasoning(LiveTextRun, streaming: Bool)
         case tool(ToolCallVM)
-        case toolGroup([ToolCallVM], streaming: Bool)
         case delegationStatusGroup([ToolCallVM])
         case taskGroup([ToolCallVM])
         case image(ImageData, caption: String?)
@@ -110,8 +109,6 @@ struct TimelineNode: Identifiable {
         case .assistantText, .liveText: return .assistant(agent)
         case .reasoning, .liveReasoning: return .reasoning
         case .tool(let vm): return .tool(icon: vm.icon, state: vm.state)
-        case .toolGroup(let items, let streaming):
-            return .toolGroup(error: items.contains(where: \.isError), streaming: streaming)
         case .delegationStatusGroup(let polls):
             let running = polls.contains { $0.state == .running || $0.state == .inputStreaming }
             let state: ToolCallState = running ? .running : (polls.contains(where: \.isError) ? .error : .done)
@@ -238,7 +235,7 @@ enum TranscriptTimeline {
                 // A reply in the running round is still being written (a reader
                 // with no stream of its own); every other one is a record.
                 nodes.append(contentsOf: replyNodes(
-                    parts: MessageRender.adaptTurn(merged, liveness: replyLiveness, groupTools: false),
+                    parts: MessageRender.adaptTurn(merged, liveness: replyLiveness),
                     ownerID: merged.id, completed: replyLiveness != .round,
                     durationMs: merged.durationMs, agent: agent))
                 nodes.append(TimelineNode(id: "\(merged.id)#footer",
@@ -287,7 +284,7 @@ enum TranscriptTimeline {
         for (idx, segment) in segments.enumerated() {
             guard case .steering(let message) = segment else { continue }
             out.append(contentsOf: replyNodes(
-                parts: MessageRender.adaptLive(live, range: start..<idx, groupTools: false),
+                parts: MessageRender.adaptLive(live, range: start..<idx),
                 ownerID: ownerID, completed: true, durationMs: nil, agent: agent))
             let turn = MessageTurn(id: "steer-\(message.id)", role: .user,
                                    blocks: [.text(message.text)], timestamp: message.at)
@@ -300,7 +297,7 @@ enum TranscriptTimeline {
             out.append(TimelineNode(id: "\(ownerID)#thinking", content: .thinking, agent: agent))
         }
         out.append(contentsOf: replyNodes(
-            parts: MessageRender.adaptLive(live, range: start..<segments.count, groupTools: false),
+            parts: MessageRender.adaptLive(live, range: start..<segments.count),
             ownerID: ownerID, completed: !live.isStreaming, durationMs: nil, agent: agent,
             keepAnswer: live.isStreaming && replyOpen))
         if let error = live.errorMessage {
@@ -494,9 +491,6 @@ enum TranscriptTimeline {
             return TimelineNode(id: "k-\(run.id)", content: .liveReasoning(run, streaming: streaming), agent: agent)
         case .tool(let vm):
             return TimelineNode(id: "tool-\(vm.id)", content: .tool(vm), agent: agent)
-        case .toolGroup(let items, let streaming):
-            let gid = items.first.map { "toolgroup-\($0.id)" } ?? base
-            return TimelineNode(id: gid, content: .toolGroup(items, streaming: streaming), agent: agent)
         case .delegationStatusGroup(let polls):
             let gid = polls.first.map { "delegstatus-\($0.id)" } ?? base
             return TimelineNode(id: gid, content: .delegationStatusGroup(polls), agent: agent)

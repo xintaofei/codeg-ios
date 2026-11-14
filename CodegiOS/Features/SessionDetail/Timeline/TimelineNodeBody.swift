@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The content to the right of a timeline node's marker. Dispatches on the node's
 /// `Content` and reuses the existing rendering leaves verbatim — `MarkdownContent`,
-/// `ToolCallCard`/`ToolGroupCard`, `DiffView`, `ReasoningBlock`, `InlineImageView`,
+/// `ToolCallCard`, `DiffView`, `ReasoningBlock`, `InlineImageView`,
 /// `LivePlanView` — so the timeline is purely a new *shell*: the per-block
 /// renderers (and their caches) are unchanged. Live text / reasoning are rendered
 /// by small `@Bindable` leaves that read `run.text`, preserving the 50 ms-coalesced
@@ -40,8 +40,6 @@ struct NodeBody: View {
             case .none:
                 ToolCallCard(vm: vm)
             }
-        case .toolGroup(let items, let streaming):
-            ToolGroupCard(items: items, streaming: streaming)
         case .delegationStatusGroup(let polls):
             DelegationStatusGroupCard(polls: polls)
         case .taskGroup(let ops):

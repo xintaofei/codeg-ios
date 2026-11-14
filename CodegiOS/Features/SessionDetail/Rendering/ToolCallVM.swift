@@ -246,7 +246,6 @@ enum RenderPart {
     case liveText(LiveTextRun, streaming: Bool)          // streaming prose (plain, @Bindable)
     case liveReasoning(LiveTextRun, streaming: Bool)
     case tool(ToolCallVM)
-    case toolGroup(items: [ToolCallVM], streaming: Bool)
     /// A run of consecutive `get_delegation_status` polls, merged into one card.
     case delegationStatusGroup([ToolCallVM])
     /// A run of consecutive task-management calls (`TaskCreate`/`TaskUpdate`/
@@ -273,12 +272,12 @@ enum MessageRender {
 
     /// - Parameter liveness: what may put a spinner on one of this turn's tool
     ///   calls. `.settled` (a record) for all but two cases — see `toolState`.
-    /// - Parameter groupTools: fold runs of generic tool calls into
-    ///   `toolGroup`s (the older cards). The activity timeline passes false: it
-    ///   groups by kind itself, and takes only the delegation-poll and
-    ///   task-checklist lanes from here.
-    static func adaptTurn(_ turn: MessageTurn, liveness: ToolLiveness = .settled, groupTools: Bool = true) -> [RenderPart] {
-        let cacheKey = TurnKey(turn: turn, liveness: liveness, groupTools: groupTools)
+    ///
+    /// Plain calls stay ungrouped: the activity timeline groups them by kind
+    /// itself, and takes only the delegation-poll and task-checklist lanes
+    /// from here.
+    static func adaptTurn(_ turn: MessageTurn, liveness: ToolLiveness = .settled) -> [RenderPart] {
+        let cacheKey = TurnKey(turn: turn, liveness: liveness)
         if let cached = turnCache[cacheKey] { return cached }
 
         let blocks = turn.blocks
@@ -349,7 +348,7 @@ enum MessageRender {
             }
         }
 
-        let grouped = groupTools ? group(parts) : groupLanes(parts)
+        let grouped = groupLanes(parts)
         cacheTurn(cacheKey, grouped)
         return grouped
     }
@@ -397,7 +396,7 @@ enum MessageRender {
     /// `range`: only these segments — one reply of a turn the user steered
     /// into (see `LiveSegment.steering`). The streaming flag still follows the
     /// turn's LAST segment.
-    static func adaptLive(_ turn: LiveTurn, range: Range<Int>? = nil, groupTools: Bool = true) -> [RenderPart] {
+    static func adaptLive(_ turn: LiveTurn, range: Range<Int>? = nil) -> [RenderPart] {
         var parts: [RenderPart] = []
         let segments = turn.segments
         let span = range ?? segments.indices
@@ -436,60 +435,18 @@ enum MessageRender {
                         title: call.title, kind: call.kind, rawInput: call.rawInput, meta: call.meta))))
             }
         }
-        return groupTools ? group(parts) : groupLanes(parts)
+        return groupLanes(parts)
     }
 
     /// Only the lanes that are rows of their own — delegation polls and the
-    /// task checklist — for a caller that groups plain calls itself.
+    /// task checklist; plain calls are grouped by the activity model.
     static func groupLanes(_ parts: [RenderPart]) -> [RenderPart] {
         groupConsecutiveTaskOps(groupConsecutiveDelegationStatus(parts))
     }
 
-    /// The full grouping pipeline (mirroring the web): first collapse generic tool
-    /// runs into `toolGroup`s, then merge consecutive `get_delegation_status` polls
-    /// into one `delegationStatusGroup`, then merge consecutive task-management
-    /// calls into one `taskGroup` checklist.
-    static func group(_ parts: [RenderPart]) -> [RenderPart] {
-        groupConsecutiveTaskOps(groupConsecutiveDelegationStatus(groupConsecutiveTools(parts)))
-    }
-
-    /// Collapse runs of 2+ consecutive tool calls into a `toolGroup`. Agent-like
-    /// tools (`.task` bucket) and the codeg-mcp companion tools (their own rich
-    /// cards) always stay standalone; text / reasoning / images break a run.
-    static func groupConsecutiveTools(_ parts: [RenderPart]) -> [RenderPart] {
-        var out: [RenderPart] = []
-        var run: [ToolCallVM] = []
-
-        func flush() {
-            if run.count >= 2 {
-                let streaming = run.contains { $0.state == .running || $0.state == .inputStreaming }
-                out.append(.toolGroup(items: run, streaming: streaming))
-            } else if let only = run.first {
-                out.append(.tool(only))
-            }
-            run = []
-        }
-
-        for part in parts {
-            // Agent-dispatch (`.task`), task-management (`.taskMgmt`), plan-mode
-            // transitions, and the codeg-mcp companion tools each render on their
-            // own, so they never fold into a generic tool run.
-            if case .tool(let vm) = part, vm.bucket != .task, vm.bucket != .taskMgmt,
-               !vm.isPlanMode, vm.companion == nil {
-                run.append(vm)
-            } else {
-                flush()
-                out.append(part)
-            }
-        }
-        flush()
-        return out
-    }
-
-    /// Wrap each run of consecutive `get_delegation_status` polls (left standalone
-    /// by `groupConsecutiveTools`) into a single `delegationStatusGroup`. Any other
-    /// part — text, a tool group, the delegate / cancel / ask cards — breaks the
-    /// run, so only genuinely consecutive polls collapse. Even a single poll is
+    /// Wrap each run of consecutive `get_delegation_status` polls into a single
+    /// `delegationStatusGroup`. Any other part — text, another call, the
+    /// delegate / cancel / ask cards — breaks the run, so only genuinely consecutive polls collapse. Even a single poll is
     /// wrapped, so the merged-card "returned-running reads as a settled snapshot"
     /// resolution applies uniformly. Consecutive assistant turns are merged before
     /// adaptation (`TranscriptTimeline.merge`), so a multi-round poll sequence lands
@@ -584,7 +541,6 @@ enum MessageRender {
     private struct TurnKey: Hashable {
         let turn: MessageTurn
         let liveness: ToolLiveness
-        let groupTools: Bool
     }
     private static var turnCache: [TurnKey: [RenderPart]] = [:]
     private static var turnOrder: [TurnKey] = []

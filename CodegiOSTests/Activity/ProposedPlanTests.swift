@@ -219,7 +219,7 @@ struct ProposedPlanPlacementTests {
             .text("<proposed_plan>\n# 演示计划\n\n- step one\n</proposed_plan>\n\n如果你希望调整，告诉我。"),
             .toolUse(id: "codex-plan-review-3", name: "plan_review", inputPreview: nil, status: .unknown, meta: nil),
             .toolResult(id: "codex-plan-review-3", outputPreview: "User approved the plan.", isError: false, agentStats: nil),
-        ]), groupTools: false)
+        ]))
         #expect(kinds(parts) == ["proposed-plan", "text", "tool"])
         guard case .proposedPlan(let markdown, let streaming) = parts[0] else {
             Issue.record("expected a proposed plan"); return
@@ -236,7 +236,7 @@ struct ProposedPlanPlacementTests {
     @Test func aPlanAfterTheLastCallIsTheAnswer() {
         let parts = MessageRender.adaptTurn(turn("a", Self.read + [
             .text("Read it.\n<proposed_plan>\n# P\n</proposed_plan>\nShall I go ahead?"),
-        ]), groupTools: false)
+        ]))
         let model = BuildActivity.build(parts, isStreaming: false)
         #expect(kinds(model.answer) == ["text", "proposed-plan", "text"])
         #expect(model.steps.count == 1)
@@ -246,7 +246,7 @@ struct ProposedPlanPlacementTests {
     @Test func aPlanBeforeMoreWorkStaysANoteInTheProcess() {
         let parts = MessageRender.adaptTurn(turn("a", [
             .text("<proposed_plan>\n# P\n</proposed_plan>"),
-        ] + Self.read), groupTools: false)
+        ] + Self.read))
         let model = BuildActivity.build(parts, isStreaming: false)
         #expect(model.answer.isEmpty)
         guard case .note(let key, .proposedPlan(let markdown, false))? = model.steps.first else {
@@ -258,8 +258,8 @@ struct ProposedPlanPlacementTests {
 
     @Test func anUnclosedBlockStreamsOnlyInTheRunningRound() {
         let blocks: [ContentBlock] = [.text("<proposed_plan>\n# Draft")]
-        let settled = MessageRender.adaptTurn(turn("a", blocks), liveness: .settled, groupTools: false)
-        let running = MessageRender.adaptTurn(turn("a", blocks), liveness: .round, groupTools: false)
+        let settled = MessageRender.adaptTurn(turn("a", blocks), liveness: .settled)
+        let running = MessageRender.adaptTurn(turn("a", blocks), liveness: .round)
         guard case .proposedPlan(_, let settledStreaming)? = settled.first,
               case .proposedPlan(_, let runningStreaming)? = running.first else {
             Issue.record("both lift the block"); return
@@ -302,7 +302,7 @@ struct ProposedPlanPlacementTests {
         live.appendText("<proposed_plan>\n# Done\n</proposed_plan>")
         live.isStreaming = false
         let turn = try #require(live.snapshotAsMessageTurns().first)
-        let parts = MessageRender.adaptTurn(turn, groupTools: false)
+        let parts = MessageRender.adaptTurn(turn)
         #expect(kinds(parts) == ["proposed-plan"])
     }
 }
