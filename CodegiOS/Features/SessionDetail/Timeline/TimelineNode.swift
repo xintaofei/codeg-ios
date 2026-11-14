@@ -32,6 +32,10 @@ struct TimelineNode: Identifiable {
     var foldOpen: Bool = true
     /// For a reply's header: this reply is the current round (positional).
     var currentRound: Bool = false
+    /// For a persisted reply's footer: where "Fork from here" would fork (the
+    /// reply's LAST turn — the merged turn keeps the first one's id). Nil
+    /// everywhere else, and wherever the builder wasn't asked for fork points.
+    var forkPoint: ReplyForkPoint?
 
     struct ReplyMembership {
         enum Role {
@@ -188,7 +192,9 @@ enum TranscriptTimeline {
     ///   that is being re-read while its session runs and has no round anchor of
     ///   its own (the sub-agent viewer). Left `.settled` by the main transcript,
     ///   which scopes liveness per-round via `inFlightUserTurnId` instead.
-    static func buildPersisted(turns rawTurns: [MessageTurn], pending: [MessageTurn], agent: AgentType, suppressInFlight: Bool, inFlightUserTurnId: String? = nil, liveness: ToolLiveness = .settled) -> [TimelineNode] {
+    /// - Parameter forkPoints: stamp each reply's footer with its fork point —
+    ///   the main transcript only (a sub-agent's viewer has nothing to fork).
+    static func buildPersisted(turns rawTurns: [MessageTurn], pending: [MessageTurn], agent: AgentType, suppressInFlight: Bool, inFlightUserTurnId: String? = nil, liveness: ToolLiveness = .settled, forkPoints: Bool = false) -> [TimelineNode] {
         var nodes: [TimelineNode] = []
 
         // Hide the persisted partial in-flight reply while the reattach live turn
@@ -211,6 +217,9 @@ enum TranscriptTimeline {
         let inFlightIdx = inFlightUserTurnId.flatMap { id in
             turns.firstIndex { $0.role == .user && $0.id == id }
         }
+        // The reply a tail fork would land after — none while an optimistic
+        // prompt follows the persisted turns.
+        let forkTail = forkPoints && pending.isEmpty ? ReplyForkPoint.threadTailIndex(turns) : nil
 
         // Persisted turns. User/system map 1:1; runs of consecutive assistant
         // turns merge into one reply (codeg persists a single logical reply as
@@ -250,8 +259,14 @@ enum TranscriptTimeline {
                     parts: MessageRender.adaptTurn(merged, liveness: replyLiveness),
                     ownerID: merged.id, completed: replyLiveness != .round,
                     durationMs: merged.durationMs, agent: agent))
-                nodes.append(TimelineNode(id: "\(merged.id)#footer",
-                                          content: .footer(merged, questionID: lastUserID), agent: agent))
+                var footer = TimelineNode(id: "\(merged.id)#footer",
+                                          content: .footer(merged, questionID: lastUserID), agent: agent)
+                if forkPoints {
+                    let last = turns[j - 1]
+                    footer.forkPoint = ReplyForkPoint(turnID: last.id, isThreadTail: forkTail == j - 1,
+                                                      hasText: ReplyForkPoint.hasForkableText(last))
+                }
+                nodes.append(footer)
                 i = j
             }
         }

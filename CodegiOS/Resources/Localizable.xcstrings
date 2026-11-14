@@ -162,6 +162,17 @@
         }
       }
     },
+    "Can't fork while a turn is running." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前有回合正在进行，暂不可分叉。"
+          }
+        }
+      }
+    },
     "Connection issue" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -180,6 +191,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "复制图片"
+          }
+        }
+      }
+    },
+    "Couldn't fork: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会话分叉失败：%@"
+          }
+        }
+      }
+    },
+    "Couldn't load that message." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法加载这条消息。"
           }
         }
       }
@@ -228,6 +261,17 @@
         }
       }
     },
+    "Earlier messages aren't listed." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更早的消息未列出。"
+          }
+        }
+      }
+    },
     "Elapsed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -246,6 +290,72 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "停止任务失败：%@"
+          }
+        }
+      }
+    },
+    "Fork" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分叉"
+          }
+        }
+      }
+    },
+    "Fork from here" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从此处分叉"
+          }
+        }
+      }
+    },
+    "Fork from here?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从此处分叉？"
+          }
+        }
+      }
+    },
+    "Forked, but its history isn't ready yet. Reopen the conversation in a moment to see it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已分叉，但历史记录尚未就绪，请稍后重新打开此会话查看。"
+          }
+        }
+      }
+    },
+    "Forked. The full original is kept as a separate conversation." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已分叉。完整的原会话已另存为一个会话。"
+          }
+        }
+      }
+    },
+    "Forking…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在分叉…"
           }
         }
       }
@@ -316,6 +426,28 @@
         }
       }
     },
+    "Load earlier messages" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加载更早的消息"
+          }
+        }
+      }
+    },
+    "Loading earlier messages…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载更早的消息…"
+          }
+        }
+      }
+    },
     "Not completed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -334,6 +466,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "目标"
+          }
+        }
+      }
+    },
+    "Open original" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开原会话"
           }
         }
       }
@@ -723,6 +866,17 @@
         }
       }
     },
+    "This conversation will be cut back to this reply and renamed “[Fork] …”. The full original stays as a separate conversation." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前会话将截断到这条回复，并改名为“[Fork] …”。完整的原会话会作为另一个会话保留。"
+          }
+        }
+      }
+    },
     "This session is open elsewhere. If another %@ client (the app, the CLI or an IDE extension) has it, close it there or quit that client, then reload. If you just forked it, reload in about a minute." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -763,6 +917,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用建议的消息"
+          }
+        }
+      }
+    },
+    "User message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用户消息"
           }
         }
       }

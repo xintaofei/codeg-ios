@@ -120,6 +120,30 @@ final class SessionDetailViewModel {
     /// to page up. False on a legacy server (everything is already loaded).
     var hasOlderTurns: Bool { window?.hasOlder ?? false }
 
+    // MARK: Fork from a reply
+    //
+    // State for "Fork from here" (see the fork extension at the end of this
+    // file and `Fork/ReplyFork.swift`).
+
+    /// A fork is on its way — from the request through the re-read of the
+    /// forked transcript. Blocks every send and the queue's flush meanwhile:
+    /// the fork re-points this conversation at a new session, and a prompt
+    /// racing it would land on one side or the other at random.
+    private(set) var isForking = false
+    /// Whether this conversation's agent can fork at all: nil until a live
+    /// session has said (see ``ForkSupport/reading(status:supported:)``), and
+    /// false once it said no — or a fork failed for that reason.
+    private(set) var forkSupported: Bool?
+    /// The last fork's sibling row (the untouched original), for the banner
+    /// that offers to open it.
+    private(set) var forkOutcome: ForkOutcome?
+    private var forkTask: Task<Void, Never>?
+    /// Bumped when the transcript was replaced by a SHORTER history than the
+    /// one the transcript view was showing — which its own reveal window, an
+    /// index into `turns`, cannot follow on its own (it would point past the
+    /// end and show nothing).
+    private(set) var transcriptResetTick = 0
+
     /// Optimistic user turns awaiting persistence (spliced out on re-fetch).
     private(set) var pendingUserTurns: [MessageTurn] = []
     /// The assistant reply currently streaming, if any.
@@ -1349,7 +1373,8 @@ final class SessionDetailViewModel {
         // Identity comes from the loaded summary (existing conversation) or the
         // new-task request; without either the screen isn't ready to send.
         guard summary != nil || newRequest != nil else { return }
-        if overrideText == nil, isInFlight || !queue.isEmpty {
+        // A fork in flight is re-pointing the session: wait it out in the queue.
+        if overrideText == nil, isInFlight || !queue.isEmpty || isForking {
             queue.enqueue(QueuedPrompt(text: text, attachments: sending))
             draft = ""
             attachments = []
@@ -1373,7 +1398,7 @@ final class SessionDetailViewModel {
     }
 
     private func startSend(text: String, attachments sending: [Attachment], origin: SendOrigin) {
-        guard !isInFlight else { return }
+        guard !isInFlight, !isForking else { return }
         // A draft (no linked summary yet) needs a folder + agent before it can
         // connect; lock the pickers the moment its first send begins.
         if summary == nil {
@@ -1657,7 +1682,7 @@ final class SessionDetailViewModel {
     private func flushQueueHead() {
         // The SAME readiness the send path needs, checked before dequeuing: a
         // message taken off the queue and then refused by `startSend` is lost.
-        guard !isTornDown, !queueHeld, !queueSteerInFlight, !isInFlight,
+        guard !isTornDown, !queueHeld, !queueSteerInFlight, !isInFlight, !isForking,
               summary != nil || newRequest != nil else { return }
         if summary == nil, folder == nil || selectedAgent == nil { return }
         guard let head = queue.dequeue() else { return }
@@ -2051,6 +2076,8 @@ final class SessionDetailViewModel {
     /// send path still makes its own authoritative read against the connection it
     /// is actually prompting.
     private func adoptPromptCapabilities(from snapshot: SessionSnapshot?) {
+        // The same free read says whether the agent can fork.
+        adoptForkSupport(status: snapshot?.status, supported: snapshot?.forkSupported)
         guard let caps = snapshot?.promptCapabilities else { return }
         promptCapabilities = caps
     }
@@ -2210,6 +2237,7 @@ final class SessionDetailViewModel {
                     // are the previous turn's. A reconnect's describe this one.
                     hydrateFeedback(from: snap, connection: conn, notes: readyContinuation == nil)
                     runs.hydrate(snap, connection: conn)
+                    adoptForkSupport(status: snap.status, supported: snap.forkSupported)
                 }
                 // A reconnect answered with a snapshot rather than a replay —
                 // first attach after a drop with no cursor, or a gap too large
@@ -2413,6 +2441,7 @@ final class SessionDetailViewModel {
                 hydrateSessionFailures(from: snap, connection: conn)
                 hydrateFeedback(from: snap, connection: conn, notes: true)
                 runs.hydrate(snap, connection: conn)
+                adoptForkSupport(status: snap.status, supported: snap.forkSupported)
                 if let rebuilt = buildLiveTurn(from: snap) {
                     live = rebuilt
                     liveTurn = rebuilt
@@ -2828,6 +2857,9 @@ final class SessionDetailViewModel {
         case .asyncTask, .backgroundActivity, .delegationStarted, .delegationCompleted,
              .delegationChildRunning, .promptSuggestion:
             break
+        case .forkSupported(let supported):
+            // Emitted once the agent's `initialize` has run — an answer.
+            forkSupported = supported
         }
     }
 
@@ -3620,6 +3652,10 @@ final class SessionDetailViewModel {
         reconcileTask = nil
         reanchorTask?.cancel()
         reanchorTask = nil
+        // A fork already sent runs to completion server-side whatever happens
+        // here (the backend shields it); the screen that comes back re-reads it.
+        forkTask?.cancel()
+        forkTask = nil
         // Cancellation stops the reconcile from ISSUING more work; retiring the
         // fetch generation stops anything already in flight — a request suspended
         // when the cancel landed — from committing to a screen the user has left.
@@ -3841,5 +3877,193 @@ extension SessionDetailViewModel {
             runs.promptSuggestion, draft: draft, hasAttachments: !attachments.isEmpty,
             inFlight: isInFlight, steering: isSteering, queueEmpty: queue.isEmpty) else { return }
         draft = suggestion
+    }
+}
+
+// MARK: - Fork from a reply
+
+extension SessionDetailViewModel {
+    /// A reply can be forked right now: idle in every sense this screen can see
+    /// — no turn streaming or still winding down, nothing optimistic waiting to
+    /// be persisted, no reconcile in its body, no card waiting on the user, no
+    /// turn the row says another client is running — and no fork already on
+    /// its way. (The backend refuses a fork during a turn with a 409 anyway,
+    /// but for an idle conversation only after spawning an agent to ask.)
+    ///
+    /// A settled-but-unreconciled reply (a stopped turn's) does not block: it
+    /// belongs to the pre-fork history and is dropped when the fork lands.
+    var canForkNow: Bool {
+        guard conversationID != nil, summary != nil, !isForking else { return false }
+        guard !isInFlight, !isTurnActive, pendingUserTurns.isEmpty, reconcileDepth == 0 else { return false }
+        guard pendingPermission == nil, pendingQuestion == nil, pendingPlanApproval == nil else { return false }
+        if summary?.status == .inProgress { return false }
+        switch sendState {
+        case .idle, .error: return true
+        case .connecting, .thinking, .running: return false
+        }
+    }
+
+    /// Fork the conversation at a reply (its footer, once the user confirmed).
+    ///
+    /// The backend cuts THIS conversation back to the reply and renames it
+    /// `[Fork] …`; the full original moves to a new sibling row. An idle
+    /// conversation holds no connection, so one is found or started first — the
+    /// same resolution the options sheet uses.
+    ///
+    /// Owned by the model and bound to the lifetime it was asked in, like every
+    /// task that rewrites the transcript (see `startLoad`).
+    func forkFromReply(_ point: ReplyForkPoint) {
+        guard canForkNow, let id = conversationID,
+              let request = point.request(agent: agentTypeForUI) else { return }
+        isForking = true
+        forkOutcome = nil
+        notice = nil
+        let lifetime = lifecycle
+        forkTask?.cancel()
+        forkTask = Task { [weak self] in
+            await self?.runFork(request, conversationID: id, lifetime: lifetime)
+        }
+    }
+
+    /// Close the "open the original" banner — only the given one, when asked
+    /// by its own timer, so it can't close a newer fork's.
+    func dismissForkOutcome(_ outcome: ForkOutcome? = nil) {
+        guard let current = forkOutcome else { return }
+        if outcome == nil || outcome == current { forkOutcome = nil }
+    }
+
+    /// Take a snapshot's word on forking, once it is an answer.
+    private func adoptForkSupport(status: ConnectionStatus?, supported: Bool?) {
+        if let known = ForkSupport.reading(status: status, supported: supported) {
+            forkSupported = known
+        }
+    }
+
+    private func runFork(_ request: ReplyForkPoint.Request, conversationID id: Int, lifetime: Int) async {
+        defer {
+            isForking = false
+            // Whatever was queued while the fork ran goes now.
+            scheduleQueueFlush()
+        }
+        let result: ForkResult
+        do {
+            result = try await forkOnce(request, conversationID: id)
+        } catch {
+            // The screen went: its cancellation is nobody's failure, and a fork
+            // the backend already took runs on there regardless — the screen
+            // that comes back reads its result.
+            guard !Task.isCancelled, lifetime == lifecycle else { return }
+            reportForkFailure(error)
+            return
+        }
+        guard !Task.isCancelled, lifetime == lifecycle, conversationID == id else { return }
+
+        // The row points at the fork now. Take that on at once — before the
+        // transcript lands, and whether it lands or not: every reconnect
+        // resumes `externalId`, and the old value is the sibling's session.
+        summary?.externalId = result.forkedSessionId
+        // A stopped turn's reply still on screen is the old session's. (A fork
+        // only succeeds between turns, so nothing here is running.)
+        if let live = liveTurn, !live.isStreaming { liveTurn = nil }
+        forkOutcome = ForkOutcome(siblingConversationID: result.siblingConversationId)
+        // The renamed row and the new sibling.
+        notifyConversationsChanged()
+        await reloadAfterFork(forkedSessionId: result.forkedSessionId, conversationID: id, lifetime: lifetime)
+    }
+
+    /// Resolve a connection and fork on it. A connection the server dropped
+    /// between the lookup and the fork (reported as a 500, "connection not
+    /// found") is looked up again once, from scratch.
+    private func forkOnce(_ request: ReplyForkPoint.Request, conversationID id: Int) async throws -> ForkResult {
+        let conn = try await resolveConnectionForOptions()
+        do {
+            return try await sendFork(request, connection: conn, conversationID: id)
+        } catch let error where ForkFailure.isConnectionGone(error) {
+            try Task.checkCancellation()
+            if connectionID == conn { connectionID = nil }
+            let fresh = try await resolveConnectionForOptions()
+            return try await sendFork(request, connection: fresh, conversationID: id)
+        }
+    }
+
+    private func sendFork(_ request: ReplyForkPoint.Request, connection conn: String,
+                          conversationID id: Int) async throws -> ForkResult {
+        // Both ids: a connection resumed for this fork has not prompted yet, so
+        // its row is not linked to it, and the backend links it from these.
+        try await client.forkConversation(
+            connectionId: conn,
+            conversationId: id,
+            folderId: summary?.folderId ?? folder?.id,
+            forkFromTurnId: request.forkFromTurnId
+        )
+    }
+
+    private func reportForkFailure(_ error: Error) {
+        // A turn started somewhere between the check and the fork: nothing is
+        // lost, the same click works once it ends.
+        if case APIError.turnInProgress = error {
+            notice = String(localized: "Can't fork while a turn is running.")
+            return
+        }
+        // Fixed for the agent: the affordance goes.
+        if ForkFailure.isUnsupported(error) { forkSupported = false }
+        notice = String(localized: "Couldn't fork: \(ForkFailure.message(error))")
+    }
+
+    /// Re-read the forked transcript and adopt it wholesale — as a fresh tail,
+    /// NOT a `fromIndex` refresh of the window: the fork cut the history back,
+    /// so the held coordinates describe a transcript this row no longer has.
+    ///
+    /// Takes its own place in the shared fetch order, and retries for a few
+    /// seconds: a read another transcript read overtook is not a failure, and
+    /// the agent writes the forked transcript itself, so a read can beat the
+    /// file.
+    ///
+    /// Only a read that shows the fork is adopted — never one whose transcript
+    /// isn't there yet: taking that would replace the history with nothing,
+    /// and nothing would read it again. If none shows it in time, the screen
+    /// keeps what it has (the fork's title and session are taken on already)
+    /// and says the history is still coming; reopening reads it afresh.
+    private func reloadAfterFork(forkedSessionId: String, conversationID id: Int, lifetime: Int) async {
+        let attempts = 6
+        for attempt in 0..<attempts {
+            guard !Task.isCancelled, lifetime == lifecycle, conversationID == id else { return }
+            let generation = nextFetchGeneration()
+            if let detail = try? await client.conversationDetail(id: id, tailTurns: Self.tailTurns) {
+                guard !Task.isCancelled, lifetime == lifecycle, conversationID == id else { return }
+                if isCurrentGeneration(generation) {
+                    if ForkRefetch.isApplied(detail, forkedSessionId: forkedSessionId) {
+                        adoptForkedTranscript(detail)
+                        return
+                    }
+                    // The row is right even before its transcript is there.
+                    if detail.summary.externalId == forkedSessionId { summary = detail.summary }
+                }
+            }
+            if attempt < attempts - 1 {
+                try? await Task.sleep(for: .milliseconds(400 * (attempt + 1)))
+            }
+        }
+        guard !Task.isCancelled, lifetime == lifecycle, conversationID == id else { return }
+        notice = String(localized: "Forked, but its history isn't ready yet. Reopen the conversation in a moment to see it.")
+    }
+
+    private func adoptForkedTranscript(_ detail: ConversationDetail) {
+        if let live = liveTurn, !live.isStreaming { liveTurn = nil }
+        // Sends wait on `isForking`, so nothing can have started — but should
+        // something hold the transcript anyway, it is not replaced underneath
+        // it; the re-anchor drain does that once it has settled.
+        guard liveTurn == nil, pendingUserTurns.isEmpty else {
+            windowNeedsReanchor = true
+            return
+        }
+        summary = detail.summary
+        turns = detail.turns
+        adoptTranscriptScope(detail)
+        sessionStats = detail.sessionStats ?? sessionStats
+        // The history is shorter: the transcript's reveal window starts over.
+        transcriptResetTick &+= 1
+        isPinnedToBottom = true
+        requestStickToBottom()
     }
 }

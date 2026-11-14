@@ -90,11 +90,15 @@ struct SessionSnapshot: Hashable, Sendable, Decodable {
     /// The connection's running list and predicted next prompt, as the WS
     /// snapshot carries them (see ``ConnectionRunsSnapshot``).
     let runs: ConnectionRunsSnapshot
+    /// Whether the agent has `session/fork` — an answer only once the
+    /// connection is initialized (see ``ForkSupport``). Nil when omitted.
+    let forkSupported: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case modes, currentMode, configOptions, selectorsReady, availableCommands
         case promptCapabilities, status
         case feedbackToolAvailable, nativeSteeringAvailable
+        case forkSupported
     }
 
     init(from decoder: Decoder) throws {
@@ -109,6 +113,7 @@ struct SessionSnapshot: Hashable, Sendable, Decodable {
         feedbackToolAvailable = try? c.decodeIfPresent(Bool.self, forKey: .feedbackToolAvailable)
         nativeSteeringAvailable = try? c.decodeIfPresent(Bool.self, forKey: .nativeSteeringAvailable)
         runs = ConnectionRunsSnapshot.lenient(from: decoder)
+        forkSupported = try? c.decodeIfPresent(Bool.self, forKey: .forkSupported)
     }
 
     /// True when this session is over, so nothing more will ever be published on

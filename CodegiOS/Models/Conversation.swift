@@ -144,7 +144,10 @@ struct ConversationSummary: Codable, Identifiable, Hashable, Sendable {
     var status: ConversationStatus
     let model: String?
     let gitBranch: String?
-    let externalId: String?
+    /// `var` so a fork can re-point it the moment the backend confirms, before
+    /// the re-read lands: every reconnect resumes this session id, and after a
+    /// fork the old one belongs to the sibling row.
+    var externalId: String?
     let messageCount: Int
     let createdAt: Date
     let updatedAt: Date

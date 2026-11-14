@@ -45,6 +45,9 @@ struct RootView: View {
         // survive). `.system` hands back the device locale (a no-op override).
         .environment(language)
         .environment(\.locale, language.locale)
+        // Lets a screen open another conversation the same way every entry
+        // point does (a fork's "open the original").
+        .environment(\.openCodegConversation, OpenConversationAction { model.open(.conversation($0)) })
         .preferredColorScheme(appearance.mode.colorScheme)
         .onOpenURL { model.handle(url: $0) }
         .onChange(of: horizontalSizeClass, initial: true) { _, size in

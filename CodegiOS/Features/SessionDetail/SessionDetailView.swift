@@ -163,6 +163,8 @@ struct SessionDetailView: View {
         // Images in the transcript's Markdown: read through this server, with
         // relative paths resolved against the conversation's own folder.
         .markdownImages(client: client, root: model.folder?.path)
+        // "Fork from here" for the replies' footers, and its confirmation.
+        .modifier(ReplyForkChrome(model: model))
         // `onAppear`/`onDisappear` are the lifetime pair: both run synchronously
         // and only when the view really appears/disappears — including when this
         // screen pushes another route over itself, which keeps the same `@State`
@@ -244,7 +246,8 @@ struct SessionDetailView: View {
             hasOlderTurns: model.hasOlderTurns,
             isLoadingOlderTurns: model.loadingOlderTurns,
             onLoadOlderTurns: { model.requestOlderTurns() },
-            onPinnedChange: { model.setPinnedToBottom($0) }
+            onPinnedChange: { model.setPinnedToBottom($0) },
+            resetToken: model.transcriptResetTick
         ) {
             // No top banner on an existing session — its identity + stats now
             // live in the nav-bar "…" → Session Details, so messages start at
@@ -340,6 +343,9 @@ struct SessionDetailView: View {
                     .transition(.opacity)
                     .zIndex(2)
                 }
+                // A fork on its way, then the way to the original it left.
+                ForkStatusStrip(model: model)
+                    .zIndex(2)
                 // What the user wrote that hasn't become a turn yet: notes sent
                 // into the running one, and messages queued for the next.
                 MidTurnStrips(model: model)
@@ -381,6 +387,8 @@ struct SessionDetailView: View {
                     suggestion: model.promptSuggestionOffer,
                     onUseSuggestion: { model.usePromptSuggestion() }
                 )
+                // A fork re-points the session under the composer.
+                .disabled(model.isForking)
             }
             .animation(.snappy(duration: 0.24), value: model.isPinnedToBottom)
             .animation(.snappy(duration: 0.26), value: model.pendingPermission?.id)

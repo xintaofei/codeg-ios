@@ -123,6 +123,9 @@ enum AcpEvent: Hashable, Sendable, Decodable {
     case delegationChildRunning(childConnectionId: String, running: Bool)
     /// The prompt the agent predicts the user sends next; nil withdraws it.
     case promptSuggestion(text: String?)
+    /// Whether the agent has `session/fork` — emitted once its `initialize`
+    /// has run (until then the snapshot's flag reads false).
+    case forkSupported(supported: Bool)
 
     private enum CodingKeys: String, CodingKey {
         case type, text, title, kind, status, content, meta
@@ -133,6 +136,7 @@ enum AcpEvent: Hashable, Sendable, Decodable {
         case approvalId, planMarkdown
         case attempt, maxRetries, retryDelayMs, errorStatus, record, notice, failures
         case item, ids, deliveredAt
+        case supported
     }
 
     init(from decoder: Decoder) throws {
@@ -279,6 +283,12 @@ enum AcpEvent: Hashable, Sendable, Decodable {
                 sessionId: try c.decodeIfPresent(String.self, forKey: .sessionId) ?? "",
                 message: try c.decodeIfPresent(String.self, forKey: .message) ?? "",
                 code: try c.decodeIfPresent(String.self, forKey: .code) ?? "")
+        case "fork_supported":
+            guard let supported = (try? c.decodeIfPresent(Bool.self, forKey: .supported)) ?? nil else {
+                self = .unknown(type: type)
+                return
+            }
+            self = .forkSupported(supported: supported)
         default:
             self = AcpEvent.decodeRunsEvent(type: type, from: decoder) ?? .unknown(type: type)
         }
@@ -343,11 +353,16 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     /// What runs beside the turn (async tasks, background sub-agents,
     /// delegations) and the predicted next prompt — see ``ConnectionRunsModel``.
     let runs: ConnectionRunsSnapshot
+    /// Whether the agent has `session/fork`. False until `initialize` has run,
+    /// so only an initialized connection's value is an answer (see
+    /// ``ForkSupport``); nil from a server that doesn't send it.
+    let forkSupported: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case connectionId, conversationId, folderId, status, externalId, eventSeq
         case liveMessage, activeToolCalls, pendingPermission, pendingQuestion, pendingPlanApproval
         case lastError, sessionFailures, feedback, feedbackToolAvailable, nativeSteeringAvailable
+        case forkSupported
     }
 
     init(from decoder: Decoder) throws {
@@ -369,6 +384,7 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         feedbackToolAvailable = ((try? c.decodeIfPresent(Bool.self, forKey: .feedbackToolAvailable)) ?? nil) ?? false
         nativeSteeringAvailable = ((try? c.decodeIfPresent(Bool.self, forKey: .nativeSteeringAvailable)) ?? nil) ?? false
         runs = ConnectionRunsSnapshot.lenient(from: decoder)
+        forkSupported = (try? c.decodeIfPresent(Bool.self, forKey: .forkSupported)) ?? nil
     }
 }
 

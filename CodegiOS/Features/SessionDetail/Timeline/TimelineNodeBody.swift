@@ -55,7 +55,7 @@ struct NodeBody: View {
         case .compaction(let before, let after, let running):
             ContextCompactionDivider(before: before, after: after, running: running)
         case .footer(let turn, let questionID):
-            TurnFooter(turn: turn, questionID: questionID)
+            TurnFooter(turn: turn, questionID: questionID, forkPoint: node.forkPoint)
         case .plan(let entries, let streaming):
             LivePlanView(entries: entries, isStreaming: streaming)
         case .thinking:
@@ -193,6 +193,8 @@ private struct LiveReasoningNode: View {
 private struct TurnFooter: View {
     let turn: MessageTurn
     var questionID: String?
+    /// Where "Fork from here" forks; the button itself decides whether to show.
+    var forkPoint: ReplyForkPoint?
 
     private var copyText: String {
         turn.blocks.compactMap { block -> String? in
@@ -216,6 +218,9 @@ private struct TurnFooter: View {
             }
             if let questionID {
                 JumpToQuestionButton(questionID: questionID)
+            }
+            if let forkPoint {
+                ForkReplyButton(point: forkPoint)
             }
             Spacer(minLength: 8)
             if let model = turn.model, !model.isEmpty {

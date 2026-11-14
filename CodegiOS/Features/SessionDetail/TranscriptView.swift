@@ -83,6 +83,11 @@ struct TranscriptView<Header: View>: View {
     /// it to show/hide the floating "jump to latest" button (which lives above the
     /// compose bar, not here, so it is reliably tappable).
     let onPinnedChange: (Bool) -> Void
+    /// Bumped when `turns` was replaced by a SHORTER history (a fork cut it
+    /// back). The reveal window below is an absolute index into `turns`, which
+    /// would then point past the end and show nothing — so it starts over at
+    /// the tail.
+    var resetToken: Int = 0
     /// Scrolls with the content as the first element (header above the first
     /// node). Kept generic so the transcript stays agnostic of the header's type.
     @ViewBuilder var header: () -> Header
@@ -207,7 +212,8 @@ struct TranscriptView<Header: View>: View {
             persisted = TranscriptTimeline.buildPersisted(
                 turns: slice, pending: pendingUserTurns, agent: agent,
                 suppressInFlight: suppressInFlight,
-                inFlightUserTurnId: inFlightUserTurnId
+                inFlightUserTurnId: inFlightUserTurnId,
+                forkPoints: true
             )
             persistedMemo.key = key
             persistedMemo.nodes = persisted
@@ -364,6 +370,7 @@ struct TranscriptView<Header: View>: View {
                 scrollToBottom(proxy)
             }
             .onAppear { scrollToBottom(proxy) }
+            .onChange(of: resetToken) { _, _ in windowStartTurn = nil }
         }
     }
 
