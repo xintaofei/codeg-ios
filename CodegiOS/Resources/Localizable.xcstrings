@@ -327,6 +327,17 @@
         }
       }
     },
+    "Running in background · %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在后台运行 · %@"
+          }
+        }
+      }
+    },
     "Send as message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -389,6 +400,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "会话异常"
+          }
+        }
+      }
+    },
+    "Task failed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务失败"
+          }
+        }
+      }
+    },
+    "Task finished" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务完成"
+          }
+        }
+      }
+    },
+    "Task running" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务运行中"
+          }
+        }
+      }
+    },
+    "Task stopped" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任务已停止"
           }
         }
       }
@@ -477,6 +532,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已用 tokens"
+          }
+        }
+      }
+    },
+    "Watching in background · %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在后台监视 · %@"
+          }
+        }
+      }
+    },
+    "done" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成"
           }
         }
       }
@@ -651,6 +728,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在重试（第 %lld 次）"
+          }
+        }
+      }
+    },
+    "running" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "运行中"
+          }
+        }
+      }
+    },
+    "stopped" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已停止"
           }
         }
       }

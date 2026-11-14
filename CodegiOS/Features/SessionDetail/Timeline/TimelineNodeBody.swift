@@ -72,6 +72,8 @@ struct NodeBody: View {
             ActivityToolRow(step: step, recovered: recovered)
         case .goal(let goal):
             GoalRunRow(goal: goal, agent: node.agent)
+        case .backgroundTask(let row, let launch):
+            BackgroundTaskRowView(row: row, launch: launch)
         }
     }
 }

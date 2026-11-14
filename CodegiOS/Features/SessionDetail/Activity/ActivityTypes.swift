@@ -173,6 +173,9 @@ enum ActivityStep {
     case plan(key: String, [PlanEntry], streaming: Bool)
     /// A run of `get_delegation_status` polls, drawn as one row.
     case delegationPolls(key: String, polls: [ToolCallVM], status: StepStatus)
+    /// A run of background-task polls (Claude Code's `TaskOutput` /
+    /// `TaskStop`, Grok's and CodeBuddy's), drawn as one row per task.
+    case backgroundTasks(BackgroundTasksStep)
     /// A run of TaskCreate/TaskUpdate/… calls — iOS's evolving checklist,
     /// which the web draws as plain todo rows. Kept: see the sync plan §2.4.
     case taskList(key: String, ops: [ToolCallVM])
@@ -185,6 +188,7 @@ enum ActivityStep {
     var key: String {
         switch self {
         case .tool(let step): return step.key
+        case .backgroundTasks(let step): return step.key
         case .thought(let key, _, _), .note(let key, _), .image(let key, _, _),
              .plan(let key, _, _), .delegationPolls(let key, _, _), .taskList(let key, _),
              .compaction(let key, _, _, _), .unsupported(let key, _):
@@ -232,6 +236,31 @@ struct ActivityGoalStep {
     var isError: Bool { ActivityGoal.isError(start: run.start, end: run.end) }
 }
 
+/// A run of background-task polls (web `background-tasks` step).
+struct BackgroundTasksStep {
+    /// `bg:<first poll id>`.
+    let key: String
+    let polls: [ToolCallVM]
+    let status: StepStatus
+    /// The commands that started these tasks, by task id — earlier steps of
+    /// the same reply whose output announced the launch.
+    let launches: [String: BackgroundLaunch]
+    /// One row per task (`BackgroundTask.buildRows`). Built once with the
+    /// step: the header counts, the rail and the rows all read it.
+    let rows: [BackgroundTask.Row]
+
+    /// `status`: the lane's own (`BackgroundTask.status`) unless given.
+    init(key: String, polls: [ToolCallVM], status: StepStatus? = nil,
+         launches: [String: BackgroundLaunch] = [:]) {
+        let rows = BackgroundTask.buildRows(polls)
+        self.key = key
+        self.polls = polls
+        self.rows = rows
+        self.status = status ?? BackgroundTask.status(rows)
+        self.launches = launches
+    }
+}
+
 /// A row of the timeline: one step, or a folded run of explore / command calls.
 enum ActivityItem {
     case step(ActivityStep)
@@ -259,8 +288,9 @@ struct ActivityCounts: Equatable, Sendable {
 
 /// What the reply's header says.
 struct ActivitySummary: Equatable, Sendable {
-    /// Tool-like steps: calls, sub-agents, delegations. Thoughts, notes,
-    /// plans and compactions do not count.
+    /// Tool-like steps: calls, sub-agents, delegations, background tasks (one
+    /// each, however often polled). Thoughts, notes, plans and compactions do
+    /// not count.
     var steps = 0
     var counts = ActivityCounts()
     var failed = 0

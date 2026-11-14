@@ -118,6 +118,31 @@ struct TimelineFoldingTests {
         #expect(!nodes.contains { $0.id == "tool-d1" })
     }
 
+    /// The web's background-task rows under `pinnedOnly`: the lane outlives a
+    /// folded reply only for a task whose newest poll is still in flight.
+    @Test func aFoldedReplyKeepsOnlyTheBackgroundTaskStillBeingPolledInView() {
+        let live = LiveTurn()
+        live.upsertToolCall(id: "p0", title: "TaskOutput", kind: "other", status: "completed",
+                            rawInput: #"{"task_id":"b0","block":true,"timeout":60000}"#,
+                            rawOutput: "<retrieval_status>success</retrieval_status>\n<task_id>b0</task_id>\n<status>completed</status>\n<exit_code>0</exit_code>\n<output>built</output>",
+                            content: nil)
+        live.upsertToolCall(id: "p1", title: "TaskOutput", kind: "other", status: "in_progress",
+                            rawInput: #"{"task_id":"b1","block":true,"timeout":60000}"#, rawOutput: nil, content: nil)
+        live.appendText("Waiting on the second build.")
+        let store = ReplyFoldStore()
+        store.beginRound()
+        store.setOpen(false, key: live.id, isCurrent: true)
+
+        let folded = visible(TranscriptTimeline.buildLive(live, agent: .claudeCode, replyOpen: false), store: store)
+        #expect(folded.contains { $0.id == "bg:p0:b1" }, "the task still being polled stays in view")
+        #expect(!folded.contains { $0.id == "bg:p0:b0" }, "the finished one folds away")
+
+        store.setOpen(true, key: live.id, isCurrent: true)
+        let open = visible(TranscriptTimeline.buildLive(live, agent: .claudeCode, replyOpen: true), store: store)
+        let rows = open.filter { if case .backgroundTask = $0.content { return true }; return false }
+        #expect(rows.map(\.id) == ["bg:p0:b0", "bg:p0:b1"])
+    }
+
     @Test func theNewestReplyIsCurrentEvenWithoutAHeader() {
         let date = Date()
         let turns = [

@@ -294,11 +294,22 @@ struct ActivityToolRow: View {
             || (vm.input?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
     }
 
+    /// A backgrounded command's (or a monitor's) result is the CLI's note to
+    /// the model that the work goes on in the background; the reader gets
+    /// which task it is instead (web `useCommandOutput`).
+    private var backgroundNote: String? {
+        guard let id = tool.background?.taskId, !vm.isError,
+              let output = vm.output, !output.isEmpty else { return nil }
+        return tool.kind == .monitor
+            ? String(localized: "Watching in background · \(id)", comment: "Activity row: a monitor's output, kept in the background under this task id")
+            : String(localized: "Running in background · \(id)", comment: "Activity row: a backgrounded command's output, under this task id")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
             if expanded, hasBody {
-                ToolCallBody(vm: vm, showsTranscript: false)
+                ToolCallBody(vm: vm, showsTranscript: false, outputNote: backgroundNote)
                     .transition(.opacity)
             }
         }

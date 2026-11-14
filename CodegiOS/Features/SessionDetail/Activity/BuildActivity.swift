@@ -5,9 +5,9 @@ import Foundation
 /// `src/lib/activity/build-activity.ts` (codeg 0.44).
 ///
 /// Runs on the parts `MessageRender` adapts for one reply, BEFORE its generic
-/// tool grouping: delegation polls and task-checklist runs arrive already
-/// gathered (they are lanes of their own), plain tool calls arrive one by one
-/// and are grouped here, by kind.
+/// tool grouping: delegation polls, background-task polls and task-checklist
+/// runs arrive already gathered (they are lanes of their own), plain tool
+/// calls arrive one by one and are grouped here, by kind.
 ///
 /// Live prose is never read here. A `LiveTextRun` is referred to by its id —
 /// reading its text would subscribe whoever builds the model to every streamed
@@ -42,7 +42,7 @@ enum BuildActivity {
         switch part {
         case .text, .liveText, .proposedPlan, .image, .turnError:
             return true
-        case .reasoning, .liveReasoning, .tool, .delegationStatusGroup, .taskGroup,
+        case .reasoning, .liveReasoning, .tool, .delegationStatusGroup, .backgroundTaskGroup, .taskGroup,
              .compaction, .unknown:
             return false
         case .goalRun:
@@ -99,7 +99,7 @@ enum BuildActivity {
         for part in parts {
             switch part {
             case .tool(let vm): return vm.id
-            case .delegationStatusGroup(let polls), .taskGroup(let polls):
+            case .delegationStatusGroup(let polls), .backgroundTaskGroup(let polls), .taskGroup(let polls):
                 if let first = polls.first { return first.id }
             case .goalRun(let run): return run.start.id
             default: continue
@@ -126,7 +126,7 @@ enum BuildActivity {
         case .unknown(let type): return "unknown:\(type)"
         case .liveText(let run, _), .liveReasoning(let run, _): return "run:\(run.id)"
         case .tool(let vm): return "tool:\(vm.id)"
-        case .delegationStatusGroup, .taskGroup: return "group"
+        case .delegationStatusGroup, .backgroundTaskGroup, .taskGroup: return "group"
         case .goalRun(let run): return "goal-run:\(run.start.id)"
         }
     }
@@ -172,6 +172,10 @@ enum BuildActivity {
                 guard let first = polls.first else { continue }
                 steps.append(.delegationPolls(key: "dpoll:\(first.id)", polls: polls,
                                               status: ActivityStatus.combine(polls.map { ActivityStatus.of($0) })))
+            case .backgroundTaskGroup(let polls):
+                guard let first = polls.first else { continue }
+                steps.append(.backgroundTasks(BackgroundTasksStep(
+                    key: "bg:\(first.id)", polls: polls, launches: launchesBefore(steps))))
             case .taskGroup(let ops):
                 guard let first = ops.first else { continue }
                 steps.append(.taskList(key: "tasks:\(first.id)", ops: ops))
@@ -209,6 +213,20 @@ enum BuildActivity {
                          run: GoalRunPart(start: step.call, end: nil, items: [],
                                           isRunning: GoalRuns.isRunningCall(step.call)),
                          model: .empty)
+    }
+
+    /// Background launches among the steps so far, by task id: a command (or
+    /// a monitor) whose output said it went on in the background. A later
+    /// launch of the same id wins.
+    private static func launchesBefore(_ steps: [ActivityStep]) -> [String: BackgroundLaunch] {
+        var launches: [String: BackgroundLaunch] = [:]
+        for step in steps {
+            guard let tool = step.toolStep, let taskId = tool.tool.background?.taskId, !taskId.isEmpty,
+                  let command = tool.tool.command else { continue }
+            launches[taskId] = BackgroundLaunch(stepKey: tool.key, command: command.display,
+                                                description: command.description)
+        }
+        return launches
     }
 
     /// A call interrupted before it carried anything — no arguments, no output

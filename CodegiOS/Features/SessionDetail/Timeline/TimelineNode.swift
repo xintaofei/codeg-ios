@@ -90,6 +90,9 @@ struct TimelineNode: Identifiable {
         /// A Codex `/goal`: one row naming the objective and its status, which
         /// opens onto the run's own steps (`GoalRunRow`).
         case goal(ActivityGoalStep)
+        /// One task of a background-task lane, its polls folded together;
+        /// `launch`: the command that started it, when that is in the reply.
+        case backgroundTask(BackgroundTask.Row, launch: BackgroundLaunch?)
     }
 
     /// What a reply's header (and foot) say.
@@ -138,6 +141,10 @@ struct TimelineNode: Identifiable {
                          state: ActivityRowStyle.markerState(step.tool.status, recovered: recovered))
         case .goal(let goal):
             return .tool(icon: GoalRowStyle.icon, state: GoalRowStyle.markerState(goal))
+        case .backgroundTask(let row, _):
+            // A sub-agent polled like a background task reads as one.
+            return .tool(icon: row.isSubagent ? "cpu" : "hourglass",
+                         state: ActivityRowStyle.markerState(BackgroundTask.rowStatus(row), recovered: false))
         }
     }
 }
@@ -337,11 +344,14 @@ enum TranscriptTimeline {
         // A live reply keeps its `Working` header for that continuity.)
         if completed, bodyCount == 0,
            !BuildActivity.hasVisibleAnswer(split.trailing) || (durationMs ?? 0) <= 0 {
-            return parts.enumerated().map { idx, part in
-                var n = node(for: part, ownerID: ownerID, index: idx, agent: agent)
-                n.reply = .init(key: ownerID, role: .always)
-                return n
+            var headerless: [TimelineNode] = []
+            for (idx, part) in parts.enumerated() {
+                for var n in nodes(for: part, ownerID: ownerID, index: idx, agent: agent) {
+                    n.reply = .init(key: ownerID, role: .always)
+                    headerless.append(n)
+                }
             }
+            return headerless
         }
         // Folding trades the process away to keep the answer, so a reply with no
         // answer left (stopped mid-call, or whose last card IS the answer)
@@ -361,16 +371,31 @@ enum TranscriptTimeline {
             TimelineNode(id: "\(ownerID)#header", content: .replyHeader(header), agent: agent), .header)]
         let recovered = model.summary.recoveredKeys
         for item in model.items {
-            out.append(member(node(for: item, ownerID: ownerID, agent: agent, recovered: recovered),
-                              canOutliveReply(item) ? .pinned : .body))
+            let outlives = canOutliveReply(item)
+            for node in nodes(for: item, ownerID: ownerID, agent: agent, recovered: recovered) {
+                out.append(member(node, role(of: node, outlives: outlives)))
+            }
         }
         if foldable {
             out.append(member(TimelineNode(id: "\(ownerID)#foot", content: .replyFoot(header), agent: agent), .foot))
         }
         for (offset, part) in model.answer.enumerated() {
-            out.append(member(node(for: part, ownerID: ownerID, index: answerStart + offset, agent: agent), .always))
+            for node in nodes(for: part, ownerID: ownerID, index: answerStart + offset, agent: agent) {
+                out.append(member(node, .always))
+            }
         }
         return out
+    }
+
+    /// Where a process row goes while its reply is folded. A background-task
+    /// lane can outlive its reply, but row by row: only a task whose newest
+    /// poll is still in flight stays in view (web `BackgroundTaskRows` under
+    /// `pinnedOnly`).
+    private static func role(of node: TimelineNode, outlives: Bool) -> TimelineNode.ReplyMembership.Role {
+        if case .backgroundTask(let row, _) = node.content {
+            return BackgroundTask.staysInView(row) ? .pinned : .body
+        }
+        return outlives ? .pinned : .body
     }
 
     /// Rows that can outlive their reply — kept in view when it folds, while
@@ -383,6 +408,9 @@ enum TranscriptTimeline {
         switch step {
         case .delegationPolls(_, _, let status):
             return status.isLive
+        case .backgroundTasks:
+            // Task by task — see `role(of:outlives:)`.
+            return true
         case .tool(let tool):
             let vm = tool.call
             switch tool.tool.kind {
@@ -420,22 +448,39 @@ enum TranscriptTimeline {
         }
     }
 
-    private static func node(for item: ActivityItem, ownerID: String, agent: AgentType,
-                             recovered: Set<String>) -> TimelineNode {
+    private static func nodes(for item: ActivityItem, ownerID: String, agent: AgentType,
+                              recovered: Set<String>) -> [TimelineNode] {
         switch item {
         case .group(_, let kind, let steps, let status):
             // Keyed like the older tool group (its first call), so the row keeps
             // its identity while the run grows and across the live → history
             // hand-over.
             let gid = steps.first.map { "toolgroup-\($0.call.id)" } ?? "\(ownerID)#group"
-            return TimelineNode(id: gid, content: .activityGroup(
+            return [TimelineNode(id: gid, content: .activityGroup(
                 kind: kind, steps: steps, status: status,
-                recoveredKeys: recovered.intersection(steps.map(\.key))), agent: agent)
+                recoveredKeys: recovered.intersection(steps.map(\.key))), agent: agent)]
+        case .step(.backgroundTasks(let tasks)):
+            // A row per task.
+            return backgroundTaskNodes(stepKey: tasks.key, rows: tasks.rows, launches: tasks.launches, agent: agent)
         case .step(let step):
-            return node(for: step, ownerID: ownerID, agent: agent, recovered: recovered)
+            return [node(for: step, ownerID: ownerID, agent: agent, recovered: recovered)]
         }
     }
 
+    /// A background-task lane's rows, each keyed `<step key>:<row key>` — the
+    /// lane's first poll and the task — so a row keeps its identity while the
+    /// lane grows and across the live → history hand-over.
+    private static func backgroundTaskNodes(stepKey: String, rows: [BackgroundTask.Row],
+                                            launches: [String: BackgroundLaunch],
+                                            agent: AgentType) -> [TimelineNode] {
+        rows.map { row in
+            TimelineNode(id: "\(stepKey):\(row.key)",
+                         content: .backgroundTask(row, launch: row.taskId.flatMap { launches[$0] }),
+                         agent: agent)
+        }
+    }
+
+    /// One step's node. (A background-task lane is several — `nodes(for:)`.)
     private static func node(for step: ActivityStep, ownerID: String, agent: AgentType,
                              recovered: Set<String>) -> TimelineNode {
         let base = "\(ownerID)#\(BuildActivity.rowIdentity(step.key))"
@@ -469,6 +514,12 @@ enum TranscriptTimeline {
         case .delegationPolls(_, let polls, _):
             let gid = polls.first.map { "delegstatus-\($0.id)" } ?? base
             return TimelineNode(id: gid, content: .delegationStatusGroup(polls), agent: agent)
+        case .backgroundTasks(let tasks):
+            // Never reached (`nodes(for:)` draws a row per task); the lane's
+            // first task stands for it.
+            let first = backgroundTaskNodes(stepKey: tasks.key, rows: tasks.rows,
+                                            launches: tasks.launches, agent: agent).first
+            return first ?? TimelineNode(id: base, content: .unsupported("background-task-group"), agent: agent)
         case .taskList(_, let ops):
             let gid = ops.first.map { "taskgroup-\($0.id)" } ?? base
             return TimelineNode(id: gid, content: .taskGroup(ops), agent: agent)
@@ -489,8 +540,8 @@ enum TranscriptTimeline {
     /// a reply's are, its rail ending at its first and last node.
     static func goalBodyNodes(_ goal: ActivityGoalStep, agent: AgentType) -> [TimelineNode] {
         let recovered = goal.model.summary.recoveredKeys
-        var nodes = goal.model.items.map {
-            node(for: $0, ownerID: goal.key, agent: agent, recovered: recovered)
+        var nodes = goal.model.items.flatMap {
+            Self.nodes(for: $0, ownerID: goal.key, agent: agent, recovered: recovered)
         }
         if !nodes.isEmpty {
             nodes[0].connectTop = false
@@ -501,48 +552,55 @@ enum TranscriptTimeline {
 
     // MARK: Part → node
 
-    /// Map one `RenderPart` to a node. IDs are chosen so a tool that is `running`
+    /// Map one `RenderPart` to its node(s): one, except a background-task lane
+    /// (a row per task). IDs are chosen so a tool that is `running`
     /// during streaming keeps the SAME `List` identity once the reply finalizes
     /// (both paths key tools by their ACP tool id) — its card's expand state and
     /// marker survive the live→persisted handoff instead of flashing. Text /
     /// reasoning live runs key by the segment id (`t-`/`k-`), matching
     /// `LiveSegment.id`; finalized prose keys by its part index.
-    private static func node(for part: RenderPart, ownerID: String, index: Int, agent: AgentType) -> TimelineNode {
+    private static func nodes(for part: RenderPart, ownerID: String, index: Int, agent: AgentType) -> [TimelineNode] {
         let base = "\(ownerID)#\(index)"
         switch part {
         case .text(let s):
-            return TimelineNode(id: base, content: .assistantText(s), agent: agent)
+            return [TimelineNode(id: base, content: .assistantText(s), agent: agent)]
         case .reasoning(let t):
-            return TimelineNode(id: base, content: .reasoning(t), agent: agent)
+            return [TimelineNode(id: base, content: .reasoning(t), agent: agent)]
         case .liveText(let run, let streaming):
-            return TimelineNode(id: "t-\(run.id)", content: .liveText(run, streaming: streaming), agent: agent)
+            return [TimelineNode(id: "t-\(run.id)", content: .liveText(run, streaming: streaming), agent: agent)]
         case .liveReasoning(let run, let streaming):
-            return TimelineNode(id: "k-\(run.id)", content: .liveReasoning(run, streaming: streaming), agent: agent)
+            return [TimelineNode(id: "k-\(run.id)", content: .liveReasoning(run, streaming: streaming), agent: agent)]
         case .tool(let vm):
-            return TimelineNode(id: "tool-\(vm.id)", content: .tool(vm), agent: agent)
+            return [TimelineNode(id: "tool-\(vm.id)", content: .tool(vm), agent: agent)]
         case .delegationStatusGroup(let polls):
             let gid = polls.first.map { "delegstatus-\($0.id)" } ?? base
-            return TimelineNode(id: gid, content: .delegationStatusGroup(polls), agent: agent)
+            return [TimelineNode(id: gid, content: .delegationStatusGroup(polls), agent: agent)]
+        case .backgroundTaskGroup(let polls):
+            // Process, so never part of an answer; drawn like its step all the
+            // same, without the launches (those are read off the reply's steps).
+            guard let first = polls.first else { return [] }
+            return backgroundTaskNodes(stepKey: "bg:\(first.id)", rows: BackgroundTask.buildRows(polls),
+                                       launches: [:], agent: agent)
         case .taskGroup(let ops):
             let gid = ops.first.map { "taskgroup-\($0.id)" } ?? base
-            return TimelineNode(id: gid, content: .taskGroup(ops), agent: agent)
+            return [TimelineNode(id: gid, content: .taskGroup(ops), agent: agent)]
         case .image(let img, let cap):
-            return TimelineNode(id: base, content: .image(img, caption: cap), agent: agent)
+            return [TimelineNode(id: base, content: .image(img, caption: cap), agent: agent)]
         case .compaction(let before, let after, let running):
-            return TimelineNode(id: base,
-                                content: .compaction(before: before, after: after, running: running),
-                                agent: agent)
+            return [TimelineNode(id: base,
+                                 content: .compaction(before: before, after: after, running: running),
+                                 agent: agent)]
         case .proposedPlan(let markdown, let streaming):
-            return TimelineNode(id: base, content: .proposedPlan(markdown: markdown, streaming: streaming), agent: agent)
+            return [TimelineNode(id: base, content: .proposedPlan(markdown: markdown, streaming: streaming), agent: agent)]
         case .turnError(let message):
-            return TimelineNode(id: base, content: .error(message, details: nil), agent: agent)
+            return [TimelineNode(id: base, content: .error(message, details: nil), agent: agent)]
         case .unknown(let type):
-            return TimelineNode(id: base, content: .unsupported(type), agent: agent)
+            return [TimelineNode(id: base, content: .unsupported(type), agent: agent)]
         case .goalRun(let run):
             // A run is process, never the answer, so the reply builder draws it
             // through its step; this keeps a stray one drawn the same way.
-            return TimelineNode(id: "goal-\(run.start.id)", content: .goal(BuildActivity.goalStep(run)),
-                                agent: agent)
+            return [TimelineNode(id: "goal-\(run.start.id)", content: .goal(BuildActivity.goalStep(run)),
+                                 agent: agent)]
         }
     }
 

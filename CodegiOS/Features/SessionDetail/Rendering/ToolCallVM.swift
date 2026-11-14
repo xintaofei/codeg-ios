@@ -248,6 +248,10 @@ enum RenderPart {
     case tool(ToolCallVM)
     /// A run of consecutive `get_delegation_status` polls, merged into one card.
     case delegationStatusGroup([ToolCallVM])
+    /// A run of consecutive background-task polls (Claude Code's `TaskOutput`
+    /// / `TaskStop`, Grok's and CodeBuddy's — `BackgroundTask.isToolCall`),
+    /// drawn as one row per task.
+    case backgroundTaskGroup([ToolCallVM])
     /// A run of consecutive task-management calls (`TaskCreate`/`TaskUpdate`/
     /// `TaskList`/`TaskGet`), merged into one evolving checklist card.
     case taskGroup([ToolCallVM])
@@ -277,8 +281,8 @@ enum MessageRender {
     ///   calls. `.settled` (a record) for all but two cases — see `toolState`.
     ///
     /// Plain calls stay ungrouped: the activity timeline groups them by kind
-    /// itself, and takes only the delegation-poll and task-checklist lanes
-    /// from here.
+    /// itself, and takes only the delegation-poll, background-task and
+    /// task-checklist lanes from here.
     static func adaptTurn(_ turn: MessageTurn, liveness: ToolLiveness = .settled) -> [RenderPart] {
         let cacheKey = TurnKey(turn: turn, liveness: liveness)
         if let cached = turnCache[cacheKey] { return cached }
@@ -447,10 +451,12 @@ enum MessageRender {
                               isStreaming: turn.isStreaming && span.upperBound == segments.count)
     }
 
-    /// Only the lanes that are rows of their own — delegation polls and the
-    /// task checklist; plain calls are grouped by the activity model.
+    /// Only the lanes that are rows of their own — delegation polls,
+    /// background-task polls and the task checklist; plain calls are grouped
+    /// by the activity model. In the web's order: delegation polls first, then
+    /// background tasks out of what is left.
     static func groupLanes(_ parts: [RenderPart]) -> [RenderPart] {
-        groupConsecutiveTaskOps(groupConsecutiveDelegationStatus(parts))
+        groupConsecutiveTaskOps(groupConsecutiveBackgroundTasks(groupConsecutiveDelegationStatus(parts)))
     }
 
     /// Wrap each run of consecutive `get_delegation_status` polls into a single
@@ -460,6 +466,14 @@ enum MessageRender {
     /// resolution applies uniformly. Consecutive assistant turns are merged before
     /// adaptation (`TranscriptTimeline.merge`), so a multi-round poll sequence lands
     /// consecutively here and collapses without a separate cross-turn pass.
+    ///
+    /// A background-task poll is left to its own lane even when its input
+    /// reads as a status check: Grok's `get_command_or_subagent_output` polls
+    /// with `{task_ids, timeout_ms}`, which `CompanionDetect` takes for
+    /// `get_delegation_status` by shape. A call NAMED `get_delegation_status`
+    /// stays here whatever its result quotes — the web picks this lane by name
+    /// (`isDelegationStatusToolName`) before the background one, and a child's
+    /// report can carry a background envelope's tags as text.
     static func groupConsecutiveDelegationStatus(_ parts: [RenderPart]) -> [RenderPart] {
         var out: [RenderPart] = []
         var buffer: [ToolCallVM] = []
@@ -471,7 +485,38 @@ enum MessageRender {
         }
 
         for part in parts {
-            if case .tool(let vm) = part, vm.companion == .delegationStatus {
+            if case .tool(let vm) = part, vm.companion == .delegationStatus,
+               CompanionDetect.nameKind(vm.toolName) == .delegationStatus || !BackgroundTask.isToolCall(vm) {
+                buffer.append(vm)
+            } else {
+                flush()
+                out.append(part)
+            }
+        }
+        flush()
+        return out
+    }
+
+    /// Wrap each run of consecutive background-task polls
+    /// (`BackgroundTask.isToolCall`) into a single `backgroundTaskGroup`.
+    /// Mirrors `groupConsecutiveDelegationStatus`: any other part breaks the
+    /// run, and even a single poll is wrapped, so every poll reads through the
+    /// one lane. The web also merges the groups two turns leave side by side
+    /// (`mergeAdjacentBackgroundTaskGroups` / `joinMergedParts`); here the
+    /// turns are merged before they are adapted, so a run spanning them is
+    /// already consecutive.
+    static func groupConsecutiveBackgroundTasks(_ parts: [RenderPart]) -> [RenderPart] {
+        var out: [RenderPart] = []
+        var buffer: [ToolCallVM] = []
+
+        func flush() {
+            guard !buffer.isEmpty else { return }
+            out.append(.backgroundTaskGroup(buffer))
+            buffer = []
+        }
+
+        for part in parts {
+            if case .tool(let vm) = part, BackgroundTask.isToolCall(vm) {
                 buffer.append(vm)
             } else {
                 flush()

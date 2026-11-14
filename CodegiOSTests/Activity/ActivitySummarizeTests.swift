@@ -174,7 +174,18 @@ struct ActivitySummarizeTests {
         #expect(summary.counts.agents == 1)
     }
 
-    // Skipped: "counts each background task once and its failure" — iOS does
-    // not port the background-task lane (`background-tasks` steps built from
-    // Claude Code `TaskOutput` polls).
+    @Test("counts each background task once and its failure")
+    func countsEachBackgroundTaskOnceAndItsFailure() {
+        func poll(_ id: String, _ status: String, _ exit: Int) -> ToolCallVM {
+            part("TaskOutput", #"{"task_id":"bg1","block":true}"#,
+                 output: "<retrieval_status>success</retrieval_status>\n<task_id>bg1</task_id>\n<status>\(status)</status>\n<exit_code>\(exit)</exit_code>\n<output>x</output>",
+                 id: id)
+        }
+        let summary = ActivitySummarize.summarize([
+            .backgroundTasks(BackgroundTasksStep(key: "bg:p1", polls: [poll("p1", "running", 0), poll("p2", "completed", 2)],
+                                                 status: .failed, launches: [:])),
+        ])
+        #expect(summary.steps == 1)
+        #expect(summary.failed == 1)
+    }
 }

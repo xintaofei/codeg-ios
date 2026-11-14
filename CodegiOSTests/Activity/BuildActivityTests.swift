@@ -186,6 +186,7 @@ struct BuildActivityTests {
                     return "thought:\(ThoughtTitle.thoughtTitle(text(body), streaming: streaming) ?? "null")"
                 case .note: return "note"
                 case .delegationPolls: return "delegation-polls"
+                case .backgroundTasks: return "background-tasks"
                 case .taskList: return "task-list"
                 case .compaction: return "compaction"
                 case .image: return "image"
@@ -211,9 +212,6 @@ struct BuildActivityTests {
 
     // MARK: - on the reference turn
 
-    // Adapted: the web draws Claude Code's `TaskOutput` poll (t14) as a
-    // `background-tasks` lane; iOS does not port that lane, so it is a plain
-    // tool row — and, standing between them, still ends the command run.
     @Test("draws one row per step, with exploration and commands folded")
     func drawsOneRowPerStepWithExplorationAndCommandsFolded() {
         #expect(rows(reference.items) == [
@@ -228,9 +226,31 @@ struct BuildActivityTests {
             "delegation:t10",
             "delegation-polls",
             "command(t12,t13)",
-            "generic:t14",
+            "background-tasks",
             "command:t15",
         ])
+    }
+
+    // iOS addition (the web checks this in its row tests): the lane is keyed
+    // by its first poll, and names the task by the command that started it.
+    @Test("keys the background-task lane by its poll and names the task's launch")
+    func keysTheBackgroundTaskLaneByItsPollAndNamesTheTasksLaunch() {
+        guard let lane = reference.steps.lazy.compactMap({ step -> BackgroundTasksStep? in
+            if case .backgroundTasks(let lane) = step { return lane }
+            return nil
+        }).first else {
+            Issue.record("expected a background-tasks step"); return
+        }
+        #expect(lane.key == "bg:t14")
+        #expect(lane.status == .succeeded)
+        #expect(lane.launches["beecec7d"] == BackgroundLaunch(
+            stepKey: "tool:t13", command: "python scripts/regen_report.py",
+            description: "Regenerate audit report"))
+        #expect(lane.rows.map(\.taskId) == ["beecec7d"])
+        guard let row = lane.rows.first else { return }
+        #expect(row.badge == .completed)
+        #expect(BackgroundTask.rowDetail(row, launch: lane.launches["beecec7d"])
+                == "Regenerate audit report · report.md written")
     }
 
     @Test("hands a delegation its status poll, drawn as a row of its own")
@@ -294,9 +314,6 @@ struct BuildActivityTests {
         if case .text? = answer.first {} else { Issue.record("expected a text answer, got \(answer)") }
     }
 
-    // Adapted: the web counts the background-task lane's one task (t14) as a
-    // step; iOS draws t14 as a plain generic call, which counts as one step too,
-    // so the totals agree.
     @Test("summarizes the turn")
     func summarizesTheTurn() {
         let summary = reference.summary

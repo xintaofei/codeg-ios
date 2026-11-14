@@ -10,9 +10,8 @@ import Foundation
 /// - A failure is "recovered" when a later step of the same kind on the same
 ///   target succeeded: the same command line, the same file, the same MCP tool
 ///   with the same arguments.
-///
-/// Not ported yet: the web's background-task rows (Claude Code `TaskOutput`
-/// polls), which iOS does not group into a lane of their own.
+/// - A background task is one step however often it was polled, and its
+///   failure is one failure, which nothing recovers.
 enum ActivitySummarize {
     /// What "the same thing" means for the recovery rule, or nil when a step
     /// of this kind is never considered retried.
@@ -70,6 +69,13 @@ enum ActivitySummarize {
 
         for (index, step) in flatten(steps).enumerated() {
             switch step {
+            case .backgroundTasks(let tasks):
+                for row in tasks.rows {
+                    summary.steps += 1
+                    if row.badge == .running { summary.running = true }
+                    if row.badge == .failed { failures.append((step.key, nil, index)) }
+                }
+                continue
             case .delegationPolls(_, _, let status):
                 if status.isLive { summary.running = true }
                 continue

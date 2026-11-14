@@ -103,6 +103,9 @@ struct ToolCallBody: View {
     let vm: ToolCallVM
     /// Show the live sub-agent transcript (only while the call is running).
     var showsTranscript: Bool
+    /// Shown in place of the call's output: a backgrounded command's result
+    /// is the CLI's note to the model, and the reader gets which task it is.
+    var outputNote: String? = nil
 
     var body: some View { bodyContent }
 
@@ -126,7 +129,9 @@ struct ToolCallBody: View {
     /// renderer, which classifies JSON / diff / Markdown / log.
     @ViewBuilder
     private var outputBody: some View {
-        if vm.bucket == .read, !vm.isError, let file = ReadOutputFormat.parse(vm.trimmedOutput) {
+        if let outputNote {
+            ToolOutputBody(output: outputNote, isError: false, isCommand: true)
+        } else if vm.bucket == .read, !vm.isError, let file = ReadOutputFormat.parse(vm.trimmedOutput) {
             FileBodyView(file: file)
         } else if let results = vm.searchResultText {
             // Grouped, line-numbered results, on the envelope-unwrapped text.
