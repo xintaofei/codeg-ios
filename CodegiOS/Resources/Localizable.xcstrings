@@ -1332,6 +1332,17 @@
         }
       }
     },
+    "Allow this connection?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许这个连接吗？"
+          }
+        }
+      }
+    },
     "Allowed actions" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4333,6 +4344,17 @@
         }
       }
     },
+    "Host" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主机"
+          }
+        }
+      }
+    },
     "How deep a chain (root → child → grandchild …) can recurse." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5465,6 +5487,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "原生配置"
+          }
+        }
+      }
+    },
+    "network" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "网络"
+          }
+        }
+      }
+    },
+    "Network request outside the sandbox" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沙箱外的网络请求"
           }
         }
       }

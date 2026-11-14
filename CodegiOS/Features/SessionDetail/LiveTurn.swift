@@ -432,6 +432,15 @@ final class LiveTurn: Identifiable {
         }
     }
 
+    /// The live tool call a permission request is about, matched by the id the
+    /// request names (web `findLiveToolCallInfo`). Nil when the request names no
+    /// id or this turn never saw the call.
+    func permissionLiveInfo(for toolCall: AnyJSON) -> PermissionLiveInfo? {
+        guard let id = PermissionLiveMerge.toolCallId(toolCall), let call = toolIndex[id] else { return nil }
+        return PermissionLiveInfo(toolCallId: call.id, title: call.title, kind: call.kind,
+                                  rawInput: call.rawInput, meta: call.meta)
+    }
+
     /// Short human-readable label for the currently active tool, for the compose
     /// status line ("Running Edit…").
     var activeToolTitle: String? {

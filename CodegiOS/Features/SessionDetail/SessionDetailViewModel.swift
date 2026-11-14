@@ -2508,7 +2508,8 @@ final class SessionDetailViewModel {
 
     private func restorePending(from snap: LiveSessionSnapshot) {
         if let p = snap.pendingPermission {
-            pendingPermission = PendingPermission(requestId: p.requestId, toolCall: p.toolCall, options: p.options)
+            pendingPermission = PendingPermission(requestId: p.requestId, toolCall: p.toolCall, options: p.options,
+                                                  liveInfo: liveTurn?.permissionLiveInfo(for: p.toolCall))
         }
         if let q = snap.pendingQuestion {
             pendingQuestion = PendingQuestion(questionId: q.questionId, questions: q.questions)
@@ -2524,6 +2525,15 @@ final class SessionDetailViewModel {
                 approvalId: p.approvalId, toolCallId: p.toolCallId, planMarkdown: p.planMarkdown)
         } else {
             pendingPlanApproval = nil
+        }
+    }
+
+    /// Fill a showing permission card in from the call an event just touched —
+    /// the request may have arrived before it. Only reassigned when the merge
+    /// lends something, so streaming updates don't churn the card.
+    private func refreshPendingPermission(from live: LiveTurn, toolCallId: String) {
+        if let refreshed = pendingPermission?.refreshed(by: live, toolCallId: toolCallId) {
+            pendingPermission = refreshed
         }
     }
 
@@ -2566,11 +2576,13 @@ final class SessionDetailViewModel {
 
         case .toolCall(let id, let title, let kind, let status, let content, let rawInput, let rawOutput, let meta):
             live.upsertToolCall(id: id, title: title, kind: kind, status: status, rawInput: rawInput, rawOutput: rawOutput, content: content, meta: meta)
+            refreshPendingPermission(from: live, toolCallId: id)
             sendState = .running(tool: title.isEmpty ? "tool" : title)
             requestScrollToBottom()
 
         case .toolCallUpdate(let id, let title, let status, let content, let rawInput, let rawOutput, let append, let meta):
             live.updateToolCall(id: id, title: title, status: status, rawInput: rawInput, rawOutput: rawOutput, content: content, append: append, meta: meta)
+            refreshPendingPermission(from: live, toolCallId: id)
             if let active = live.activeToolTitle {
                 sendState = .running(tool: active)
             } else {
@@ -2638,7 +2650,8 @@ final class SessionDetailViewModel {
         case .permissionRequest(let requestId, let toolCall, let options):
             // The agent paused for approval (incl. ExitPlanMode). Surface the card
             // above the compose bar; the turn stays in-flight until it's resolved.
-            pendingPermission = PendingPermission(requestId: requestId, toolCall: toolCall, options: options)
+            pendingPermission = PendingPermission(requestId: requestId, toolCall: toolCall, options: options,
+                                                  liveInfo: live.permissionLiveInfo(for: toolCall))
             requestScrollToBottom()
 
         case .permissionResolved(let requestId):
@@ -3013,10 +3026,12 @@ final class SessionDetailViewModel {
         // A prompting snapshot past the handshake is this turn running — the
         // same evidence its opening events would have been, had they arrived.
         if snap.status == .prompting { live.serverTurnStarted = true }
-        restorePending(from: snap)
         if let rebuilt = buildLiveTurn(from: snap), !rebuilt.segments.isEmpty {
             live.adoptContent(from: rebuilt)
         }
+        // After the adopt: a restored permission borrows from the live call it is
+        // about, which may have arrived only in the gap.
+        restorePending(from: snap)
         return false
     }
 

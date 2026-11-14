@@ -198,14 +198,160 @@ struct PlanEntry: Decodable, Hashable, Sendable {
 /// (the plan content rides in `parsed`).
 struct PendingPermission: Identifiable {
     let requestId: String
+    /// The request's tool call with whatever the live call has lent it so far —
+    /// kept so a call that arrives AFTER the request can still fill it in.
+    let toolCall: AnyJSON
     let parsed: ParsedPermission
     let options: [PermissionOption]
     var id: String { requestId }
 
-    init(requestId: String, toolCall: AnyJSON, options: [PermissionOption]) {
+    /// `liveInfo` is the live tool call this request is about, when the turn has
+    /// one — see ``PermissionLiveMerge`` for what it may lend the request.
+    init(requestId: String, toolCall: AnyJSON, options: [PermissionOption], liveInfo: PermissionLiveInfo? = nil) {
+        let merged = PermissionLiveMerge.merge(toolCall, with: liveInfo)
         self.requestId = requestId
-        self.parsed = ParsedPermission.parse(toolCall)
+        self.toolCall = merged
+        self.parsed = ParsedPermission.parse(merged)
         self.options = options
+    }
+
+    /// This request re-merged with the live call it names, after a `tool_call` /
+    /// `tool_call_update` for `toolCallId` (web `mergePendingPermissionWithLiveInfo`,
+    /// run from both reducers). A request can reach the client before the call
+    /// it is about — Claude Code's sandbox network ask does, and only the call
+    /// names the tool. Nil when the update is about another call or lends
+    /// nothing new, so the caller leaves the showing card alone.
+    @MainActor
+    func refreshed(by live: LiveTurn, toolCallId: String) -> PendingPermission? {
+        guard PermissionLiveMerge.toolCallId(toolCall) == toolCallId,
+              let info = live.permissionLiveInfo(for: toolCall)
+        else { return nil }
+        let next = PendingPermission(requestId: requestId, toolCall: toolCall, options: options, liveInfo: info)
+        return next.toolCall == toolCall ? nil : next
+    }
+}
+
+/// What the live tool call a permission request is about knows — the input of
+/// ``PermissionLiveMerge``. Plain values, so the merge stays a pure function.
+struct PermissionLiveInfo: Sendable {
+    let toolCallId: String
+    let title: String
+    let kind: String
+    /// The live call's input as the wire's JSON string.
+    let rawInput: String?
+    /// The live call's ACP `meta`.
+    let meta: AnyJSON?
+}
+
+/// Port of the web's `mergePermissionToolCallWithLiveInfo`
+/// (`acp-connections-context.tsx`): fill what a permission request left out from
+/// the live tool call it is about. The request stays the authority on WHAT is
+/// being approved — only gaps are filled, never a field the request set.
+enum PermissionLiveMerge {
+    /// The id a permission request names its tool call by (web
+    /// `extractPermissionToolCallId`). Probes both casings: the shared decoder
+    /// camelCases `tool_call_id` / `call_id`.
+    static func toolCallId(_ toolCall: AnyJSON) -> String? {
+        guard let record = toolCall.object else { return nil }
+        for key in ["call_id", "callId", "tool_call_id", "toolCallId", "id"] {
+            if case .string(let s)? = record[key],
+               !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return s }
+        }
+        return nil
+    }
+
+    static func merge(_ toolCall: AnyJSON, with live: PermissionLiveInfo?) -> AnyJSON {
+        guard let live else { return toolCall }
+        let liveRawInput = live.rawInput.flatMap {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+        }
+        guard var next = toolCall.object else {
+            guard let liveRawInput else { return toolCall }
+            return .object([
+                "toolCallId": .string(live.toolCallId), "title": .string(live.title),
+                "kind": .string(live.kind), "rawInput": .string(liveRawInput),
+            ])
+        }
+
+        if let (key, requestInput) = pickInput(next) {
+            if let filled = fillStrippedEditInput(requestInput, liveRawInput: liveRawInput) {
+                next[key] = .object(filled)
+            }
+        } else if let liveRawInput {
+            next["rawInput"] = .string(liveRawInput)
+        }
+        if next["title"]?.nonEmptyString == nil { next["title"] = .string(live.title) }
+        if next["kind"]?.nonEmptyString == nil { next["kind"] = .string(live.kind) }
+        if toolCallId(.object(next)) == nil { next["toolCallId"] = .string(live.toolCallId) }
+
+        // Which tool the request is about, by Claude Code's own name. The request
+        // claude-agent-acp sends names no tool — only the live call does — and
+        // the card needs it to recognize a sandbox's network request
+        // (`SandboxNetworkAccess {host}`), whose request is a bare host.
+        if let liveToolName = live.meta?.object?["claudeCode"]?.object?["toolName"]?.nonEmptyString {
+            var meta = next["_meta"]?.object ?? [:]
+            var claudeCode = meta["claudeCode"]?.object ?? [:]
+            if claudeCode["toolName"]?.string == nil {
+                claudeCode["toolName"] = .string(liveToolName)
+                meta["claudeCode"] = .object(claudeCode)
+                next["_meta"] = .object(meta)
+            }
+        }
+        return .object(next)
+    }
+
+    private static let inputKeys = ["rawInput", "raw_input", "input", "arguments", "params", "payload"]
+
+    /// The keys that carry an edit's text in a file tool's input, in every
+    /// spelling the card reads — plus the camelCased forms the shared decoder
+    /// produces (`newSource`), which the web never sees.
+    private static let editTextKeys = [
+        "old_string", "oldString", "old_text", "oldText",
+        "new_string", "newString", "new_text", "newText",
+        "content", "text", "new_source", "newSource",
+        "changes", "diff", "patch", "unified_diff", "unifiedDiff",
+    ]
+    private static let editPathKeys = [
+        "file_path", "filePath", "path", "notebook_path", "notebookPath", "target_file", "targetFile",
+    ]
+
+    /// The request's input, and the key it sits under: the first input key whose
+    /// value is neither null nor a blank string (web `pickPermissionToolInput`).
+    private static func pickInput(_ record: [String: AnyJSON]) -> (String, AnyJSON)? {
+        for key in inputKeys {
+            guard let value = record[key], !value.isNull else { continue }
+            if case .string(let s) = value, s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+            return (key, value)
+        }
+        return nil
+    }
+
+    /// A file-tool input with the edit text put back from the live call, or nil
+    /// when nothing is missing. claude-agent-acp 0.82.0 sends an Edit/Write
+    /// approval whose input is `{file_path}` alone — the text lives only in the
+    /// live call — so without this the card names the file and shows no diff.
+    /// Only an input with NONE of the text keys is filled, only from a live input
+    /// naming the same file, and the request's own keys win.
+    private static func fillStrippedEditInput(_ requestInput: AnyJSON, liveRawInput: String?) -> [String: AnyJSON]? {
+        guard let request = inputRecord(requestInput),
+              let live = liveRawInput.flatMap({ AnyJSON.parse(jsonString: $0)?.object })
+        else { return nil }
+        if editTextKeys.contains(where: { request[$0] != nil }) { return nil }
+        guard editTextKeys.contains(where: { live[$0] != nil }) else { return nil }
+        guard let requestPath = filePath(request), requestPath == filePath(live) else { return nil }
+        return live.merging(request) { _, own in own }
+    }
+
+    private static func inputRecord(_ value: AnyJSON) -> [String: AnyJSON]? {
+        if case .string(let s) = value { return AnyJSON.parse(jsonString: s)?.object }
+        return value.object
+    }
+
+    private static func filePath(_ input: [String: AnyJSON]) -> String? {
+        for key in editPathKeys {
+            if case .string(let s)? = input[key], !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return s }
+        }
+        return nil
     }
 }
 
@@ -259,10 +405,31 @@ struct PermissionAllowedPrompt: Hashable, Sendable {
 struct ParsedPermission {
     var title: String
     /// Human-readable description from `_meta.claudeCode.title` (claude-agent-acp
-    /// ≥0.63; for Bash it is the model-authored `description` input). Preferred
-    /// over ``title``, which for a shell request is the command itself — already
-    /// shown verbatim in the body. `nil` when the agent supplied none.
+    /// ≥0.63; for Bash it is the model-authored `description` input), else the
+    /// backend-hoisted `_meta.permission.title` (codex-acp ≥1.7.0, claude ≥0.73.0).
+    /// Preferred over ``title``, which for a shell request is the command itself —
+    /// already shown verbatim in the body. `nil` when the agent supplied none.
+    ///
+    /// A meta heading that merely restates ``command`` is replaced by the model's
+    /// own label (`rawInput.description`) when there is one — see
+    /// `PermissionParse.shellCommandLabel`.
     var description: String?
+    /// The agent's stated REASON for asking, from a version-1
+    /// `_meta.permission.description` (codex-acp ≥1.7.0, hoisted onto the tool
+    /// call by the backend). Distinct from ``description``, which names the
+    /// ACTION. `nil` for every agent that sends no such block.
+    var reason: String?
+    /// A version-1 `_meta.permission.defaultToNo` that is literally `true`
+    /// (claude-agent-acp ≥0.77.0): this ask "must not be approvable by a stray
+    /// keystroke", so the card hands the emphasis to the decline. False for every
+    /// other shape — the absence of the flag must never read as "dangerous".
+    var defaultToNo: Bool
+    /// The host a Claude Code sandbox asks to let a command reach
+    /// (`SandboxNetworkAccess {host}`). Read only when `_meta.claudeCode.toolName`
+    /// names that tool — which the adapter leaves off the request and
+    /// ``PermissionLiveMerge`` copies over from the live call; an input that
+    /// merely has a `host` is someone else's. `nil` for every other request.
+    var networkHost: String?
     var kind: String
     var command: String?
     var cwd: String?
@@ -284,7 +451,7 @@ struct ParsedPermission {
 
     /// Whether the body has anything richer than the raw JSON fallback to show.
     var hasStructuredBody: Bool {
-        command != nil || !diffFiles.isEmpty || planMarkdown != nil
+        networkHost != nil || command != nil || !diffFiles.isEmpty || planMarkdown != nil
             || !planEntries.isEmpty || !allowedPrompts.isEmpty
             || modeTarget != nil || url != nil || query != nil || prompt != nil
     }
@@ -321,17 +488,40 @@ struct ParsedPermission {
         let title = PermissionParse.pickString(obj, ["title", "toolName", "tool_name", "name"])
             ?? PermissionParse.fallbackTitle(rawKind)
 
-        // `_meta.claudeCode.title` — NOTE the underscored key: a permission
-        // request forwards the RAW ACP `ToolCallUpdate` serialization, where
-        // serde renames `meta` → `_meta`. (Tool-call events carry a plain `meta`
-        // instead, which is why this spelling appears nowhere else.)
-        let claudeMeta = PermissionParse.asObject(
-            PermissionParse.pickValue(PermissionParse.asObject(PermissionParse.pickValue(obj, ["_meta"])),
-                                      ["claudeCode"]))
-        let description = PermissionParse.pickString(claudeMeta, ["title"])
+        // NOTE the underscored key: a permission request forwards the RAW ACP
+        // `ToolCallUpdate` serialization, where serde renames `meta` → `_meta`.
+        // (Tool-call events carry a plain `meta` instead, which is why this
+        // spelling appears nowhere else.)
+        let metaObj = PermissionParse.asObject(PermissionParse.pickValue(obj, ["_meta"]))
+        let claudeMeta = PermissionParse.asObject(PermissionParse.pickValue(metaObj, ["claudeCode"]))
+        let permissionMeta = PermissionParse.pickValue(metaObj, ["permission"])
+
+        // `_meta.claudeCode.title` (claude-agent-acp ≥0.63), else the hoisted
+        // `_meta.permission.title` — codex-acp ≥1.7.0's fixed titles ("Run
+        // command?", "Make edits?") read better than the generic `title`.
+        let metaHeading = PermissionParse.pickString(claudeMeta, ["title"])
+            ?? PermissionParse.pickString(PermissionParse.asObject(permissionMeta), ["title"])
+
+        // …unless that heading IS the command the body already shows:
+        // claude-agent-acp 0.79.0 (#1070) made a shell approval's
+        // `_meta.permission.title` the raw command. Keyed on the shape, not on an
+        // adapter version. With no better label, the heading stays.
+        let description: String?
+        if let metaHeading, let command, metaHeading == command {
+            description = PermissionParse.shellCommandLabel(rawInputObj, command: command) ?? metaHeading
+        } else {
+            description = metaHeading
+        }
+
+        let reason = PermissionParse.permissionMetaDescription(permissionMeta)
+        let defaultToNo = PermissionParse.permissionMetaFlag(permissionMeta, "defaultToNo")
+        let networkHost = PermissionParse.pickString(claudeMeta, ["toolName"]) == PermissionParse.sandboxNetworkTool
+            ? PermissionParse.pickString(rawInputObj, ["host"])
+            : nil
 
         return ParsedPermission(
             title: title, description: description,
+            reason: reason, defaultToNo: defaultToNo, networkHost: networkHost,
             kind: rawKind, command: command, cwd: cwd, diffFiles: diffFiles,
             planMarkdown: planMarkdown, planEntries: planEntries, allowedPrompts: allowedPrompts,
             modeTarget: modeTarget, url: url, query: query, prompt: prompt,
@@ -377,9 +567,16 @@ private enum PermissionParse {
     static let maxPermissionChanges = 6
     static let maxPermissionChangeChars = 200
 
-    /// Parse `_meta.permission = {version: 1, changes: [...]}`.
+    /// Parse an option's `_meta.permission`. Two shapes, both `version: 1`:
     ///
-    /// Only `version: 1` is read — a future revision may reshape `changes`, and
+    /// - `{version: 1, changes: [...]}` — claude-agent-acp 0.64.1–0.72.0 and
+    ///   codex-acp 1.1.8–1.6.2. Every change carries a rendered sentence.
+    /// - `{version: 1, description}` — codex-acp ≥1.7.0, which dropped
+    ///   `changes[]` and sends this only on MCP elicitation approvals. Read as a
+    ///   single scope-less change (it carries no lifetime); `changes[]` wins
+    ///   when both are present.
+    ///
+    /// Only `version: 1` is read — a future revision may reshape the block, and
     /// showing it half-understood is worse than showing nothing.
     ///
     /// `lifetime` is read because `description` alone does NOT always answer "for
@@ -393,9 +590,12 @@ private enum PermissionParse {
     /// `description` really does summarize.
     static func optionChanges(_ meta: AnyJSON?) -> [PermissionOptionChange] {
         guard let permission = asObject(pickValue(meta?.object, ["permission"])),
-              permission["version"]?.double == 1,
-              let changes = pickValue(permission, ["changes"])?.array
+              permission["version"]?.double == 1
         else { return [] }
+        guard let changes = pickValue(permission, ["changes"])?.array else {
+            guard let description = permissionMetaDescription(.object(permission)) else { return [] }
+            return [PermissionOptionChange(description: description, scope: nil)]
+        }
         var out: [PermissionOptionChange] = []
         for change in changes {
             if out.count >= maxPermissionChanges { break }
@@ -406,6 +606,45 @@ private enum PermissionParse {
             ))
         }
         return out
+    }
+
+    // MARK: Request-level `_meta.permission`
+
+    /// Claude Code's name for a sandbox's network request (see
+    /// ``ParsedPermission/networkHost``).
+    static let sandboxNetworkTool = "SandboxNetworkAccess"
+
+    /// Longest agent-authored label promoted to the heading. Keeps a pathological
+    /// (unbounded on the wire) `rawInput.description` from becoming the heading;
+    /// the same number as ``maxPermissionChangeChars``.
+    static let maxHeadingChars = 200
+
+    /// The plain `description` of a version-1 `_meta.permission` block, trimmed
+    /// to the card's budget. Shared by the request level
+    /// (``ParsedPermission/reason``) and the flat option form in
+    /// ``optionChanges(_:)``.
+    static func permissionMetaDescription(_ permission: AnyJSON?) -> String? {
+        guard let record = asObject(permission), record["version"]?.double == 1,
+              let description = pickString(record, ["description"])
+        else { return nil }
+        return String(collapseWhitespace(description).prefix(maxPermissionChangeChars))
+    }
+
+    /// A boolean flag of the same version-1 block. Only a real `true` counts: the
+    /// flag gates a SAFER presentation, so an unrecognized shape (`"true"`, `1`,
+    /// a later version) falls back to the ordinary card.
+    static func permissionMetaFlag(_ permission: AnyJSON?, _ key: String) -> Bool {
+        guard let record = asObject(permission), record["version"]?.double == 1 else { return false }
+        return record[key]?.bool == true
+    }
+
+    /// The model's own one-line label for a shell command (`rawInput.description`)
+    /// — what claude-agent-acp used as the approval heading through 0.78.0.
+    /// `nil` when missing or merely restating the command, so the caller keeps
+    /// the heading it already had.
+    static func shellCommandLabel(_ rawInputObj: [String: AnyJSON]?, command: String) -> String? {
+        guard let label = pickString(rawInputObj, ["description"]), label != command else { return nil }
+        return String(label.prefix(maxHeadingChars))
     }
 
     /// Flatten every run of whitespace to a single space.
@@ -452,22 +691,47 @@ private enum PermissionParse {
 
     // MARK: Command
 
-    static func extractCommand(_ value: AnyJSON?, depth: Int = 0) -> String? {
+    /// The command a permission request asks to run, dug out of whatever shape
+    /// the agent used. Port of the web's `extractCommandFromUnknownValue`.
+    ///
+    /// `verbatim` marks a string LEAF sitting directly under a key that names a
+    /// command (`command`, `cmd`, `script`, `args`, …). Such a string IS the
+    /// command, so the two heuristics guarding the broad walk against
+    /// stringified payloads do not apply to it:
+    ///
+    /// - the `{` / `[` envelope prefix — plenty of shell opens with one
+    ///   (`[ -f x ] && …`, `{ npm test; }`, PowerShell's
+    ///   `[System.Environment]::OSVersion`). Only a string that FAILS to parse is
+    ///   shell; one that parses is unwrapped as before, so a stringified argv
+    ///   still joins and a parse with no command still yields nil;
+    /// - the diff-payload check, which matches any command that WRITES a patch.
+    ///
+    /// The mark lasts ONE hop: descending from a command key into an object
+    /// (`{args: {payload: "{…}"}}`) drops back to the conservative reading, since
+    /// `args` is a generic MCP argument bag on some agents.
+    static func extractCommand(_ value: AnyJSON?, depth: Int = 0, verbatim: Bool = false) -> String? {
         guard depth <= 4, let value, !value.isNull else { return nil }
         switch value {
         case .string(let s):
             let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-            if t.isEmpty || UnifiedDiff.looksLikeDiff(t) { return nil }
-            if !t.hasPrefix("{"), !t.hasPrefix("[") { return t }
-            return extractCommand(AnyJSON.parse(jsonString: t), depth: depth + 1)
+            if t.isEmpty { return nil }
+            if !t.hasPrefix("{"), !t.hasPrefix("[") {
+                return !verbatim && ActivityEdit.looksLikeDiffPayload(t) ? nil : t
+            }
+            // A real envelope is structured data again — it re-earns the mark
+            // through its own keys. Not JSON at all: shell on a command leaf, an
+            // unreadable payload in the open.
+            guard let parsed = AnyJSON.parse(jsonString: t) else { return verbatim ? t : nil }
+            return extractCommand(parsed, depth: depth + 1)
         case .array(let arr):
             let parts = arr.compactMap { $0.string }.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             let joined = parts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
             return joined.isEmpty ? nil : joined
         case .object(let obj):
             for key in ["command", "cmd", "script", "args", "argv", "command_args", "commandArgs"] {
-                if let direct = extractCommand(obj[key], depth: depth + 1) { return direct }
+                if let direct = extractCommand(obj[key], depth: depth + 1, verbatim: true) { return direct }
             }
+            // Wrappers, not command fields: never carry the mark in here.
             for key in ["rawInput", "raw_input", "input", "arguments", "params", "payload"] {
                 if let nested = extractCommand(obj[key], depth: depth + 1) { return nested }
             }

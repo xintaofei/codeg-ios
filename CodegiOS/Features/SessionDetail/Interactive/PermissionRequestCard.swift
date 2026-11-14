@@ -4,7 +4,8 @@ import SwiftUI
 /// whose proposed plan renders in the body. Pinned above the compose bar while
 /// the agent is blocked. Mirrors codeg web's `permission-dialog.tsx`: a header,
 /// a contextual body (command / diff / plan / allowed actions / web / raw), and
-/// the agent-supplied option buttons (filled to allow, bordered to reject).
+/// the agent-supplied option buttons (filled to allow, bordered to reject — the
+/// other way round on a `defaultToNo` ask).
 struct PermissionRequestCard: View {
     let pending: PendingPermission
     /// Resolve with the chosen `option_id`. Returns true on success — the model
@@ -78,31 +79,51 @@ struct PermissionRequestCard: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.accent)
             VStack(alignment: .leading, spacing: 2) {
-                // Prefer the agent's human-readable description over the raw
-                // title — for a shell request the title IS the command, which
-                // the body already shows verbatim.
-                Text(verbatim: parsed.description ?? parsed.title)
+                heading
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(2)
-                Text(parsed.isPlan
-                     ? "The agent wants to proceed with this plan."
-                     : "The agent needs permission to continue.")
+                subtitle
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            if !parsed.isPlan, !parsed.kind.isEmpty {
-                Text(verbatim: parsed.kind)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.primary.opacity(0.06), in: Capsule())
-                    .lineLimit(1)
+            if parsed.networkHost != nil {
+                kindBadge(Text("network"))
+            } else if !parsed.isPlan, !parsed.kind.isEmpty {
+                kindBadge(Text(verbatim: parsed.kind))
             }
         }
+    }
+
+    /// A sandbox network request gets the CLI's own framing; anything else
+    /// prefers the agent's human-readable description over the raw title — for
+    /// a shell request the title IS the command, which the body already shows.
+    private var heading: Text {
+        if parsed.networkHost != nil { return Text("Network request outside the sandbox") }
+        return Text(verbatim: parsed.description ?? parsed.title)
+    }
+
+    /// The agent's own reason for asking, when it gave one — strictly more
+    /// informative than the boilerplate it replaces, and the only place
+    /// codex-acp ≥1.7.0 still carries it. Wraps: the decision rests on it.
+    private var subtitle: Text {
+        if let reason = parsed.reason { return Text(verbatim: reason) }
+        if parsed.networkHost != nil { return Text("Allow this connection?") }
+        return parsed.isPlan
+            ? Text("The agent wants to proceed with this plan.")
+            : Text("The agent needs permission to continue.")
+    }
+
+    private func kindBadge(_ label: Text) -> some View {
+        label
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Color.primary.opacity(0.06), in: Capsule())
+            .lineLimit(1)
     }
 
     // MARK: Body
@@ -110,6 +131,28 @@ struct PermissionRequestCard: View {
     @ViewBuilder
     private var bodyContent: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let host = parsed.networkHost {
+                // The request is only this host — what is asked, of which host.
+                HStack(spacing: 8) {
+                    Image(systemName: "network.badge.shield.half.filled")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("Host")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                    Text(verbatim: host)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .environment(\.layoutDirection, .leftToRight)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Theme.surfaceNested, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            }
+
             if let command = parsed.command {
                 section("Command", "terminal") {
                     CodeBlockView(code: command, language: "bash")
@@ -258,15 +301,24 @@ struct PermissionRequestCard: View {
 
     // MARK: Option buttons
 
+    /// The option that gets the single filled (accent) button: the approve on an
+    /// ordinary ask, the decline on a `defaultToNo` one (claude-agent-acp
+    /// ≥0.77.0 — "must not be approvable by a stray keystroke"). Nothing is
+    /// pre-selected either way; every option stays one tap away.
+    private func isEmphasized(_ option: PermissionOption) -> Bool {
+        parsed.defaultToNo ? option.isReject : !option.isReject
+    }
+
     private func optionButton(_ option: PermissionOption) -> some View {
-        Button {
+        let emphasized = isEmphasized(option)
+        return Button {
             Task { await tap(option) }
         } label: {
             HStack(spacing: 6) {
                 if submittingOptionId == option.optionId {
                     ProgressView()
                         .controlSize(.mini)
-                        .tint(option.isReject ? Theme.textPrimary : Theme.onAccent)
+                        .tint(emphasized ? Theme.onAccent : Theme.textPrimary)
                 }
                 Text(verbatim: option.name)
                     .font(.subheadline.weight(.semibold))
@@ -275,13 +327,13 @@ struct PermissionRequestCard: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 11)
-            .foregroundStyle(option.isReject ? Theme.textPrimary : Theme.onAccent)
+            .foregroundStyle(emphasized ? Theme.onAccent : Theme.textPrimary)
             .background(
-                option.isReject ? AnyShapeStyle(Color.primary.opacity(0.06)) : AnyShapeStyle(Theme.accent),
+                emphasized ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.primary.opacity(0.06)),
                 in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
             )
             .overlay {
-                if option.isReject {
+                if !emphasized {
                     RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
                         .stroke(Theme.hairline, lineWidth: 1)
                 }
