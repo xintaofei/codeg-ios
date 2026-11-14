@@ -84,7 +84,7 @@ struct CloneRepoView: View {
     private var destinationSection: some View {
         EditorSection(
             title: "Destination",
-            footer: clonePathPreview.map { LocalizedStringKey(stringLiteral: $0) }
+            footer: clonePathPreview
         ) {
             FieldRow(label: "Parent Directory") {
                 HStack(spacing: 8) {
@@ -166,7 +166,7 @@ struct CloneRepoView: View {
         return "\(base)/\(repoName)"
     }
 
-    private var clonePathPreview: String? {
+    private var clonePathPreview: LocalizedStringKey? {
         guard !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !fullPath.isEmpty else { return nil }
         return "Clones into \(fullPath)"

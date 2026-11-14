@@ -193,7 +193,7 @@ struct ChannelConfig: Equatable, Sendable {
     /// A short human-readable summary for the detail screen.
     func summary(type: ChannelType) -> String {
         switch type {
-        case .telegram: chatId.isEmpty ? "No chat ID" : "Chat \(chatId)"
+        case .telegram: chatId.isEmpty ? String(localized: "No chat ID") : String(localized: "Chat \(chatId)")
         case .lark: [appId, chatId].filter { !$0.isEmpty }.joined(separator: " · ")
         case .weixin: baseUrl.isEmpty ? Self.weixinDefaultBaseUrl : baseUrl
         }

@@ -178,7 +178,7 @@ private struct ModelProviderRow: View {
                             Image(systemName: "cpu")
                                 .font(.caption2)
                                 .foregroundStyle(Theme.accent)
-                            Text(summary)
+                            summary
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.textSecondary)
                                 .lineLimit(1)
@@ -211,18 +211,18 @@ private struct ModelProviderRow: View {
     /// model, appending `+N` for any other overrides; if `main` is unset show the
     /// lone override or an "N model overrides" count. Other agents store a plain
     /// model name. Reads only `model` — never any key material.
-    private var modelSummary: String? {
+    private var modelSummary: Text? {
         if provider.agentType == .claudeCode {
             let m = ClaudeProviderModel.parse(provider.model)
             let set = [m.main, m.reasoning, m.haiku, m.sonnet, m.opus].filter { !$0.isEmpty }
             guard !set.isEmpty else { return nil }
             if !m.main.isEmpty {
-                return set.count == 1 ? m.main : "\(m.main) +\(set.count - 1)"
+                return Text(verbatim: set.count == 1 ? m.main : "\(m.main) +\(set.count - 1)")
             }
-            return set.count == 1 ? set[0] : "\(set.count) model overrides"
+            return set.count == 1 ? Text(verbatim: set[0]) : Text("\(set.count) model overrides")
         } else {
             let trimmed = (provider.model ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
+            return trimmed.isEmpty ? nil : Text(verbatim: trimmed)
         }
     }
 }

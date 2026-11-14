@@ -159,10 +159,10 @@ extension LocalMcpServer {
     /// is already shown by the badge).
     var specSummary: String {
         if normalizedTransport == "stdio" {
-            let command = spec["command"]?.stringValue?.trimmedNonEmpty ?? "(missing command)"
+            let command = spec["command"]?.stringValue?.trimmedNonEmpty ?? String(localized: "(missing command)")
             let args = (spec["args"]?.arrayValue ?? []).compactMap { $0.stringValue?.trimmedNonEmpty }
             return args.isEmpty ? command : "\(command) \(args.joined(separator: " "))"
         }
-        return spec["url"]?.stringValue?.trimmedNonEmpty ?? "(missing url)"
+        return spec["url"]?.stringValue?.trimmedNonEmpty ?? String(localized: "(missing url)")
     }
 }

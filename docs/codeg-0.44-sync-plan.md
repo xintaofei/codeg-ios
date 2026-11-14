@@ -267,7 +267,9 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
 
 - **文案**：
   - 用 `SWIFT_EMIT_LOC_STRINGS=YES` 构建，拿编译器抽出的全部可本地化字符串对照 `Localizable.xcstrings`：阶段三、四新增的界面没有漏翻。
-  - 其余漏翻的 114 条大多是占位符、品牌名、纯格式串，少数是设置页里的旧句子（如 "Couldn’t Open Folder"、"Switch server"、主题色名），不在这次范围内。
+  - 其余漏翻的 114 条大多是占位符、品牌名、纯格式串，少数是设置页里的旧句子（如 "Couldn’t Open Folder"、"Switch server"、主题色名）。
+    - 随后补齐：45 条加了中文；另有 6 处原本把英文拼成 `String` 直接显示（模型覆盖数、模型占位符、供应商占用提示、渠道摘要、MCP 缺少 command/url、克隆路径预览），改为走本地化。
+    - 剩下的 71 条是刻意不翻的：占位符、示例值、品牌名、格式串、技术词，以及语言名「English / 中文」。
   - 截图里留下的英文，大多来自服务端或第三方：权限选项名（Allow / Always Allow / Reject）、工具 kind（execute）、Mermaid 的报错原文、broker 的「Not resumed: …」。web 端也原样显示这些。
   - 紧凑时长「22.0s」「9m 18s」「48s」与 web 的 `formatDuration` 一致，web 在中文下也不翻。
 - **软键盘拼音**：组字、选词、`/` 和 `@` 后接中文、发送中文都正常，文字没有重复或错乱。

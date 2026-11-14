@@ -97,9 +97,9 @@ final class ModelProvidersSettingsModel {
            let range = message.range(of: "PROVIDER_IN_USE:") {
             let names = message[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
             if names.isEmpty {
-                return "An agent is currently using this provider. Unlink it in agent settings before deleting."
+                return String(localized: "An agent is currently using this provider. Unlink it in agent settings before deleting.")
             }
-            return "\(names) is currently using this provider. Unlink it in those agents’ settings before deleting."
+            return String(localized: "\(names) is currently using this provider. Unlink it in those agents’ settings before deleting.")
         }
         return error.localizedDescription
     }

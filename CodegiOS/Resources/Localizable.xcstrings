@@ -1,6 +1,578 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "model name" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型名称"
+          }
+        }
+      }
+    },
+    "%lld model overrides" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个模型覆盖项"
+          }
+        }
+      }
+    },
+    "An agent is currently using this provider. Unlink it in agent settings before deleting." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有智能体正在使用此供应商。请先在智能体设置中解除关联，再删除。"
+          }
+        }
+      }
+    },
+    "%@ is currently using this provider. Unlink it in those agents’ settings before deleting." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 正在使用此供应商。请先在这些智能体的设置中解除关联，再删除。"
+          }
+        }
+      }
+    },
+    "No chat ID" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未设置聊天 ID"
+          }
+        }
+      }
+    },
+    "Chat %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天 %@"
+          }
+        }
+      }
+    },
+    "(missing command)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "（缺少 command）"
+          }
+        }
+      }
+    },
+    "(missing url)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "（缺少 url）"
+          }
+        }
+      }
+    },
+    "Clones into %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将克隆到 %@"
+          }
+        }
+      }
+    },
+    "Neutral" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中性"
+          }
+        }
+      }
+    },
+    "Mint" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "薄荷"
+          }
+        }
+      }
+    },
+    "Blue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "蓝色"
+          }
+        }
+      }
+    },
+    "Indigo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "靛蓝"
+          }
+        }
+      }
+    },
+    "Purple" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "紫色"
+          }
+        }
+      }
+    },
+    "Pink" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "粉色"
+          }
+        }
+      }
+    },
+    "Orange" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "橙色"
+          }
+        }
+      }
+    },
+    "Teal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "青色"
+          }
+        }
+      }
+    },
+    "Red" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "红色"
+          }
+        }
+      }
+    },
+    "Mocha" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "摩卡"
+          }
+        }
+      }
+    },
+    "Butter" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "奶油"
+          }
+        }
+      }
+    },
+    "Dusk" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暮色"
+          }
+        }
+      }
+    },
+    "Optional" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可选"
+          }
+        }
+      }
+    },
+    "Couldn’t Open Folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法打开文件夹"
+          }
+        }
+      }
+    },
+    "My codeg server" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我的 codeg 服务器"
+          }
+        }
+      }
+    },
+    "Switch server" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切换服务器"
+          }
+        }
+      }
+    },
+    "Opens the full list" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开完整列表"
+          }
+        }
+      }
+    },
+    "Choose a fetched model" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择已获取的模型"
+          }
+        }
+      }
+    },
+    "provider id (e.g. openrouter)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "供应商 ID（如 openrouter）"
+          }
+        }
+      }
+    },
+    "model id" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型 ID"
+          }
+        }
+      }
+    },
+    "name" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名称"
+          }
+        }
+      }
+    },
+    "Installed · %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安装 · %@"
+          }
+        }
+      }
+    },
+    "Use official Anthropic subscription, no API Key required." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 Anthropic 官方订阅，无需 API Key。"
+          }
+        }
+      }
+    },
+    "Manually configure API URL and API Key for a custom endpoint." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "手动配置 API URL 和 API Key 连接自定义接口。"
+          }
+        }
+      }
+    },
+    "Use API URL, API Key, and model from a configured model provider." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用已配置的模型供应商的 API URL、API Key 和模型。"
+          }
+        }
+      }
+    },
+    "Leave a field empty to use the system default model." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "留空的字段使用系统默认模型。"
+          }
+        }
+      }
+    },
+    "No model provider configured for this agent. Add one in Model Provider settings." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该智能体未配置模型供应商，请在“模型供应商”设置中添加。"
+          }
+        }
+      }
+    },
+    "Uninstall %@?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "卸载 %@？"
+          }
+        }
+      }
+    },
+    "e.g. 1.2.3" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "例如 1.2.3"
+          }
+        }
+      }
+    },
+    "%@ enabled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用 %@"
+          }
+        }
+      }
+    },
+    "My channel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我的渠道"
+          }
+        }
+      }
+    },
+    "In-memory cache of finished sub-agent results, cleared when the session ends. Unlimited keeps them all." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已完成的子智能体结果的内存缓存，会话结束时清除。选“无限制”则全部保留。"
+          }
+        }
+      }
+    },
+    "Supported types: stdio, http (alias: streamable-http), and sse. env applies to stdio only; remote servers carry auth via headers." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "支持的类型：stdio、http（别名 streamable-http）和 sse。env 仅适用于 stdio；远程服务器通过 headers 传递鉴权信息。"
+          }
+        }
+      }
+    },
+    "My provider" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我的供应商"
+          }
+        }
+      }
+    },
+    "# Skill\n\nInstructions for the agent…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "# 技能\n\n给智能体的说明…"
+          }
+        }
+      }
+    },
+    "Use https://github.com, or your GitHub Enterprise URL." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "填写 https://github.com，或你的 GitHub Enterprise 地址。"
+          }
+        }
+      }
+    },
+    "Remove @%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除 @%@"
+          }
+        }
+      }
+    },
+    "Found git %@ at that path." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在该路径下找到 git %@。"
+          }
+        }
+      }
+    },
+    "Installed%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安装%@"
+          }
+        }
+      }
+    },
+    "Connected" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已连接"
+          }
+        }
+      }
+    },
+    "Connecting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接中"
+          }
+        }
+      }
+    },
+    "Disconnected" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已断开"
+          }
+        }
+      }
+    },
+    "Error" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "错误"
+          }
+        }
+      }
+    },
     " (HTTP %lld)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8261,7 +8833,15 @@
       }
     },
     "Remove “%@” and its stored token." : {
-
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除“%@”及其存储的令牌。"
+          }
+        }
+      }
     },
     "Remove “%@”. Running sessions that use it must be restarted." : {
       "extractionState" : "manual",
@@ -8855,7 +9435,15 @@
       }
     },
     "Scopes: %@" : {
-
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "权限范围：%@"
+          }
+        }
+      }
     },
     "Script" : {
       "extractionState" : "manual",

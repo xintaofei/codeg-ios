@@ -181,7 +181,7 @@ struct ModelProviderEditorSheet: View {
         }
     }
 
-    private var modelPlaceholder: String {
+    private var modelPlaceholder: LocalizedStringKey {
         switch agentType {
         case .codex: "gpt-5-codex"
         case .gemini: "gemini-2.5-pro"
