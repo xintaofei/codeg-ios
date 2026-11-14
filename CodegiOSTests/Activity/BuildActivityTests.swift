@@ -191,6 +191,7 @@ struct BuildActivityTests {
                 case .image: return "image"
                 case .plan: return "plan"
                 case .unsupported: return "unsupported"
+                case .goal(let goal): return "goal:\(goal.run.start.id)"
                 }
             }
         }
@@ -401,8 +402,23 @@ struct BuildActivityTests {
 
     // MARK: - edge cases
 
-    // Skipped: "keeps a goal run's prose inside the run, where it is drawn" —
-    // iOS does not port goal runs (`goal-run` parts / `goal` steps).
+    @Test("keeps a goal run's prose inside the run, where it is drawn")
+    func keepsAGoalRunsProseInsideTheRunWhereItIsDrawn() {
+        let start = ToolCallVM(id: "g1", rawName: "create_goal", kind: "", state: .done,
+                               input: #"{"objective":"Ship it"}"#, output: "ok", content: nil, isError: false)
+        let parts: [RenderPart] = [
+            .goalRun(GoalRunPart(start: start, end: nil, items: [.tool(read("r1")), .text("Halfway there.")],
+                                 isRunning: true)),
+        ]
+        let model = BuildActivity.build(parts, isStreaming: true)
+        let goal = model.steps.lazy.compactMap { step -> ActivityGoalStep? in
+            if case .goal(let goal) = step { return goal }
+            return nil
+        }.first
+        guard let goal else { Issue.record("expected a goal step"); return }
+        #expect(goal.model.answer.isEmpty)
+        #expect(rows(goal.model.items) == ["read:r1", "note"])
+    }
 
     private func read(_ id: String) -> ToolCallVM {
         ToolCallVM(id: id, rawName: "Read", kind: "", state: .done, input: #"{"file_path":"/r/a.ts"}"#,

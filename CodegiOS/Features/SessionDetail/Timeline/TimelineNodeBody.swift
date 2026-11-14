@@ -70,6 +70,8 @@ struct NodeBody: View {
             ActivityGroupRow(kind: kind, steps: steps, status: status, recoveredKeys: recovered)
         case .activityTool(let step, let recovered):
             ActivityToolRow(step: step, recovered: recovered)
+        case .goal(let goal):
+            GoalRunRow(goal: goal, agent: node.agent)
         }
     }
 }

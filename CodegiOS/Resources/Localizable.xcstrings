@@ -34,6 +34,17 @@
         }
       }
     },
+    "%@ tokens" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ tokens"
+          }
+        }
+      }
+    },
     "%@ · %@, %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -107,6 +118,17 @@
         }
       }
     },
+    "Budget" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预算"
+          }
+        }
+      }
+    },
     "Connection issue" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -136,6 +158,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "留言发送失败"
+          }
+        }
+      }
+    },
+    "Elapsed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "耗时"
+          }
+        }
+      }
+    },
+    "Goal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目标"
           }
         }
       }
@@ -180,6 +224,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已达限制"
+          }
+        }
+      }
+    },
+    "Objective" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目标"
           }
         }
       }
@@ -246,6 +301,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已恢复"
+          }
+        }
+      }
+    },
+    "Remaining" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剩余"
           }
         }
       }
@@ -400,6 +466,136 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这个会话正在别处打开。如果是另一个 %@ 客户端（桌面应用、CLI 或 IDE 扩展）开着它，先在那边关闭它或退出那个客户端，再重新加载；如果刚从它分叉过，约一分钟后重新加载即可。"
+          }
+        }
+      }
+    },
+    "Tokens used" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已用 tokens"
+          }
+        }
+      }
+    },
+    "goal.status.active" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "active"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "进行中"
+          }
+        }
+      }
+    },
+    "goal.status.blocked" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "blocked"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "受阻"
+          }
+        }
+      }
+    },
+    "goal.status.budgetLimited" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "budget limited"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预算受限"
+          }
+        }
+      }
+    },
+    "goal.status.complete" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "complete"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已完成"
+          }
+        }
+      }
+    },
+    "goal.status.limited" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "limit reached"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已达上限"
+          }
+        }
+      }
+    },
+    "goal.status.paused" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "paused"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已暂停"
+          }
+        }
+      }
+    },
+    "goal.status.usageLimited" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "usage limited"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用量受限"
           }
         }
       }

@@ -328,7 +328,8 @@ enum ToolNameNormalizer {
         #"^\#(ci("goal updated"))\#(S)*\(([^)]+)\)\#(S)*[:：]\#(S)*([\s\S]*)\z"#
     )
 
-    private static func normalizeGoalStatus(_ status: String) -> String {
+    /// `active`, `usage_limited`: lower-cased, space and dash runs folded to `_`.
+    static func normalizeGoalStatus(_ status: String) -> String {
         replace(jsLower(jsTrim(status)), spaceDashRunRE, "_")
     }
 

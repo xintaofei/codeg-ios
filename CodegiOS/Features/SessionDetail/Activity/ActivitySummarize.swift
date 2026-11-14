@@ -47,6 +47,20 @@ enum ActivitySummarize {
         }
     }
 
+    /// Every step, with goal runs opened up into the steps they contain: a
+    /// goal's work counts as the reply's, its own two calls not at all.
+    static func flatten(_ steps: [ActivityStep]) -> [ActivityStep] {
+        var out: [ActivityStep] = []
+        for step in steps {
+            if case .goal(let goal) = step {
+                out.append(contentsOf: flatten(goal.model.steps))
+            } else {
+                out.append(step)
+            }
+        }
+        return out
+    }
+
     static func summarize(_ steps: [ActivityStep]) -> ActivitySummary {
         var summary = ActivitySummary()
         var readPaths = Set<String>()
@@ -54,7 +68,7 @@ enum ActivitySummarize {
         var failures: [(key: String, signature: String?, index: Int)] = []
         var successes: [String: Int] = [:]
 
-        for (index, step) in steps.enumerated() {
+        for (index, step) in flatten(steps).enumerated() {
             switch step {
             case .delegationPolls(_, _, let status):
                 if status.isLive { summary.running = true }
@@ -72,6 +86,8 @@ enum ActivitySummarize {
                 continue
             case .note, .image, .plan, .unsupported:
                 continue
+            case .goal:
+                continue   // opened up by `flatten`
             case .tool(let toolStep):
                 let tool = toolStep.tool
                 if let later = toolStep.laterPolls {

@@ -45,6 +45,8 @@ enum BuildActivity {
         case .reasoning, .liveReasoning, .tool, .delegationStatusGroup, .taskGroup,
              .compaction, .unknown:
             return false
+        case .goalRun:
+            return false
         }
     }
 
@@ -99,6 +101,7 @@ enum BuildActivity {
             case .tool(let vm): return vm.id
             case .delegationStatusGroup(let polls), .taskGroup(let polls):
                 if let first = polls.first { return first.id }
+            case .goalRun(let run): return run.start.id
             default: continue
             }
         }
@@ -124,6 +127,7 @@ enum BuildActivity {
         case .liveText(let run, _), .liveReasoning(let run, _): return "run:\(run.id)"
         case .tool(let vm): return "tool:\(vm.id)"
         case .delegationStatusGroup, .taskGroup: return "group"
+        case .goalRun(let run): return "goal-run:\(run.start.id)"
         }
     }
 
@@ -177,6 +181,8 @@ enum BuildActivity {
                 steps.append(.compaction(key: key("compaction"), before: before, after: after, running: running))
             case .unknown(let type):
                 steps.append(.unsupported(key: key("unsupported"), type: type))
+            case .goalRun(let run):
+                steps.append(.goal(goalStep(run, awaitingToolIds: awaiting)))
             }
         }
         return steps
@@ -184,6 +190,25 @@ enum BuildActivity {
 
     private static func toolStep(_ vm: ToolCallVM, awaiting: Bool) -> ActivityToolStep {
         ActivityToolStep(key: "tool:\(vm.id)", call: vm, tool: DescribeCache.describe(vm, awaiting: awaiting))
+    }
+
+    /// A goal run's step: its parts built as a model of their own, streaming
+    /// while the run is, with no answer split off (the goal row has no answer
+    /// slot).
+    static func goalStep(_ run: GoalRunPart, awaitingToolIds: Set<String> = []) -> ActivityGoalStep {
+        ActivityGoalStep(key: "goal:\(run.start.id)", run: run,
+                         model: build(run.items, isStreaming: run.isRunning, keepAnswer: true,
+                                      awaitingToolIds: awaitingToolIds))
+    }
+
+    /// A goal call outside any run — an `update_goal` whose run began in an
+    /// earlier reply — drawn as the goal row too, with no steps of its own
+    /// (web `GoalToolCallPart`). Working while the call itself is.
+    static func loneGoalStep(_ step: ActivityToolStep) -> ActivityGoalStep {
+        ActivityGoalStep(key: step.key,
+                         run: GoalRunPart(start: step.call, end: nil, items: [],
+                                          isRunning: GoalRuns.isRunningCall(step.call)),
+                         model: .empty)
     }
 
     /// A call interrupted before it carried anything — no arguments, no output

@@ -260,6 +260,9 @@ enum RenderPart {
     /// timeline builder directly); this covers one found inside a reply.
     case turnError(String)
     case unknown(type: String)
+    /// A Codex `/goal` run: `create_goal`, the parts it holds, and the closing
+    /// `update_goal` when there was one (`GoalRuns.group`).
+    case goalRun(GoalRunPart)
 }
 
 // MARK: - Adapters
@@ -348,7 +351,10 @@ enum MessageRender {
             }
         }
 
-        let grouped = groupLanes(parts)
+        // Goal runs after the lanes, as the web does. Only a reply in the
+        // running round is still being written; an unfinished run anywhere
+        // else is a goal codex left open, and settles.
+        let grouped = GoalRuns.group(groupLanes(parts), isStreaming: liveness == .round)
         cacheTurn(cacheKey, grouped)
         return grouped
     }
@@ -435,7 +441,10 @@ enum MessageRender {
                         title: call.title, kind: call.kind, rawInput: call.rawInput, meta: call.meta))))
             }
         }
-        return groupLanes(parts)
+        // A reply the user steered away from ended there: only the stretch
+        // that reaches the turn's last segment is still being written.
+        return GoalRuns.group(groupLanes(parts),
+                              isStreaming: turn.isStreaming && span.upperBound == segments.count)
     }
 
     /// Only the lanes that are rows of their own — delegation polls and the

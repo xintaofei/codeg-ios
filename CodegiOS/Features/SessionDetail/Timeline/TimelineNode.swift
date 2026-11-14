@@ -87,6 +87,9 @@ struct TimelineNode: Identifiable {
         /// One plain tool call as an activity row. `recovered`: it failed and a
         /// later step of the reply redid it successfully.
         case activityTool(ActivityToolStep, recovered: Bool)
+        /// A Codex `/goal`: one row naming the objective and its status, which
+        /// opens onto the run's own steps (`GoalRunRow`).
+        case goal(ActivityGoalStep)
     }
 
     /// What a reply's header (and foot) say.
@@ -133,6 +136,8 @@ struct TimelineNode: Identifiable {
         case .activityTool(let step, let recovered):
             return .tool(icon: ActivityRowStyle.icon(step.tool),
                          state: ActivityRowStyle.markerState(step.tool.status, recovered: recovered))
+        case .goal(let goal):
+            return .tool(icon: GoalRowStyle.icon, state: GoalRowStyle.markerState(goal))
         }
     }
 }
@@ -435,6 +440,10 @@ enum TranscriptTimeline {
                              recovered: Set<String>) -> TimelineNode {
         let base = "\(ownerID)#\(BuildActivity.rowIdentity(step.key))"
         switch step {
+        case .tool(let tool) where tool.tool.kind == .goal:
+            // A goal call outside any run draws as the goal row too.
+            return TimelineNode(id: "tool-\(tool.call.id)", content: .goal(BuildActivity.loneGoalStep(tool)),
+                                agent: agent)
         case .tool(let tool):
             let content: TimelineNode.Content = ActivityRowStyle.usesRow(tool)
                 ? .activityTool(tool, recovered: recovered.contains(tool.key))
@@ -467,7 +476,27 @@ enum TranscriptTimeline {
             return TimelineNode(id: base, content: .compaction(before: before, after: after, running: running), agent: agent)
         case .unsupported(_, let type):
             return TimelineNode(id: base, content: .unsupported(type), agent: agent)
+        case .goal(let goal):
+            // Keyed by the opening call's id, which the live and the persisted
+            // run share — so the row (and whether it is open) survives the
+            // hand-over.
+            return TimelineNode(id: "goal-\(goal.run.start.id)", content: .goal(goal), agent: agent)
         }
+    }
+
+    /// A goal run's own steps as rail nodes, for its row to draw under its
+    /// header (the web's nested activity timeline): the run's items mapped as
+    /// a reply's are, its rail ending at its first and last node.
+    static func goalBodyNodes(_ goal: ActivityGoalStep, agent: AgentType) -> [TimelineNode] {
+        let recovered = goal.model.summary.recoveredKeys
+        var nodes = goal.model.items.map {
+            node(for: $0, ownerID: goal.key, agent: agent, recovered: recovered)
+        }
+        if !nodes.isEmpty {
+            nodes[0].connectTop = false
+            nodes[nodes.count - 1].connectBottom = false
+        }
+        return nodes
     }
 
     // MARK: Part → node
@@ -509,6 +538,11 @@ enum TranscriptTimeline {
             return TimelineNode(id: base, content: .error(message, details: nil), agent: agent)
         case .unknown(let type):
             return TimelineNode(id: base, content: .unsupported(type), agent: agent)
+        case .goalRun(let run):
+            // A run is process, never the answer, so the reply builder draws it
+            // through its step; this keeps a stray one drawn the same way.
+            return TimelineNode(id: "goal-\(run.start.id)", content: .goal(BuildActivity.goalStep(run)),
+                                agent: agent)
         }
     }
 

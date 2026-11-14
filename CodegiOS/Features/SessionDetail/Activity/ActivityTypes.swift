@@ -179,6 +179,8 @@ enum ActivityStep {
     /// A context-compaction boundary (`_meta.contextCompaction`).
     case compaction(key: String, before: Int?, after: Int?, running: Bool)
     case unsupported(key: String, type: String)
+    /// A Codex `/goal` run, drawn as one row whose body is its own timeline.
+    case goal(ActivityGoalStep)
 
     var key: String {
         switch self {
@@ -187,6 +189,7 @@ enum ActivityStep {
              .plan(let key, _, _), .delegationPolls(let key, _, _), .taskList(let key, _),
              .compaction(let key, _, _, _), .unsupported(let key, _):
             return key
+        case .goal(let step): return step.key
         }
     }
 
@@ -205,6 +208,28 @@ struct ActivityToolStep {
     /// after it — drawn as rows of their own, but the newest says how the
     /// delegation stands now.
     var laterPolls: [ToolCallVM]?
+}
+
+/// A goal run's step (web `{ type: "goal", part, model }`).
+struct ActivityGoalStep {
+    var key: String
+    var run: GoalRunPart
+    /// The run's own steps, built like a reply's — but with no answer slot:
+    /// whatever prose the run holds (the answer streaming inside a live run,
+    /// notes before its closing `update_goal`) stays a step, or it would
+    /// never be drawn.
+    var model: ReplyActivity
+    /// What the goal calls say about the goal.
+    var facts: ActivityGoal.Facts
+
+    init(key: String, run: GoalRunPart, model: ReplyActivity) {
+        self.key = key
+        self.run = run
+        self.model = model
+        self.facts = ActivityGoal.facts(start: run.start, end: run.end)
+    }
+
+    var isError: Bool { ActivityGoal.isError(start: run.start, end: run.end) }
 }
 
 /// A row of the timeline: one step, or a folded run of explore / command calls.
@@ -259,4 +284,9 @@ struct ReplyActivity {
     /// The reply's trailing answer — rendered after the timeline, unfolded.
     var answer: [RenderPart]
     var summary: ActivitySummary
+
+    /// No steps at all — a goal call's row outside any run.
+    static var empty: ReplyActivity {
+        ReplyActivity(steps: [], items: [], answer: [], summary: ActivitySummary())
+    }
 }
