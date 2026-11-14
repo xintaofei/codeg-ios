@@ -117,6 +117,17 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
 - **1.4**：snapshot 的 `event_seq` 在**帧上**而不在 snapshot 体内（之前 iOS 解码的位置一直是 nil）。「服务端已开始本轮」的证据只认 `status_changed: prompting` / `user_message` 以及重连时 `prompting` 的 snapshot——回合之间也会有迟到的 update，不能作数。重连 snapshot 的 `last_error` 记录的是**任意**最近错误，恢复时也走同一套分流，不要求带 details。viewer 路径同样修了「断线期间结束 → 一直显示流式中」。
 - **1.5**：改走 `list_provider_models`（`{params:{protocol, baseUrl, keySource:{kind:"inline", apiKey}}}`）；空 baseUrl 用 SDK 默认地址；vertexai 无 key 不可拉取。**未对真实服务端验证**（本机 desktop 未运行）。
 - **验证**：模拟器上真实 VM 对 live WS mock 跑 9 个场景，每个都跑了「只关掉对应修复」的反事实，均复现原 bug；Codex 审查两轮（第一轮 3 个 Important 全部属实已修，第二轮 APPROVED）。
-- [ ] 阶段二
+- [x] 阶段二（主体）
 - [ ] 阶段三
 - [ ] 阶段四
+
+### 阶段二实际做法与偏差（2026-11-14）
+
+- **逻辑层**：`Features/SessionDetail/Activity/` 移植了 `src/lib/activity/**` 全部模块 + `tool-call-normalization.ts`（归一化做过约 18 万组输入的 Swift/JS 差分对比，0 差异）。web 的测试逐条移植进新加的 `CodegiOSTests`（Swift Testing），共 350 个测试。JS 语义（UTF-16、正则 `^$`/`\s`/`\b`、对象插入顺序、布尔不是数字）在各模块里显式复刻；对象键顺序从源 JSON 文本恢复。
+- **接入**：`TranscriptTimeline.replyNodes` 把每轮回复画成「头部胶囊 → activity 行 → 收起 → 答案 → footer」；折叠状态 `ReplyFoldStore`（VM 持有，照搬 web `ReplyFoldState`：当前轮按位置、发送时 epoch+1、新打开的会话全部折叠）在**缓存之后**由 `ReplyFolding.apply` 过滤，不让持久化层的 memo 失效。直播回复展开时答案留在 rail 上，折叠时答案常驻。
+- **行视图**：普通工具一行（动词 + 目标 + 细节 + 右侧数字/状态），展开复用 `ToolCallBody`；explore/command 分组行；思考行（自动标题）。委派/提问/子 agent/plan-mode 保留原有专用卡片。中英文案含复数变体。
+- **直播工具名**：直播调用现在用 `inferLiveToolName` 推断工具名（之前直接用 ACP 原始 title）。`ToolCallVM.toolName` 只供 activity 层用，旧卡片仍读 `rawName`。
+- **刻意偏差**：结束后既无步骤又无耗时的回复不画「Reply」头部（手机上省一行）；轮询行只在自身运行时折叠常驻（委派行用 broker 终态代表子任务）。
+- **未移植**：opencode code-mode 委派判定、恢复委派被拒绝的判定、后台任务（`TaskOutput`）分组、goal 运行、proposed-plan、单轮超长时的行窗口化（`List` 已回收）。
+- **验证**：模拟器对 mock 截图（折叠/展开的历史回复、中文、直播中的回复）；Codex 审查三轮（2 个 Important + 1 个遗留全部修复，第三轮 APPROVED），对应集成测试在 `TimelineFoldingTests`。
+
