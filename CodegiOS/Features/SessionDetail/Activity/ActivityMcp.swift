@@ -185,6 +185,12 @@ enum ActivityMcp {
     /// order. The order comes from scanning `source`, the text `obj` was parsed
     /// from; keys the scan missed (none, for valid JSON) follow sorted.
     static func jsObjectValues(_ obj: [String: Any], source: String) -> [Any] {
+        jsObjectKeys(obj, source: source).compactMap { obj[$0] }
+    }
+
+    /// The keys of `obj` in JavaScript's `Object.keys` order (see
+    /// ``jsObjectValues(_:source:)``).
+    static func jsObjectKeys(_ obj: [String: Any], source: String) -> [String] {
         let scanned = topLevelKeys(source)
         var seen = Set<String>()
         var indexKeys: [(UInt32, String)] = []
@@ -195,8 +201,7 @@ enum ActivityMcp {
         for key in obj.keys.sorted() where seen.insert(key).inserted {
             if let index = arrayIndex(key) { indexKeys.append((index, key)) } else { namedKeys.append(key) }
         }
-        let ordered = indexKeys.sorted { $0.0 < $1.0 }.map(\.1) + namedKeys
-        return ordered.compactMap { obj[$0] }
+        return indexKeys.sorted { $0.0 < $1.0 }.map(\.1) + namedKeys
     }
 
     /// A canonical array index (`"0"`, `"12"`, below 2³²−1), which JavaScript

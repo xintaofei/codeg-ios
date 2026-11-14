@@ -1,0 +1,242 @@
+import Foundation
+
+/// A reply's render parts → its activity model (steps, grouped rows, trailing
+/// answer, header summary) — port of the web's
+/// `src/lib/activity/build-activity.ts` (codeg 0.44).
+///
+/// Runs on the parts `MessageRender` adapts for one reply, BEFORE its generic
+/// tool grouping: delegation polls and task-checklist runs arrive already
+/// gathered (they are lanes of their own), plain tool calls arrive one by one
+/// and are grouped here, by kind.
+///
+/// Live prose is never read here. A `LiveTextRun` is referred to by its id —
+/// reading its text would subscribe whoever builds the model to every streamed
+/// token, which is exactly what the leaf views reading it exist to avoid.
+@MainActor
+enum BuildActivity {
+    /// Build one reply's model.
+    /// - Parameters:
+    ///   - isStreaming: the reply is still being written.
+    ///   - keepAnswer: keep closing prose as steps instead of splitting it off
+    ///     as the answer — for a reply still being written, whose closing prose
+    ///     is not known yet, and for a sub-agent's own timeline.
+    ///   - awaitingToolIds: calls with a permission request open.
+    static func build(_ parts: [RenderPart], isStreaming: Bool, keepAnswer: Bool = false,
+                      awaitingToolIds: Set<String> = []) -> ReplyActivity {
+        let (body, trailing) = keepAnswer ? (parts, []) : splitTrailingAnswer(parts)
+        let anchor = replyAnchor(body)
+        let steps = linkLaterDelegationPolls(collectSteps(body, isStreaming: isStreaming,
+                                                          anchor: anchor, awaiting: awaitingToolIds))
+        let summary = ActivitySummarize.summarize(steps)
+        let items = ActivityGroup.items(steps.filter { !isBlankInterruption($0) })
+        return ReplyActivity(steps: steps, items: items, answer: trailing, summary: summary)
+    }
+
+    // MARK: - Answer split
+
+    /// Parts that ARE the reply's answer rather than the process that produced
+    /// it: prose, a generated image, the failure line. Exhaustive on purpose,
+    /// so a new part kind has to be classified here.
+    static func isAnswerPart(_ part: RenderPart) -> Bool {
+        switch part {
+        case .text, .liveText, .image, .turnError:
+            return true
+        case .reasoning, .liveReasoning, .tool, .toolGroup, .delegationStatusGroup, .taskGroup,
+             .compaction, .unknown:
+            return false
+        }
+    }
+
+    /// Split a reply at its last process part: everything after it is the
+    /// answer, in order. Answer parts BEFORE a process part stay in the body —
+    /// prose followed by more work is a mid-run note, not a wrap-up.
+    static func splitTrailingAnswer(_ parts: [RenderPart]) -> (body: [RenderPart], trailing: [RenderPart]) {
+        var end = parts.count
+        while end > 0, isAnswerPart(parts[end - 1]) { end -= 1 }
+        return (Array(parts[..<end]), Array(parts[end...]))
+    }
+
+    /// Does a reply's answer leave anything for the reader? Whitespace-only
+    /// settled text is not an answer. (Live text is assumed visible: it is not
+    /// read here.)
+    static func hasVisibleAnswer(_ answer: [RenderPart]) -> Bool {
+        answer.contains { part in
+            if case .text(let t) = part { return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            return true
+        }
+    }
+
+    // MARK: - Keys
+
+    private static let anchorTextLength = 32
+
+    /// djb2 over UTF-16 code units, base 36 — only has to tell replies apart.
+    static func hashText(_ text: String) -> String {
+        var hash: Int32 = 5381
+        for unit in text.utf16 { hash = (hash &<< 5) &+ hash &+ Int32(unit) }
+        return String(UInt32(bitPattern: hash), radix: 36)
+    }
+
+    /// A stable name for the reply, prefixed onto the keys of steps that have no
+    /// id of their own (thoughts, notes, plans), so a remembered open/closed
+    /// choice stays with the right row. The opening settled prose names it when
+    /// the reply starts with some; a live run its run id; otherwise the first
+    /// tool call id (ids persist across the live → history hand-over).
+    static func replyAnchor(_ parts: [RenderPart]) -> String {
+        switch parts.first {
+        case .text(let t)?, .reasoning(let t)?:
+            if t.trimmingCharacters(in: .whitespacesAndNewlines).count >= anchorTextLength {
+                return "h" + hashText(String(decoding: Array(t.utf16.prefix(anchorTextLength)), as: UTF16.self))
+            }
+        case .liveText(let run, _)?, .liveReasoning(let run, _)?:
+            return "r" + run.id
+        default:
+            break
+        }
+        for part in parts {
+            switch part {
+            case .tool(let vm): return vm.id
+            case .delegationStatusGroup(let polls), .taskGroup(let polls), .toolGroup(let polls, _):
+                if let first = polls.first { return first.id }
+            default: continue
+            }
+        }
+        return parts.isEmpty ? "empty" : "i\(parts.count)"
+    }
+
+    /// A step's identity within its own reply: its key without the reply's
+    /// anchor. Within one reply the part's place is enough, and it does not
+    /// change while the anchor text is still growing.
+    static func rowIdentity(_ key: String) -> String {
+        let parts = key.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count >= 3, ["note", "thought", "plan", "image"].contains(String(parts[0])),
+              let last = parts.last, Int(last) != nil else { return key }
+        return "\(parts[0])@\(last)"
+    }
+
+    // MARK: - Steps
+
+    private static func collectSteps(_ parts: [RenderPart], isStreaming: Bool, anchor: String,
+                                     awaiting: Set<String>) -> [ActivityStep] {
+        var steps: [ActivityStep] = []
+        for (index, part) in parts.enumerated() {
+            let key = { (kind: String) in "\(kind):\(anchor):\(index)" }
+            switch part {
+            case .text(let t):
+                if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    steps.append(.note(key: key("note"), .text(.settled(t))))
+                }
+            case .liveText(let run, _):
+                steps.append(.note(key: key("note"), .text(.live(run))))
+            case .turnError(let message):
+                steps.append(.note(key: key("note"), .turnError(message)))
+            case .reasoning(let t):
+                if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    steps.append(.thought(key: key("thought"), text: .settled(t), streaming: false))
+                }
+            case .liveReasoning(let run, let streaming):
+                steps.append(.thought(key: key("thought"), text: .live(run), streaming: isStreaming && streaming))
+            case .tool(let vm):
+                steps.append(.tool(toolStep(vm, awaiting: awaiting.contains(vm.id))))
+            case .toolGroup(let items, _):
+                // Not expected (the caller hands over ungrouped parts); taken
+                // apart so its calls are grouped by this model's rules.
+                for vm in items { steps.append(.tool(toolStep(vm, awaiting: awaiting.contains(vm.id)))) }
+            case .delegationStatusGroup(let polls):
+                guard let first = polls.first else { continue }
+                steps.append(.delegationPolls(key: "dpoll:\(first.id)", polls: polls,
+                                              status: ActivityStatus.combine(polls.map { ActivityStatus.of($0) })))
+            case .taskGroup(let ops):
+                guard let first = ops.first else { continue }
+                steps.append(.taskList(key: "tasks:\(first.id)", ops: ops))
+            case .image(let image, let caption):
+                steps.append(.image(key: key("image"), image, caption: caption))
+            case .compaction(let before, let after, let running):
+                steps.append(.compaction(key: key("compaction"), before: before, after: after, running: running))
+            case .unknown(let type):
+                steps.append(.unsupported(key: key("unsupported"), type: type))
+            }
+        }
+        return steps
+    }
+
+    private static func toolStep(_ vm: ToolCallVM, awaiting: Bool) -> ActivityToolStep {
+        ActivityToolStep(key: "tool:\(vm.id)", call: vm, tool: DescribeCache.describe(vm, awaiting: awaiting))
+    }
+
+    /// A call interrupted before it carried anything — no arguments, no output
+    /// beyond the interruption marker. It says nothing a row could show, so it
+    /// is left out of the rows (the header still counts it as interrupted).
+    private static func isBlankInterruption(_ step: ActivityStep) -> Bool {
+        guard let tool = step.toolStep, tool.tool.status == .cancelled else { return false }
+        let input = tool.call.input?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return input.isEmpty || input == "{}" || input == "[]" || input == "null"
+    }
+
+    /// A delegation's status checks are rows of their own, yet the newest of
+    /// them says how the delegation stands: hand the delegation step the polls
+    /// about its task. A resume of the task is a delegation step too, and the
+    /// checks after it go to it, not to the call before it.
+    private static func linkLaterDelegationPolls(_ steps: [ActivityStep]) -> [ActivityStep] {
+        var tasksCache: [String: Set<String?>] = [:]
+        func tasks(_ key: String, _ polls: [ToolCallVM]) -> Set<String?> {
+            if let cached = tasksCache[key] { return cached }
+            let set = Set(DelegationModel.buildTaskRows(polls).map(\.taskId))
+            tasksCache[key] = set
+            return set
+        }
+        return steps.enumerated().map { index, step in
+            guard var tool = step.toolStep,
+                  tool.tool.kind == .delegation || tool.tool.kind == .delegationResume,
+                  let taskId = ActivitySummarize.delegationTaskId(tool) else { return step }
+            var later: [ToolCallVM] = []
+            for next in steps[(index + 1)...] {
+                if let nextTool = next.toolStep, nextTool.tool.kind == .delegationResume,
+                   ActivitySummarize.delegationTaskId(nextTool) == taskId { break }
+                if case .delegationPolls(let key, let polls, _) = next, tasks(key, polls).contains(taskId) {
+                    later.append(contentsOf: polls)
+                }
+            }
+            tool.laterPolls = later.isEmpty ? nil : later
+            return .tool(tool)
+        }
+    }
+}
+
+/// Descriptors are the expensive half of a build (each one parses the call's
+/// input and output), and the live tier rebuilds its model on every pass — so
+/// they are cached by the call's raw content. Bounded: the replies on screen
+/// and the ones just handed over to history.
+@MainActor
+enum DescribeCache {
+    private struct Key: Hashable {
+        let id: String
+        let rawName: String
+        let state: ToolCallState
+        let input: String?
+        let output: String?
+        let isError: Bool
+        let exitCode: Int?
+        let meta: AnyJSON?
+        let awaiting: Bool
+    }
+
+    private static var entries: [Key: ToolDescriptor] = [:]
+    private static var order: [Key] = []
+    private static let limit = 2_000
+
+    static func describe(_ vm: ToolCallVM, awaiting: Bool) -> ToolDescriptor {
+        let key = Key(id: vm.id, rawName: vm.rawName, state: vm.state, input: vm.input, output: vm.output,
+                      isError: vm.isError, exitCode: vm.exitCode, meta: vm.meta, awaiting: awaiting)
+        if let hit = entries[key] { return hit }
+        let descriptor = DescribeToolCall.describe(vm, awaiting: awaiting)
+        entries[key] = descriptor
+        order.append(key)
+        if order.count > limit {
+            let evicted = order.prefix(order.count - limit)
+            for old in evicted { entries[old] = nil }
+            order.removeFirst(evicted.count)
+        }
+        return descriptor
+    }
+}

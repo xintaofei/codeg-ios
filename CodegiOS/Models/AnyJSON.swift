@@ -100,6 +100,11 @@ enum AnyJSON: Decodable, Hashable, Sendable {
         return s
     }
 
+    /// The value as `JSONSerialization` would have produced it (`[String: Any]`,
+    /// `[Any]`, `String`, a number, a boolean, `NSNull`) — for the readers
+    /// ported from the web, which take untyped JSON.
+    var foundationValue: Any { toAny() }
+
     private func toAny() -> Any {
         switch self {
         case .object(let o): return o.mapValues { $0.toAny() }

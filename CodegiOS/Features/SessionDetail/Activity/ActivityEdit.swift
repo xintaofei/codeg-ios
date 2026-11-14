@@ -394,7 +394,7 @@ enum ActivityEdit {
     static func describeEditFiles(toolName: String, input: String?, output: String?) -> [EditFileChange] {
         let raw = input ?? ""
         // OpenCode's live stream spells the arguments in camelCase.
-        let parsed = aliasToolInputKeys(raw.isEmpty ? nil : ActivityJSON.tryParse(raw))
+        let parsed = ToolNameNormalizer.aliasToolInputKeys(raw.isEmpty ? nil : ActivityJSON.tryParse(raw))
 
         let patchText = raw.isEmpty ? nil : extractApplyPatchTextFromUnknownInput(raw, parsed)
         // The patch may arrive with its newlines still JSON-escaped (a patch
@@ -528,7 +528,7 @@ enum ActivityEdit {
     static func editDiffText(toolName: String, input: String?, output: String?) -> EditDiff? {
         let name = toolName.lowercased()
         let raw = input ?? ""
-        let parsed = aliasToolInputKeys(raw.isEmpty ? nil : ActivityJSON.tryParse(raw))
+        let parsed = ToolNameNormalizer.aliasToolInputKeys(raw.isEmpty ? nil : ActivityJSON.tryParse(raw))
 
         if !raw.isEmpty, let patch = extractApplyPatchTextFromUnknownInput(raw, parsed), !patch.isEmpty {
             return EditDiff(text: patch, numbered: false)
@@ -592,42 +592,6 @@ enum ActivityEdit {
             return EditDiff(text: text, numbered: JS.test(numberedHunkRE, text))
         }
         return nil
-    }
-
-    // MARK: - tool input key aliases
-
-    /// Wire spellings that mean the same argument as a canonical (snake_case)
-    /// key. OpenCode names its tool arguments in camelCase and its ACP adapter
-    /// forwards them verbatim, so the LIVE stream carries `filePath` /
-    /// `oldString` where the history parser has already rewritten them.
-    private static let toolInputKeyAliases: [(alias: String, canonical: String)] = [
-        ("filePath", "file_path"),
-        ("notebookPath", "notebook_path"),
-        ("oldString", "old_string"),
-        ("newString", "new_string"),
-        ("newSource", "new_source"),
-        ("replaceAll", "replace_all"),
-        ("editMode", "edit_mode"),
-        ("cellType", "cell_type"),
-        ("include", "glob"),
-    ]
-
-    /// Private port of the web's `aliasToolInputKeys`
-    /// (`src/lib/tool-call-normalization.ts`), pending its shared port: fills in
-    /// a canonical key only when it is absent or null, so it never overrides
-    /// what an agent actually sent. (`ToolDerive.effectiveArgs` is not the
-    /// same: it also unwraps envelopes, and keeps a canonical key that is JSON
-    /// null.)
-    fileprivate static func aliasToolInputKeys(_ parsed: [String: Any]?) -> [String: Any]? {
-        guard let parsed else { return nil }
-        var out: [String: Any]?
-        for (alias, canonical) in toolInputKeyAliases {
-            guard let value = parsed[alias], !(value is NSNull) else { continue }
-            if let existing = parsed[canonical], !(existing is NSNull) { continue }
-            if out == nil { out = parsed }
-            out?[canonical] = value
-        }
-        return out ?? parsed
     }
 
     // MARK: - JavaScript object key order
