@@ -88,6 +88,10 @@ struct TranscriptView<Header: View>: View {
     /// would then point past the end and show nothing — so it starts over at
     /// the tail.
     var resetToken: Int = 0
+    /// A message to bring to the top of the screen (the message navigator).
+    /// The model has already paged in the history down to it; the reveal
+    /// window here is widened to include it before scrolling.
+    var jumpRequest: TranscriptJumpRequest? = nil
     /// Scrolls with the content as the first element (header above the first
     /// node). Kept generic so the transcript stays agnostic of the header's type.
     @ViewBuilder var header: () -> Header
@@ -371,6 +375,9 @@ struct TranscriptView<Header: View>: View {
             }
             .onAppear { scrollToBottom(proxy) }
             .onChange(of: resetToken) { _, _ in windowStartTurn = nil }
+            .onChange(of: jumpRequest) { _, request in
+                if let request { jump(to: request, proxy: proxy) }
+            }
         }
     }
 
@@ -416,5 +423,35 @@ private struct TimelineRowChrome: ViewModifier {
             ))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
+    }
+}
+
+// MARK: - Jump to a message (message navigator)
+
+extension TranscriptView {
+    /// Bring a message to the top of the screen. A message above the reveal
+    /// window widens it to start there (a user turn is a round boundary, so
+    /// the snap keeps it), and auto-follow lets go — the user is reading
+    /// history now, not the stream.
+    ///
+    /// The scroll waits a beat when rows were just added, so the target row
+    /// exists, and is re-asserted after ~80 ms, as the scroll to the bottom
+    /// is: rich rows above it measure taller after the first pass and would
+    /// push it off its place.
+    fileprivate func jump(to request: TranscriptJumpRequest, proxy: ScrollViewProxy) {
+        var widened = false
+        if let index = turns.firstIndex(where: { $0.id == request.turnID }), index < effectiveStart {
+            windowStartTurn = snappedStart(index)
+            widened = true
+        }
+        stuckToBottom = false
+        onPinnedChange(false)
+        let id = request.turnID
+        Task { @MainActor in
+            if widened { try? await Task.sleep(for: .milliseconds(30)) }
+            proxy.scrollTo(id, anchor: .top)
+            try? await Task.sleep(for: .milliseconds(80))
+            proxy.scrollTo(id, anchor: .top)
+        }
     }
 }

@@ -26,6 +26,8 @@ struct SessionDetailView: View {
     @State private var showDeleteConfirm = false
     /// What the project-trust sheet is showing, captured when it opens.
     @State private var piTrustSheet: PiTrustSheetInput?
+    /// The message navigator ("…" → Messages).
+    @State private var showMessages = false
 
     init(server: ServerProfile, client: CodegClient, conversationID: Int,
          onOpenSession: ((NewSessionRequest) -> Void)? = nil) {
@@ -105,7 +107,8 @@ struct SessionDetailView: View {
                                 showRename = true
                             },
                             onShowDetails: { showDetails = true },
-                            onDelete: { showDeleteConfirm = true }
+                            onDelete: { showDeleteConfirm = true },
+                            onShowMessages: { showMessages = true }
                         )
                     }
                 }
@@ -130,6 +133,9 @@ struct SessionDetailView: View {
             if let summary = model.summary {
                 SessionDetailsSheet(summary: summary, stats: model.sessionStats, folder: model.folder)
             }
+        }
+        .sheet(isPresented: $showMessages) {
+            MessageNavigatorSheet(model: model)
         }
         // Presented from a SNAPSHOT taken when it opens, not from the live
         // `piTrustNotice`: answering clears that notice, and a sheet whose body
@@ -247,7 +253,8 @@ struct SessionDetailView: View {
             isLoadingOlderTurns: model.loadingOlderTurns,
             onLoadOlderTurns: { model.requestOlderTurns() },
             onPinnedChange: { model.setPinnedToBottom($0) },
-            resetToken: model.transcriptResetTick
+            resetToken: model.transcriptResetTick,
+            jumpRequest: model.jumpRequest
         ) {
             // No top banner on an existing session — its identity + stats now
             // live in the nav-bar "…" → Session Details, so messages start at
@@ -469,6 +476,8 @@ private struct SessionActionsMenu: View {
     let onRename: () -> Void
     let onShowDetails: () -> Void
     let onDelete: () -> Void
+    /// Opens the message navigator.
+    var onShowMessages: () -> Void = {}
 
     var body: some View {
         Menu {
@@ -484,6 +493,9 @@ private struct SessionActionsMenu: View {
             }
             Button(action: onShowDetails) {
                 Label("Session Details", systemImage: "info.circle")
+            }
+            Button(action: onShowMessages) {
+                Label("Messages", systemImage: "list.number")
             }
             Menu {
                 ForEach(ConversationStatus.selectable, id: \.self) { status in

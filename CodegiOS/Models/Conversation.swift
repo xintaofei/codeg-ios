@@ -206,6 +206,11 @@ struct ConversationDetail: Decodable, Sendable {
     /// verbatim — we never compute one locally, so its construction (FNV-1a over
     /// role + timestamp-millis) is the server's business.
     let prefixHash: String?
+    /// User turns in `full[0..<turnsOffset)` — what the message navigator
+    /// numbers the loaded messages on from. Absent from a server that predates
+    /// the outline route (≤ 0.35) and from a legacy full response, which is
+    /// also how the navigator knows not to ask for an outline.
+    let userTurnsBeforeOffset: Int?
 
     /// Global index one past the last loaded turn. The coordinate to compare
     /// against when asking "did the transcript advance past what I hold?" — the
@@ -231,6 +236,11 @@ struct TranscriptWindow: Equatable, Sendable {
     var total: Int
     /// Fingerprint of the not-yet-loaded prefix `full[0..<offset)`.
     var prefixHash: String
+    /// User turns in `full[0..<offset)` (`user_turns_before_offset`); nil from
+    /// a server without the outline route. Rides with the window because it is
+    /// one more fact about the same coordinates: every adoption of a window
+    /// brings its own.
+    var userTurnsBefore: Int? = nil
 
     /// Present only when the response carried all three fields; their absence
     /// means a legacy full response and every windowed path must stand down.
@@ -240,6 +250,7 @@ struct TranscriptWindow: Equatable, Sendable {
               let prefixHash = detail.prefixHash
         else { return nil }
         self.init(offset: offset, total: total, prefixHash: prefixHash)
+        userTurnsBefore = detail.userTurnsBeforeOffset
     }
 
     init(offset: Int, total: Int, prefixHash: String) {
@@ -267,6 +278,10 @@ struct ConversationTurnsPage: Decodable, Sendable {
     /// the window's current prefix hash, or this page came from a parse whose
     /// prefix was rewritten since and cannot legally join what is loaded.
     let prefixHashBeforeIndex: String
+    /// User turns in `full[0..<turnsOffset)` — the window's new count once the
+    /// page is prepended. Optional: a server without the outline route
+    /// (≤ 0.35) omits it, and paging must go on working against one.
+    let userTurnsBeforeOffset: Int?
 }
 
 /// Returned by `acp_find_connection_for_conversation` when a live ACP

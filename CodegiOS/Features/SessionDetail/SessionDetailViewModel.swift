@@ -144,6 +144,25 @@ final class SessionDetailViewModel {
     /// end and show nothing).
     private(set) var transcriptResetTick = 0
 
+    // MARK: Message navigator
+    //
+    // State for the "Messages" sheet (see the navigator extension at the end
+    // of this file and `Navigator/MessageNavigator.swift`).
+
+    /// The outline of the history above the window, and what it is proven
+    /// against.
+    private(set) var outline = NavigatorOutline()
+    private var outlineTask: Task<Void, Never>?
+    /// The sheet is up: an outline that lands for a window that has moved on
+    /// since is fetched again only then.
+    private var navigatorOpen = false
+    /// The message whose history is being paged in for a jump.
+    private(set) var revealingTurnID: String?
+    private var jumpTask: Task<Void, Never>?
+    /// The last jump asked of the transcript (it answers by scrolling).
+    private(set) var jumpRequest: TranscriptJumpRequest?
+    private var jumpToken = 0
+
     /// Optimistic user turns awaiting persistence (spliced out on re-fetch).
     private(set) var pendingUserTurns: [MessageTurn] = []
     /// The assistant reply currently streaming, if any.
@@ -466,7 +485,9 @@ final class SessionDetailViewModel {
     /// all. Capturing `lifecycle` where the work is *requested* is what closes
     /// it.
     private var loadTask: Task<Void, Never>?
-    private var olderTurnsTask: Task<Void, Never>?
+    /// Carries what the page came to, so paging toward a message
+    /// (`loadOlderTurnsThrough`) can wait one out and read it.
+    private var olderTurnsTask: Task<OlderPageOutcome, Never>?
     /// The long-lived loop consuming `stream.frames`.
     private var consumerTask: Task<Void, Never>?
     private let subscriptionID = UUID().uuidString
@@ -729,38 +750,44 @@ final class SessionDetailViewModel {
         // it after any teardown the body was queued across — which is precisely
         // the case this exists to reject.
         let lifetime = lifecycle
-        olderTurnsTask = Task { [weak self] in await self?.loadOlderTurns(lifetime: lifetime) }
+        olderTurnsTask = Task { [weak self] in
+            await self?.loadOlderTurns(lifetime: lifetime, limit: Self.olderTurnsPage) ?? .superseded
+        }
     }
 
-    private func loadOlderTurns(lifetime: Int) async {
-        // Set by `requestOlderTurns`; clearing it is this body's job, on every
-        // exit including the guard below (a body whose task was cancelled before
-        // it ever started still runs, so the flag is never stranded).
+    /// One page of up to `limit` older turns, and what it came to. The scroll
+    /// asks for a normal page; a jump to a message above the window asks for
+    /// everything down to it (`loadOlderTurnsThrough`).
+    @discardableResult
+    private func loadOlderTurns(lifetime: Int, limit: Int) async -> OlderPageOutcome {
+        // Set by whoever started the page; clearing it is this body's job, on
+        // every exit including the guard below (a body whose task was cancelled
+        // before it ever started still runs, so the flag is never stranded).
         defer { loadingOlderTurns = false }
-        guard lifetime == lifecycle,
-              let id = conversationID, let current = window, current.hasOlder else { return }
+        guard lifetime == lifecycle else { return .superseded }
+        guard let id = conversationID, let current = window, current.hasOlder else { return .nothingOlder }
 
         // Joins the same total order as every detail refresh: a refresh issued
         // before this page must not commit its (now stale, narrower) suffix
         // afterwards, and a refresh issued after it supersedes it.
         let generation = nextFetchGeneration()
         guard let page = try? await client.conversationTurns(
-            id: id, beforeIndex: current.offset, limit: Self.olderTurnsPage
-        ) else { return }
-        guard lifetime == lifecycle, isCurrentGeneration(generation) else { return }
+            id: id, beforeIndex: current.offset, limit: limit
+        ) else { return .failed }
+        guard lifetime == lifecycle, isCurrentGeneration(generation) else { return .superseded }
 
         // The window may have moved while the page was in flight (a refresh
         // landed, the session reset): re-read it instead of trusting the capture.
         guard let now = window,
               now.offset == current.offset,
               now.prefixHash == current.prefixHash
-        else { return }
+        else { return .superseded }
 
         guard page.prefixHashBeforeIndex == now.prefixHash else {
             // Prefix rewritten under us. Re-anchor by refreshing — the same
             // mismatch there re-opens at the tail. Skipped while a turn is live:
             // that path owns `turns` and reconciles on its own.
-            guard liveTurn == nil, !isInFlight else { return }
+            guard liveTurn == nil, !isInFlight else { return .seamBroken }
             if case .fetched(let fetch)? = try? await fetchWindowedDetail(id: id),
                lifetime == lifecycle, liveTurn == nil, !isInFlight {
                 summary = fetch.detail.summary
@@ -768,19 +795,25 @@ final class SessionDetailViewModel {
                 adoptTranscriptScope(fetch.detail)
                 sessionStats = fetch.detail.sessionStats ?? sessionStats
             }
-            return
+            return .seamBroken
         }
-        guard page.turnsOffset <= now.offset else { return }
+        guard page.turnsOffset <= now.offset else { return .failed }
 
         // Defensive de-dup at the seam. The ranges are disjoint by construction;
         // this only guards against a server that rounded the page bounds outward.
         let existing = Set(turns.map(\.id))
         let fresh = page.turns.filter { !existing.contains($0.id) }
-        guard !fresh.isEmpty || page.turnsOffset < now.offset else { return }
+        guard !fresh.isEmpty || page.turnsOffset < now.offset else { return .failed }
         turns = fresh + turns
         // `total` keeps the window's own (newer) value: the page reports the same
         // parse it was sliced from, which never saw the loaded tail's latest turns.
-        window = TranscriptWindow(offset: page.turnsOffset, total: now.total, prefixHash: page.prefixHash)
+        var moved = TranscriptWindow(offset: page.turnsOffset, total: now.total, prefixHash: page.prefixHash)
+        moved.userTurnsBefore = page.userTurnsBeforeOffset
+        window = moved
+        // The seam proof just showed the history above the old start is the
+        // one the outline (if any) was proven against.
+        outlineAnchorDidMove(from: now, to: moved)
+        return .committed
     }
 
     // MARK: - Load
@@ -3656,6 +3689,14 @@ final class SessionDetailViewModel {
         // here (the backend shields it); the screen that comes back re-reads it.
         forkTask?.cancel()
         forkTask = nil
+        // The navigator's reads: an outline (refetched on the next open) and
+        // the paging toward a message the user picked on a screen now gone.
+        outlineTask?.cancel()
+        outlineTask = nil
+        outline.inFlight = nil
+        jumpTask?.cancel()
+        jumpTask = nil
+        revealingTurnID = nil
         // Cancellation stops the reconcile from ISSUING more work; retiring the
         // fetch generation stops anything already in flight — a request suspended
         // when the cancel landed — from committing to a screen the user has left.
@@ -4063,7 +4104,184 @@ extension SessionDetailViewModel {
         sessionStats = detail.sessionStats ?? sessionStats
         // The history is shorter: the transcript's reveal window starts over.
         transcriptResetTick &+= 1
+        // A jump aimed into the old history has nothing left to land on, and
+        // the outline described the old history.
+        jumpTask?.cancel()
+        jumpTask = nil
+        revealingTurnID = nil
+        resetOutline()
         isPinnedToBottom = true
         requestStickToBottom()
+    }
+}
+
+// MARK: - Message navigator
+
+extension SessionDetailViewModel {
+    /// What the navigator can show of the messages above the loaded window.
+    var navigatorEarlier: NavigatorEarlier { outline.state(for: window) }
+
+    /// The window's coordinates — the sheet asks for a fresh outline whenever
+    /// they change under it.
+    var navigatorWindowKey: OutlineAnchor? { window.map { OutlineAnchor($0) } }
+
+    /// The user message whose round is running, listed apart at the top of the
+    /// navigator while it runs.
+    var navigatorRunningTurnID: String? {
+        guard isInFlight else { return nil }
+        if let pending = pendingUserTurns.last { return pending.id }
+        if let id = inFlightUserTurnId { return id }
+        return turns.last { $0.role == .user }?.id
+    }
+
+    /// The navigator's input, read here on the main actor; the entries are
+    /// built from it off it (``MessageNavEntries/build(_:)``).
+    func navigatorInput() -> MessageNavEntries.Input {
+        MessageNavEntries.Input(
+            earlierTurns: outline.earlierTurns(for: window),
+            earlierUserCount: window?.userTurnsBefore ?? 0,
+            loadedTurns: turns + pendingUserTurns
+        )
+    }
+
+    func navigatorDidAppear() {
+        navigatorOpen = true
+        ensureOutline()
+    }
+
+    func navigatorDidDisappear() {
+        navigatorOpen = false
+    }
+
+    /// Ask for the outline of the history above the current window — unless it
+    /// is held already, already failed for this window, or on its way. Only a
+    /// server that reports `user_turns_before_offset` has the route.
+    func ensureOutline() {
+        // Read before writing anything: this runs on every appearance of the
+        // sheet, and a write — even of an unchanged value — re-renders it.
+        guard let id = conversationID, let key = outline.fetchKey(for: window) else { return }
+        // One for a window that has moved on since would be refused when it
+        // lands; this one replaces it.
+        outlineTask?.cancel()
+        outline.inFlight = key
+        // Read where the fetch is asked for (see `startLoad`).
+        let lifetime = lifecycle
+        outlineTask = Task { [weak self] in
+            await self?.fetchOutline(conversationID: id, for: key, lifetime: lifetime)
+        }
+    }
+
+    /// The "load earlier messages" row of a failed outline.
+    func retryOutline() {
+        outline.retry()
+        ensureOutline()
+    }
+
+    private func fetchOutline(conversationID id: Int, for key: OutlineAnchor, lifetime: Int) async {
+        let fetched = try? await client.conversationOutline(id: id, beforeIndex: key.offset)
+        // Replaced by a fetch for a newer window, or the screen went (teardown
+        // clears `inFlight`): the state is no longer this fetch's to write.
+        guard lifetime == lifecycle, outline.inFlight == key, conversationID == id else { return }
+        outlineTask = nil
+        outline.land(fetched, for: key)
+        // The window may have moved while this was in flight.
+        if navigatorOpen { ensureOutline() }
+    }
+
+    /// Forget the outline: the history it described was replaced.
+    private func resetOutline() {
+        outlineTask?.cancel()
+        outlineTask = nil
+        outline = NavigatorOutline()
+        if navigatorOpen { ensureOutline() }
+    }
+
+    /// An older page joined the window under a seam proof: an outline proven
+    /// against the old start still covers the new one.
+    private func outlineAnchorDidMove(from before: TranscriptWindow, to after: TranscriptWindow) {
+        // Only an anchor that was the window's moves; skip the write otherwise.
+        guard outline.anchor == OutlineAnchor(before) else { return }
+        outline.windowDidPrepend(from: OutlineAnchor(before), to: OutlineAnchor(after))
+    }
+
+    /// Bring a message into view (a navigator row). A loaded one is scrolled
+    /// to at once; one above the window has the history down to it paged in
+    /// first — the same seam-checked pages scrolling up loads — and is scrolled
+    /// to once it is there (web `useMessageNavJump`). A newer jump replaces one
+    /// still paging.
+    func jumpToMessage(_ entry: MessageNavEntry) {
+        jumpTask?.cancel()
+        jumpTask = nil
+        revealingTurnID = nil
+        let id = entry.turnID
+        if isLoadedTurn(id) {
+            publishJump(to: id)
+            return
+        }
+        guard let target = entry.globalIndex, let window, target < window.offset else { return }
+        revealingTurnID = id
+        let lifetime = lifecycle
+        jumpTask = Task { [weak self] in
+            guard let self else { return }
+            let reached = await self.loadOlderTurnsThrough(target, lifetime: lifetime)
+            guard !Task.isCancelled, lifetime == self.lifecycle else { return }
+            if self.revealingTurnID == id { self.revealingTurnID = nil }
+            if reached, self.isLoadedTurn(id) {
+                self.publishJump(to: id)
+            } else {
+                self.notice = String(localized: "Couldn't load that message.")
+            }
+        }
+    }
+
+    private func isLoadedTurn(_ turnID: String) -> Bool {
+        turns.contains { $0.id == turnID } || pendingUserTurns.contains { $0.id == turnID }
+    }
+
+    private func publishJump(to turnID: String) {
+        jumpToken &+= 1
+        jumpRequest = TranscriptJumpRequest(turnID: turnID, token: jumpToken)
+    }
+
+    /// Page older history in until global turn `target` is loaded (web
+    /// `loadOlderTurnsThrough`): each page asks for everything down to it
+    /// (``OlderTurnsPaging/limit(offset:target:)``), and a page already in
+    /// flight is waited out rather than raced.
+    ///
+    /// True once the window starts at or before `target`; false as soon as it
+    /// can't get there — a page that failed, was overtaken or broke the seam,
+    /// a page that made no progress, a window moved by anything but these
+    /// pages (a refresh's re-anchor, a fork: `target` is then an index into
+    /// coordinates that are gone), or the screen's lifetime ending.
+    private func loadOlderTurnsThrough(_ target: Int, lifetime: Int) async -> Bool {
+        guard let start = window else { return false }
+        var expected = OutlineAnchor(start)
+        while true {
+            guard lifetime == lifecycle, !Task.isCancelled, let current = window else { return false }
+            guard OutlineAnchor(current) == expected else { return false }
+            if current.offset <= target { return true }
+            if loadingOlderTurns {
+                guard let inFlight = olderTurnsTask else {
+                    // Its body is still unwinding a cancellation.
+                    try? await Task.sleep(for: .milliseconds(50))
+                    continue
+                }
+                let outcome = await inFlight.value
+                if outcome == .seamBroken { return false }
+                if outcome == .committed, let now = window { expected = OutlineAnchor(now) }
+                continue
+            }
+            // Single-flight claimed synchronously, as `requestOlderTurns` does.
+            loadingOlderTurns = true
+            let limit = OlderTurnsPaging.limit(offset: current.offset, target: target)
+            let page = Task { [weak self] in
+                await self?.loadOlderTurns(lifetime: lifetime, limit: limit) ?? .superseded
+            }
+            olderTurnsTask = page
+            guard await page.value == .committed, let now = window, now.offset < current.offset else {
+                return false
+            }
+            expected = OutlineAnchor(now)
+        }
     }
 }
