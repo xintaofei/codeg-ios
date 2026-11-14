@@ -170,6 +170,7 @@ struct MessageNavigatorSheet: View {
 /// One message: its number in a pill, its first words over two lines, then
 /// when it was sent and what its round changed.
 private struct MessageNavRow: View {
+    @Environment(\.locale) private var locale
     let entry: MessageNavEntry
     let running: Bool
     let revealing: Bool
@@ -218,7 +219,7 @@ private struct MessageNavRow: View {
     /// `2h ago · +12 −3 · 2 files` — a zero left out.
     private var meta: some View {
         HStack(spacing: 6) {
-            Text(verbatim: RelativeTime.string(from: entry.sentAt))
+            Text(verbatim: RelativeTime.string(from: entry.sentAt, locale: locale))
                 .foregroundStyle(Theme.textTertiary)
             if entry.additions > 0 || entry.deletions > 0 {
                 HStack(spacing: 4) {

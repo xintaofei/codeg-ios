@@ -255,6 +255,7 @@ struct NotAGitRepoState: View {
 /// the branch tracks a remote. Borderless: the enclosing grouped card draws the
 /// surface.
 private struct CommitRow: View {
+    @Environment(\.locale) private var locale
     let entry: GitLogEntry
 
     var body: some View {
@@ -281,7 +282,7 @@ private struct CommitRow: View {
                         .lineLimit(1)
                     if let date = entry.authoredDate {
                         Text("·").font(.caption2).foregroundStyle(Theme.textTertiary)
-                        Text(RelativeTime.string(from: date))
+                        Text(RelativeTime.string(from: date, locale: locale))
                             .font(.caption2)
                             .foregroundStyle(Theme.textTertiary)
                             .fixedSize()

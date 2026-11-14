@@ -9,6 +9,7 @@ import SwiftUI
 /// so a busy server's recent list scrolls smoothly) grouped under tinted section
 /// headers. (Pending approvals join this screen once the permission flow lands.)
 struct ActivityView: View {
+    @Environment(\.locale) private var locale
     let activity: ActivityModel
     let client: CodegClient?
     let onOpen: (Int) -> Void
@@ -103,7 +104,7 @@ struct ActivityView: View {
             }
 
             if let refreshed = activity.lastRefreshed {
-                Text("Updated \(RelativeTime.string(from: refreshed))")
+                Text("Updated \(RelativeTime.string(from: refreshed, locale: locale))")
                     .font(.caption2)
                     .foregroundStyle(Theme.textTertiary)
                     .frame(maxWidth: .infinity)

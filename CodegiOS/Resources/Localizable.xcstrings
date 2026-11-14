@@ -18,7 +18,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ 无法恢复此会话，它可能已结束或 agent 已停止。可重新加载重试，或开始新会话。"
+            "value" : "%@ 无法恢复此会话，它可能已结束或智能体已停止。可重新加载重试，或开始新会话。"
           }
         }
       }
@@ -278,7 +278,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "委派的子 Agent"
+            "value" : "委派的子智能体"
           }
         }
       }
@@ -476,7 +476,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "本会话无法即时插入——留言已保存，等 Agent 下次检查时读取。"
+            "value" : "本会话无法即时插入——留言已保存，等智能体下次检查时读取。"
           }
         }
       }
@@ -927,7 +927,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "子 Agent"
+            "value" : "子智能体"
           }
         }
       }
@@ -993,7 +993,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Agent"
+            "value" : "智能体"
           }
         }
       }
@@ -1004,7 +1004,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Agent 在读取你的反馈前已结束本轮。"
+            "value" : "智能体在读取你的反馈前已结束本轮。"
           }
         }
       }
@@ -3122,7 +3122,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "codeg 会在会话开始时附带自己的 MCP 服务器。若某个 agent 拒绝 MCP 服务器、因而连不上，请关掉此项。"
+            "value" : "codeg 会在会话开始时附带自己的 MCP 服务器。若某个智能体拒绝 MCP 服务器、因而连不上，请关掉此项。"
           }
         }
       }
@@ -5414,7 +5414,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无效 Agent"
+            "value" : "无效智能体"
           }
         }
       }
@@ -7322,7 +7322,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "打开子 Agent 会话"
+            "value" : "打开子智能体会话"
           }
         }
       }
@@ -7932,7 +7932,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "拉取产生了 %lld 个文件的冲突 — 请在桌面端或通过 agent 解决"
+            "value" : "拉取产生了 %lld 个文件的冲突 — 请在桌面端或通过智能体解决"
           }
         }
       }
@@ -8777,7 +8777,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已保存为该 agent 的 XAI_API_KEY，或在终端运行“grok login”进行订阅登录（SuperGrok / X Premium+）。"
+            "value" : "已保存为该智能体的 XAI_API_KEY，或在终端运行“grok login”进行订阅登录（SuperGrok / X Premium+）。"
           }
         }
       }
@@ -9735,7 +9735,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "子 Agent"
+            "value" : "子智能体"
           }
         }
       }
@@ -10600,7 +10600,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未知 Agent"
+            "value" : "未知智能体"
           }
         }
       }
@@ -12326,6 +12326,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无匹配"
+          }
+        }
+      }
+    },
+    "now" : {
+      "comment" : "Relative time under a minute ago",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刚刚"
           }
         }
       }

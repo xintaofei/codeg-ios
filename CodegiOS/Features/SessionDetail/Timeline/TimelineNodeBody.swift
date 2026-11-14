@@ -191,6 +191,7 @@ private struct LiveReasoningNode: View {
 /// duration stats. The copy button is omitted only when the turn has no prose to
 /// copy; the jump only when there's a known prompting user message.
 private struct TurnFooter: View {
+    @Environment(\.locale) private var locale
     let turn: MessageTurn
     var questionID: String?
     /// Where "Fork from here" forks; the button itself decides whether to show.
@@ -205,7 +206,7 @@ private struct TurnFooter: View {
     }
 
     private var metaText: String {
-        var parts: [String] = [RelativeTime.string(from: turn.completedAt ?? turn.timestamp)]
+        var parts: [String] = [RelativeTime.string(from: turn.completedAt ?? turn.timestamp, locale: locale)]
         if let usage = turn.usage, usage.total > 0 { parts.append(TokenFormat.compact(usage.total)) }
         if let ms = turn.durationMs, ms > 0 { parts.append(DurationFormat.short(ms)) }
         return parts.joined(separator: " · ")

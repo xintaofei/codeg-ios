@@ -119,10 +119,18 @@ enum RelativeTime {
         return f
     }()
 
-    /// Phrased relative time ("2h ago", "now", "in 5m") for prose contexts.
-    static func string(from date: Date, relativeTo reference: Date = Date()) -> String {
+    /// Phrased relative time ("2h ago", "now", "in 5m") for prose contexts, in
+    /// `locale`'s language — pass the environment's, which follows the in-app
+    /// Language setting.
+    static func string(from date: Date, relativeTo reference: Date = Date(),
+                       locale: Locale = .autoupdatingCurrent) -> String {
         let interval = reference.timeIntervalSince(date)
-        if interval >= 0, interval < 45 { return "now" }
+        if interval >= 0, interval < 45 {
+            var now = LocalizedStringResource("now", comment: "Relative time under a minute ago")
+            now.locale = locale
+            return String(localized: now)
+        }
+        formatter.locale = locale
         return formatter.localizedString(for: date, relativeTo: reference)
     }
 
