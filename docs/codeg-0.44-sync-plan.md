@@ -97,7 +97,7 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
 - codex/claude 走 AIR 时终态失败是否只通过 `session_failure` 上报（决定 1.3 是否一并解码它）。
 - `allow_other=false` 时提交自由文本的服务端表现。
 - Claude `/clear` 后 `external_id` 改指向（`TranscriptRolledOver`），iOS re-anchor 能否自然吸收。
-- 待用户确认：TaskCreate 清单保留（建议保留）；新增单元测试 target。
+- ~~待用户确认：TaskCreate 清单保留（建议保留）；新增单元测试 target。~~ 均已按建议落地（清单保留，`CodegiOSTests` 已加）。
 
 ---
 
@@ -128,7 +128,7 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
 - **行视图**：普通工具一行（动词 + 目标 + 细节 + 右侧数字/状态），展开复用 `ToolCallBody`；explore/command 分组行；思考行（自动标题）。委派/提问/子 agent/plan-mode 保留原有专用卡片。中英文案含复数变体。
 - **直播工具名**：直播调用现在用 `inferLiveToolName` 推断工具名（之前直接用 ACP 原始 title）。`ToolCallVM.toolName` 只供 activity 层用，旧卡片仍读 `rawName`。
 - **刻意偏差**：结束后既无步骤又无耗时的回复不画「Reply」头部（手机上省一行）；轮询行只在自身运行时折叠常驻（委派行用 broker 终态代表子任务）。
-- **未移植**：opencode code-mode 委派判定、恢复委派被拒绝的判定、后台任务（`TaskOutput`）分组、goal 运行、proposed-plan、单轮超长时的行窗口化（`List` 已回收）。
+- **未移植**：opencode code-mode 委派判定、恢复委派被拒绝的判定、后台任务（`TaskOutput`）分组、goal 运行、proposed-plan、单轮超长时的行窗口化（`List` 已回收）。前四项已在「遗留补齐」中补上，proposed-plan 在阶段三；行窗口化仍不做。
 - **验证**：模拟器对 mock 截图（折叠/展开的历史回复、中文、直播中的回复）；Codex 审查三轮（2 个 Important + 1 个遗留全部修复，第三轮 APPROVED），对应集成测试在 `TimelineFoldingTests`。
 
 ### 阶段三实际做法与偏差（2026-11-14）
@@ -145,3 +145,13 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
   - 已知局限：离开会话页面后队列随 VM 丢失（web 关 tab 同样）；对方客户端长时间占用回合时每秒重试一次（web 同样）。
 - **验证**：四项（发消息/权限卡/选项按钮/plan 卡）是并行写的，最后在一个分支上合起来一次编译通过，全量 514 个测试（84 个 suite）全绿。Codex 只读审查 4 轮：首轮 5 个 Important（测试调用了改名的方法、teardown 吞掉已出队的消息、hydrate 把已读改回等待、恢复路径不 flush、连接丢失被当成回合结束）全部属实已修，后两轮又各抓到一个修复引入的时序问题，第四轮 APPROVED。**尚未在模拟器上对 mock 做 UI 验证**。
 
+### 遗留补齐（2026-11-14）
+
+阶段三的漏项和阶段二的未移植项，各一个提交：
+
+- **旧卡片清理**（75db3e4）：所有调用方都传 `groupTools: false`，旧的通用工具分组（`groupConsecutiveTools`、`RenderPart.toolGroup`、`ToolGroupCard`）已不可达，删除。`MarkerKind.toolGroup` 保留（activity 分组在用）。
+- **`conversation moved`**（af1a17b，阶段三「失败/重试提示条」漏做的一项）：后端对「会话已移到别的文件夹、但连接还在旧文件夹」的 prompt 返回 `invalid_input` + 固定文案，iOS 按文案识别（`Models/ConversationMoved.swift`，照搬 web `conversation-moved.ts`）。被拒后提示「已移到 X，请重新发送」，消息回到输入框（队列来源回队头并暂停），丢掉旧连接、重拉会话与文件夹；下次发送时 find 只会找到新文件夹的连接。和 web 一样不自动重发。
+- **Codex `/goal` 运行**（3d08518）：`Rendering/GoalRuns.swift` 照搬 `groupGoalRuns`（未闭合的 run 只在流式中闪烁、已结束的未闭合 run 把末尾答案提出来、已完成目标的陈旧 run 不再显示），`goal` 步骤持有自己的 `ReplyActivity`，行视图 `GoalRunRow` 展开为嵌套时间线。偏差：不移植 `mergeRunParts`（iOS 先合并回合再 adapt）；不移植散文里的 "Goal updated" 标记（直播层不能在组装时读流式文本）；没有暂停/清除按钮。
+- **后台任务通道**（51b2f64）：`Activity/BackgroundTask.swift` 照搬 `background-task.ts`（Claude Code `TaskOutput`/`TaskStop`、Grok、CodeBuddy 的轮询格式），一个任务一行，折叠时只留仍在轮询的任务。iOS 的 `CompanionDetect` 按形状会把 Grok 的 `{task_ids, timeout_ms}` 当成委派状态检查，所以委派通道让出后台通道认领的调用——但**名字是 `get_delegation_status` 的调用永远留在委派通道**（web 先按名字分委派通道；Codex 抓到子任务报告里引用后台标签时会被抢走）。
+- **委派两项判定**（bfce9e0）：被拒的 `resume_delegation`（`error_code: not_resumable` 或 "Not resumed" 前缀）不认领任务、不常驻、画成说明卡；opencode code-mode `execute` 里的 `delegate_to_agent`（`Activity/CodeModeDelegation.swift` 移植 JS 源码扫描器，UTF-16 语义）画成委派卡并读出 agent/task。卡片的「按推断名选委派卡」**必须有证据**（code-mode 输入或 `_meta` 里 broker/host 的标记），否则标题里引用了 `delegate_to_agent` 的 Bash 会丢掉命令和输出（Codex 抓的）。
+- **验证**：三项移植由并行 agent 只写代码，合到一个分支后一次编译通过；全量 669 个测试（94 个 suite）全绿。Codex 只读审查：清理 + moved 一轮 APPROVED；三项移植首轮 goal APPROVED、后台通道与委派各 1 个 Important（如上，均属实已修），复审 APPROVED。**尚未在模拟器上做 UI 验证**（goal 行、后台任务行、被拒恢复卡）。
