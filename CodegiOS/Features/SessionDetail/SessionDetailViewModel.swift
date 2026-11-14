@@ -461,6 +461,12 @@ final class SessionDetailViewModel {
     private var streamReconnects = 0
     private static let maxStreamReconnects = 6
 
+    /// What the connection runs beside the turn, and the prompt it predicts
+    /// next. Views read it directly (see ``ConnectionRunsModel``).
+    let runs = ConnectionRunsModel()
+    /// Keeps `runs` current between turns, when no turn stream is open.
+    private let watcher = ConnectionWatcher()
+
     private init(client: CodegClient, mode: Mode) {
         self.client = client
         self.mode = mode
@@ -517,6 +523,7 @@ final class SessionDetailViewModel {
             return snapshot?.availableCommands ?? []
         }
 
+        wireConnectionRuns()
     }
 
     convenience init(client: CodegClient, conversationID: Int) {
@@ -774,6 +781,10 @@ final class SessionDetailViewModel {
         loadFeedbackSetting()
         // Teardown cancelled any flush that was waiting.
         scheduleQueueFlush()
+        // Teardown stopped the idle watch too. (`load` re-checks the connection
+        // as well; picking a known one up here also covers a linked draft,
+        // whose `load` fetches nothing.)
+        resumeWatching()
     }
 
     /// The error view's "try again". Distinct from `activate()` only in where it
@@ -1114,6 +1125,7 @@ final class SessionDetailViewModel {
         promptCapabilities = nil
         promptCapabilitiesConnection = nil
         agentOptions.teardown()
+        forgetWatchedConnection()
     }
 
     // MARK: - Git branch (selector)
@@ -1405,6 +1417,8 @@ final class SessionDetailViewModel {
 
         // A new round: every reply above this message folds.
         replyFolds.beginRound()
+        // The predicted prompt was for this place; whatever was sent spent it.
+        runs.clearPromptSuggestion()
 
         // 2) Live assistant placeholder.
         let live = LiveTurn()
@@ -2195,6 +2209,7 @@ final class SessionDetailViewModel {
                     // The handshake's snapshot predates this prompt: its notes
                     // are the previous turn's. A reconnect's describe this one.
                     hydrateFeedback(from: snap, connection: conn, notes: readyContinuation == nil)
+                    runs.hydrate(snap, connection: conn)
                 }
                 // A reconnect answered with a snapshot rather than a replay —
                 // first attach after a drop with no cursor, or a gap too large
@@ -2230,6 +2245,7 @@ final class SessionDetailViewModel {
                 if isCurrent { apply(envelope, to: live) }
             case .detached(let reason):
                 guard isCurrent else { return }
+                if reason == "connection_gone" { runs.connectionGone(conn) }
                 // During the attach handshake (before the prompt is accepted),
                 // surface the detach so `runSend` retries with a fresh connection.
                 if readyContinuation != nil {
@@ -2396,6 +2412,7 @@ final class SessionDetailViewModel {
                 streamReconnects = 0
                 hydrateSessionFailures(from: snap, connection: conn)
                 hydrateFeedback(from: snap, connection: conn, notes: true)
+                runs.hydrate(snap, connection: conn)
                 if let rebuilt = buildLiveTurn(from: snap) {
                     live = rebuilt
                     liveTurn = rebuilt
@@ -2425,6 +2442,9 @@ final class SessionDetailViewModel {
                     turnEndUnconfirmed = false
                     closeStream()
                     connectionID = nil
+                    // Idle, not gone: what runs beside the turn (and the
+                    // predicted next prompt) is watched on a socket of its own.
+                    resumeWatching(connection: conn)
                     // If the server had claimed a live turn at load, it finished
                     // between the detail fetch and this snapshot — reconcile so the
                     // final reply isn't missing from the (now stale) transcript.
@@ -2435,13 +2455,16 @@ final class SessionDetailViewModel {
                     return
                 }
             case .replay(let events):
+                for env in events { runs.apply(env.event, seq: env.seq) }
                 if let live { for env in events { handle(event: env.event, live: live) } }
             case .pong:
                 break
             case .event(let envelope):
+                runs.apply(envelope.event, seq: envelope.seq)
                 // The attach snapshot always precedes events, so `live` is set by now.
                 if let live { handle(event: envelope.event, live: live) }
             case .detached(let reason):
+                if reason == "connection_gone" { runs.connectionGone(conn) }
                 // Pre-snapshot drops have nothing on screen — stay quiet. Once a
                 // turn is live, recover transient detaches silently (web parity);
                 // only `connection_gone` reconciles/fails.
@@ -2799,6 +2822,12 @@ final class SessionDetailViewModel {
 
         case .sessionStarted, .conversationStatusChanged, .userPromptSent, .unknown:
             break
+
+        // The connection's running list and predicted prompt: `runs` takes
+        // these straight off the envelope (see `apply(_:to:)`).
+        case .asyncTask, .backgroundActivity, .delegationStarted, .delegationCompleted,
+             .delegationChildRunning, .promptSuggestion:
+            break
         }
     }
 
@@ -2886,6 +2915,9 @@ final class SessionDetailViewModel {
         sendState = .idle
         completedTurnTick &+= 1
         closeStream()
+        // The turn is over, the connection is not: watch it for what outlives
+        // the turn — and for the predicted next prompt, which comes after it.
+        resumeWatching()
         requestScrollToBottom()
         // Replace the optimistic + live turns with the authoritative server copy.
         reconcileTask?.cancel()
@@ -2906,6 +2938,8 @@ final class SessionDetailViewModel {
         isTurnActive = false
         clearInteractivePrompts()
         closeStream()
+        // Back to idle on whatever connection this screen still knows.
+        resumeWatching()
         pendingUserTurns.removeAll { $0.id == userTurnID }
         if liveTurn === live { liveTurn = nil }
         sendState = .idle
@@ -3047,6 +3081,9 @@ final class SessionDetailViewModel {
     /// was already applied (a replay overlapping the live tail) and is dropped.
     /// `seq == 0` means the frame carried none — never treated as a duplicate.
     private func apply(_ envelope: EventEnvelope, to live: LiveTurn) {
+        // The connection's running list has its own cursor (it is fed by the
+        // idle watcher too), so it sees the envelope before this turn's dedup.
+        runs.apply(envelope.event, seq: envelope.seq)
         if envelope.seq > 0 {
             if let last = live.lastSeq, envelope.seq <= last { return }
             live.lastSeq = envelope.seq
@@ -3157,6 +3194,7 @@ final class SessionDetailViewModel {
                     liveTurn = nil
                     sendState = .idle
                     closeStream()
+                    resumeWatching()
                     requestScrollToBottom()
                     // The turn is over and the agent free, as after `finalize`.
                     scheduleQueueFlush()
@@ -3520,6 +3558,8 @@ final class SessionDetailViewModel {
         sendTask?.cancel()
         consumerTask?.cancel()
         closeStream()
+        // Stopping the turn stops none of what runs beside it.
+        resumeWatching()
         requestScrollToBottom()
         if let conn {
             Task { [weak self] in
@@ -3541,6 +3581,9 @@ final class SessionDetailViewModel {
     }
 
     private func closeStream() {
+        // Every stream open starts here, and so does teardown: either way the
+        // idle watch yields. Turn ends restart it right after.
+        watcher.stop()
         // Supersede the current consumer so its imminent `.closed`/`.detached`
         // frame is ignored (it must not end a turn we are deliberately closing).
         streamGeneration &+= 1
@@ -3694,5 +3737,109 @@ final class SessionDetailViewModel {
     private static func describe(_ error: Error) -> String {
         if let api = error as? APIError { return api.errorDescription ?? "\(api)" }
         return error.localizedDescription
+    }
+}
+
+// MARK: - Connection runs (idle watch, running list, predicted prompt)
+
+extension SessionDetailViewModel {
+    /// Hook the running list's outbound actions up to this screen. Once, from init.
+    private func wireConnectionRuns() {
+        runs.stopAction = { [weak self] conn, taskID in
+            guard let self else { throw CancellationError() }
+            return try await self.client.stopAsyncTask(connectionId: conn, taskId: taskID)
+        }
+        runs.onAutonomousTurnSettled = { [weak self] in
+            self?.refreshAfterAutonomousTurn()
+        }
+    }
+
+    /// Watch the conversation's connection between turns: while the screen is
+    /// up, a connection is known, and no turn stream is open (every stream open
+    /// stops the watch, in `closeStream`).
+    ///
+    /// The watch never writes `connectionID` — it is an observer, and owning
+    /// the connection is the send path's business. Which one to watch is the
+    /// screen's own if it has one, else the one a reattach lookup found idle
+    /// (`explicit`), else the last one watched.
+    ///
+    /// The lifetime is captured HERE, where the watch is requested: a
+    /// reconnect that wakes after a teardown — even one followed by a
+    /// reappearance — must not re-open a socket for a lifetime it isn't from.
+    /// `isTornDown` is the right test for the synchronous check only.
+    private func resumeWatching(connection explicit: String? = nil) {
+        guard !isTornDown, stream == nil,
+              let conn = explicit ?? connectionID ?? watcher.connectionID else { return }
+        let lifetime = lifecycle
+        watcher.start(connectionID: conn, feeding: runs, baseURL: client.baseURL, token: client.token) { [weak self] in
+            self?.lifecycle == lifetime
+        }
+    }
+
+    /// The screen let go of its connection for good (a draft's agent or folder
+    /// changed): nothing it ran is this screen's any more.
+    private func forgetWatchedConnection() {
+        watcher.forget()
+        runs.clear()
+    }
+
+    /// A turn the agent started on its own (Claude's `turn` task) just ended.
+    /// Its content never streamed to this client — codeg draws it from the
+    /// agent's own transcript — so re-read the transcript. Once more if the
+    /// first read found nothing new: the agent writes its transcript as the
+    /// turn ends, and the read can beat that write.
+    ///
+    /// Owned by the watch, so a turn stream opening (which reconciles on its
+    /// own) or the screen's teardown cancels it; the lifetime is captured at
+    /// the request, like every other transcript read.
+    private func refreshAfterAutonomousTurn() {
+        guard !isTornDown, conversationID != nil else { return }
+        let lifetime = lifecycle
+        watcher.followUpTask?.cancel()
+        watcher.followUpTask = Task { [weak self] in
+            for delay in [Duration.milliseconds(800), .seconds(2)] {
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled, let self else { return }
+                if await self.refreshIdleTranscript(lifetime: lifetime) { return }
+            }
+        }
+    }
+
+    /// Re-read the transcript while nothing of this screen's owns it: no turn
+    /// live or settling, nothing optimistic above `turns`, no turn stream. The
+    /// shape of `reconcileAfterMissedLive`, except that it follows the bottom
+    /// only while the user is there — this is the agent's doing, not theirs.
+    /// Returns whether the transcript advanced.
+    private func refreshIdleTranscript(lifetime: Int) async -> Bool {
+        func idle() -> Bool {
+            lifetime == lifecycle && liveTurn == nil && !isInFlight && stream == nil && pendingUserTurns.isEmpty
+        }
+        guard idle(), let id = conversationID else { return false }
+        let baselineEnd = loadedEnd
+        guard case .fetched(let fetch)? = try? await fetchWindowedDetail(id: id), idle() else { return false }
+        let detail = fetch.detail
+        summary = detail.summary
+        turns = detail.turns
+        adoptTranscriptScope(detail)
+        sessionStats = detail.sessionStats ?? sessionStats
+        requestScrollToBottom()
+        return fetch.reanchored || detail.globalEnd > baselineEnd
+    }
+
+    /// The predicted next prompt, as far as anything BUT the draft decides:
+    /// never mid-turn, mid-steer, or behind queued messages. The composer
+    /// checks the draft and attachments itself — reading them here would make
+    /// the whole screen re-render on every keystroke.
+    var promptSuggestionOffer: String? {
+        PromptSuggestionGate.offered(runs.promptSuggestion, draft: "", hasAttachments: false,
+                                     inFlight: isInFlight, steering: isSteering, queueEmpty: queue.isEmpty)
+    }
+
+    /// Fill the empty composer with the predicted prompt. Never sends.
+    func usePromptSuggestion() {
+        guard let suggestion = PromptSuggestionGate.offered(
+            runs.promptSuggestion, draft: draft, hasAttachments: !attachments.isEmpty,
+            inFlight: isInFlight, steering: isSteering, queueEmpty: queue.isEmpty) else { return }
+        draft = suggestion
     }
 }

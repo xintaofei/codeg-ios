@@ -111,6 +111,18 @@ enum AcpEvent: Hashable, Sendable, Decodable {
     /// The agent read these pull-channel notes.
     case feedbackConsumed(ids: [String], deliveredAt: String?)
     case unknown(type: String)
+    // Live runs + the predicted next prompt — decoded in `AcpEvent+Runs.swift`.
+    /// A JetBrains AIR async-task delta (see ``AsyncTasks``).
+    case asyncTask(AsyncTaskDelta)
+    /// The producer's whole set of background tasks still out.
+    case backgroundActivity(outstandingTasks: [BackgroundOutstandingTask])
+    /// A codeg delegation of this connection started / finished, and the
+    /// lifecycle-only running flag sent for every delegation.
+    case delegationStarted(DelegationInfo)
+    case delegationCompleted(DelegationInfo, succeeded: Bool, errorCode: String?)
+    case delegationChildRunning(childConnectionId: String, running: Bool)
+    /// The prompt the agent predicts the user sends next; nil withdraws it.
+    case promptSuggestion(text: String?)
 
     private enum CodingKeys: String, CodingKey {
         case type, text, title, kind, status, content, meta
@@ -268,7 +280,7 @@ enum AcpEvent: Hashable, Sendable, Decodable {
                 message: try c.decodeIfPresent(String.self, forKey: .message) ?? "",
                 code: try c.decodeIfPresent(String.self, forKey: .code) ?? "")
         default:
-            self = .unknown(type: type)
+            self = AcpEvent.decodeRunsEvent(type: type, from: decoder) ?? .unknown(type: type)
         }
     }
 }
@@ -328,6 +340,9 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     let feedback: [FeedbackItem]
     let feedbackToolAvailable: Bool
     let nativeSteeringAvailable: Bool
+    /// What runs beside the turn (async tasks, background sub-agents,
+    /// delegations) and the predicted next prompt — see ``ConnectionRunsModel``.
+    let runs: ConnectionRunsSnapshot
 
     private enum CodingKeys: String, CodingKey {
         case connectionId, conversationId, folderId, status, externalId, eventSeq
@@ -353,6 +368,7 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         feedback = ((try? c.decodeIfPresent([FeedbackItem].self, forKey: .feedback)) ?? nil) ?? []
         feedbackToolAvailable = ((try? c.decodeIfPresent(Bool.self, forKey: .feedbackToolAvailable)) ?? nil) ?? false
         nativeSteeringAvailable = ((try? c.decodeIfPresent(Bool.self, forKey: .nativeSteeringAvailable)) ?? nil) ?? false
+        runs = ConnectionRunsSnapshot.lenient(from: decoder)
     }
 }
 

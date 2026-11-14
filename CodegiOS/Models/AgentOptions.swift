@@ -87,6 +87,9 @@ struct SessionSnapshot: Hashable, Sendable, Decodable {
     /// as a downgrade.
     let feedbackToolAvailable: Bool?
     let nativeSteeringAvailable: Bool?
+    /// The connection's running list and predicted next prompt, as the WS
+    /// snapshot carries them (see ``ConnectionRunsSnapshot``).
+    let runs: ConnectionRunsSnapshot
 
     private enum CodingKeys: String, CodingKey {
         case modes, currentMode, configOptions, selectorsReady, availableCommands
@@ -105,6 +108,7 @@ struct SessionSnapshot: Hashable, Sendable, Decodable {
         status = try c.decodeIfPresent(String.self, forKey: .status).flatMap(ConnectionStatus.init(rawValue:))
         feedbackToolAvailable = try? c.decodeIfPresent(Bool.self, forKey: .feedbackToolAvailable)
         nativeSteeringAvailable = try? c.decodeIfPresent(Bool.self, forKey: .nativeSteeringAvailable)
+        runs = ConnectionRunsSnapshot.lenient(from: decoder)
     }
 
     /// True when this session is over, so nothing more will ever be published on
