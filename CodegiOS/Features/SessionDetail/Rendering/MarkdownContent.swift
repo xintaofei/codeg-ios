@@ -526,7 +526,8 @@ extension MarkdownContent {
     /// The depth of an item indented `indent` columns, given the indents of
     /// the levels open above it (updated in place): deeper than the innermost
     /// opens a level, otherwise it closes levels until one is no deeper than
-    /// it. An item left of the list's first one stays at the top level.
+    /// it. An item left of the list's first one stays at the top level, and
+    /// becomes the indent the top level is measured from.
     static func nestingLevel(_ indent: Int, open: inout [Int]) -> Int {
         guard let innermost = open.last else {
             open = [indent]
@@ -537,6 +538,7 @@ extension MarkdownContent {
             return open.count - 1
         }
         while open.count > 1, indent < open[open.count - 1] { open.removeLast() }
+        if indent < open[0] { open[0] = indent }
         if indent > open[open.count - 1] { open.append(indent) }
         return open.count - 1
     }

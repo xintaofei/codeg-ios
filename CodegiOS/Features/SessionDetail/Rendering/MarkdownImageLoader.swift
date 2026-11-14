@@ -209,6 +209,10 @@ final class MarkdownImageLoader: @unchecked Sendable {
         request.setValue("image/*", forHTTPHeaderField: "Accept")
         do {
             let (stream, response) = try await remoteSession.bytes(for: request)
+            // Leaving the loop doesn't stop the transfer: every early exit
+            // (over the cap, a bad status) must cancel it, or the body keeps
+            // downloading after its slot has gone to the next read.
+            defer { stream.task.cancel() }
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 return nil
             }

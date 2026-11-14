@@ -127,6 +127,13 @@ struct MarkdownNestedListTests {
         ])])
     }
 
+    @Test func aDedentLeftOfTheFirstItemRebasesTheTopLevel() {
+        guard case .list(let items) = parse("  - a\n- b\n  - c").first else {
+            Issue.record("expected a list"); return
+        }
+        #expect(items.map(\.level) == [0, 0, 1])
+    }
+
     @Test func aDedentBetweenLevelsOpensASiblingLevel() {
         // Levels at 0 and 4; an item at 2 closes the 4 and nests under the 0.
         guard case .list(let items) = parse("- a\n    - b\n  - c").first else {

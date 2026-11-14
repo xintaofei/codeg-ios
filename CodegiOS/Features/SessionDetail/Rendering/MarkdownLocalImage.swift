@@ -203,9 +203,9 @@ enum MarkdownLocalImage {
     /// subset of the WHATWG file-URL grammar a Markdown destination can carry:
     /// tabs/newlines dropped, `\` read as `/`, the query and fragment cut,
     /// `localhost` read as no host, a drive letter in the host slot read as
-    /// path, and a host the URL parser would reject (a port, userinfo, a
-    /// forbidden code point) refused. The pathname keeps its percent escapes —
-    /// `localImagePath` decodes them next, as on the web.
+    /// path, a host the URL parser would reject (a port, userinfo, a forbidden
+    /// code point) refused, and dot segments resolved. The pathname keeps its
+    /// other percent escapes — `localImagePath` decodes them next, as on the web.
     static func fileURLPath(_ input: String) -> String? {
         var scalars = Array(input.unicodeScalars)
         // Leading/trailing C0 control or space, then every ASCII tab or newline.
@@ -238,13 +238,38 @@ enum MarkdownLocalImage {
         } else {
             pathScalars = rest
         }
-        if pathScalars.first != "/" { pathScalars.insert("/", at: 0) }
-        // `/C|/x` is the legacy spelling of `/C:/x`.
-        if pathScalars.count >= 3, isASCIILetter(pathScalars[1]), pathScalars[2] == "|",
-           pathScalars.count == 3 || pathScalars[3] == "/" {
-            pathScalars[2] = ":"
+        if pathScalars.first == "/" { pathScalars.removeFirst() }
+
+        // The path state: one segment per `/`, dot segments (percent-encoded
+        // ones too) resolved as they come and *with the host in place* — so
+        // `file://server/share/../x` leaves the share, as `new URL` makes it,
+        // rather than being floored at the share by `normalizeAbsPath` later.
+        // A leading drive letter (`C|` is the legacy `C:`) is never popped,
+        // and clears the host.
+        var segments: [String] = []
+        let pieces = pathScalars.split(separator: "/", omittingEmptySubsequences: false)
+        for (index, piece) in pieces.enumerated() {
+            let atEnd = index == pieces.count - 1
+            let segment = String(String.UnicodeScalarView(piece))
+            switch segment.lowercased() {
+            case "..", ".%2e", "%2e.", "%2e%2e":
+                let onlyDrive = segments.count == 1 && isNormalizedDriveLetter(segments[0])
+                if !segments.isEmpty, !onlyDrive { segments.removeLast() }
+                if atEnd { segments.append("") }
+            case ".", "%2e":
+                if atEnd { segments.append("") }
+            default:
+                var drive = Array(piece)
+                if segments.isEmpty, isWindowsDriveLetter(drive) {
+                    drive[1] = ":"
+                    host = ""
+                    segments.append(String(String.UnicodeScalarView(drive)))
+                } else {
+                    segments.append(segment)
+                }
+            }
         }
-        let pathname = String(String.UnicodeScalarView(pathScalars))
+        let pathname = "/" + segments.joined(separator: "/")
         return host.isEmpty ? pathname : "//" + host + pathname
     }
 
@@ -371,6 +396,12 @@ enum MarkdownLocalImage {
     /// A drive letter: an ASCII letter and `:` or `|`.
     private static func isWindowsDriveLetter(_ s: [Unicode.Scalar]) -> Bool {
         s.count == 2 && isASCIILetter(s[0]) && (s[1] == ":" || s[1] == "|")
+    }
+
+    /// A drive letter spelled with `:`.
+    private static func isNormalizedDriveLetter(_ s: String) -> Bool {
+        let scalars = Array(s.unicodeScalars)
+        return scalars.count == 2 && isASCIILetter(scalars[0]) && scalars[1] == ":"
     }
 
     private static func isASCIILetter(_ u: Unicode.Scalar) -> Bool {

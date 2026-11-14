@@ -220,6 +220,22 @@ struct FileURLPathTests {
         #expect(L.fileURLPath("file:///tmp/a.png?v=1#top") == "/tmp/a.png")
     }
 
+    @Test func resolvesDotSegmentsWithTheHostInPlace() {
+        #expect(L.fileURLPath("file://server/share/../other/shot.png") == "//server/other/shot.png")
+        #expect(L.fileURLPath("file:///a/b/%2e%2e/c.png") == "/a/c.png")
+        #expect(L.fileURLPath("file:///a/./b.png") == "/a/b.png")
+        // A drive letter is never popped, and `C|` is the legacy `C:`.
+        #expect(L.fileURLPath("file:///C:/../x.png") == "/C:/x.png")
+        #expect(L.fileURLPath("file:///C|/x.png") == "/C:/x.png")
+        #expect(L.fileURLPath("file:///") == "/")
+    }
+
+    @Test func aDotDotOutOfTheShareLeavesIt() {
+        // `new URL` resolves the `..` against the share, so this names another
+        // share on that host — not a file inside the workspace's share.
+        #expect(L.resolve("file://server/share/../other/shot.png", root: "//server/share") == nil)
+    }
+
     @Test func refusesHostsTheURLParserRejects() {
         #expect(L.fileURLPath("file://host:8080/a.png") == nil)
         #expect(L.fileURLPath("file://user@host/a.png") == nil)
