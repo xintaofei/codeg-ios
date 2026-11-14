@@ -135,12 +135,16 @@ struct SessionDetailView: View {
         .environment(\.agentSessionLoader, AgentSessionLoader { agent, sessionId in
             try await model.agentSession(agentType: agent, sessionId: sessionId)
         })
-        .task { await model.load() }
         // `onAppear`/`onDisappear` are the lifetime pair: both run synchronously
         // and only when the view really appears/disappears — including when this
         // screen pushes another route over itself, which keeps the same `@State`
-        // model. `.task` is not a substitute: one cancelled before it started
-        // still runs its body.
+        // model.
+        //
+        // The load is started from inside `activate()` rather than from a `.task`
+        // for the same reason: a `.task` cancelled before it ever started still
+        // runs its body, so its body can begin *after* `teardown` and re-attach
+        // the stream that had just been closed. Every transcript read this screen
+        // asks for is owned by the model now, and none of them is spawned here.
         .onAppear { model.activate() }
         .onDisappear { model.teardown() }
         // Haptics — the app's marquee "felt" moments, all keyed off existing
@@ -174,9 +178,7 @@ struct SessionDetailView: View {
             case .loading:
                 LoadingView(label: "Loading session…")
             case .failed(let message):
-                InlineErrorView(message: message) {
-                    Task { await model.load() }
-                }
+                InlineErrorView(message: message) { model.retryLoad() }
             case .loaded:
                 loadedBody
             }
@@ -198,7 +200,7 @@ struct SessionDetailView: View {
             stickTick: model.stickTick,
             hasOlderTurns: model.hasOlderTurns,
             isLoadingOlderTurns: model.loadingOlderTurns,
-            onLoadOlderTurns: { Task { await model.loadOlderTurns() } },
+            onLoadOlderTurns: { model.requestOlderTurns() },
             onPinnedChange: { model.setPinnedToBottom($0) }
         ) {
             // No top banner on an existing session — its identity + stats now

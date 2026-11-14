@@ -310,6 +310,20 @@ final class SessionDetailViewModel {
     /// before the teardown resume into the NEW lifetime, take a fresh fetch
     /// generation, and supersede the load that the user is actually waiting on.
     private var lifecycle = 0
+    /// The two transcript reads the *view* asks for: the initial/retried load,
+    /// and a page of older history. Owned here — and started only through
+    /// `activate()` / `retryLoad()` / `requestOlderTurns()` — because a `Task`
+    /// created in a view body belongs to nobody, so `teardown` cannot cancel it.
+    ///
+    /// Ownership is not tidiness here, it is the whole guard. Both take their
+    /// fetch generation INSIDE the body, so a body still queued when `teardown`
+    /// ran takes a *fresh* generation afterwards and therefore always believes
+    /// it is current: the one mechanism that stops a transcript read from
+    /// committing to a screen the user has left never applied to these two at
+    /// all. Capturing `lifecycle` where the work is *requested* is what closes
+    /// it.
+    private var loadTask: Task<Void, Never>?
+    private var olderTurnsTask: Task<Void, Never>?
     /// The long-lived loop consuming `stream.frames`.
     private var consumerTask: Task<Void, Never>?
     private let subscriptionID = UUID().uuidString
@@ -544,10 +558,37 @@ final class SessionDetailViewModel {
     /// page, so it has to equal the window's own prefix hash. A mismatch means
     /// the prefix was rewritten between the two requests, and prepending would
     /// splice a stale region onto a current one.
-    func loadOlderTurns() async {
-        guard let id = conversationID, let current = window, current.hasOlder, !loadingOlderTurns else { return }
+    /// The transcript reached the head of what is loaded and wants another page.
+    /// Spawned here rather than in the view so the task has an owner and captures
+    /// the lifetime it was asked for (see `loadTask`/`olderTurnsTask`).
+    func requestOlderTurns() {
+        // Single-flight decided HERE, synchronously, and `loadingOlderTurns` set
+        // here too. Deciding it in the body would be too late twice over: the
+        // flag is only set a scheduling hop later, so two scroll callbacks can
+        // both get past it — and the no-op second task would still have replaced
+        // `olderTurnsTask`, leaving `teardown` to cancel the corpse while the
+        // real request ran on unowned.
+        //
+        // Rejecting rather than cancel-and-restart is deliberate: the running
+        // body clears the flag in its `defer`, so a replacement would race that
+        // corpse and drop the page for nothing. The page in flight is the one the
+        // user asked for.
+        guard !loadingOlderTurns, let current = window, current.hasOlder, conversationID != nil else { return }
         loadingOlderTurns = true
+        // Read where the request was MADE. Taking it inside the body would read
+        // it after any teardown the body was queued across — which is precisely
+        // the case this exists to reject.
+        let lifetime = lifecycle
+        olderTurnsTask = Task { [weak self] in await self?.loadOlderTurns(lifetime: lifetime) }
+    }
+
+    private func loadOlderTurns(lifetime: Int) async {
+        // Set by `requestOlderTurns`; clearing it is this body's job, on every
+        // exit including the guard below (a body whose task was cancelled before
+        // it ever started still runs, so the flag is never stranded).
         defer { loadingOlderTurns = false }
+        guard lifetime == lifecycle,
+              let id = conversationID, let current = window, current.hasOlder else { return }
 
         // Joins the same total order as every detail refresh: a refresh issued
         // before this page must not commit its (now stale, narrower) suffix
@@ -556,7 +597,7 @@ final class SessionDetailViewModel {
         guard let page = try? await client.conversationTurns(
             id: id, beforeIndex: current.offset, limit: Self.olderTurnsPage
         ) else { return }
-        guard isCurrentGeneration(generation) else { return }
+        guard lifetime == lifecycle, isCurrentGeneration(generation) else { return }
 
         // The window may have moved while the page was in flight (a refresh
         // landed, the session reset): re-read it instead of trusting the capture.
@@ -571,7 +612,7 @@ final class SessionDetailViewModel {
             // that path owns `turns` and reconciles on its own.
             guard liveTurn == nil, !isInFlight else { return }
             if case .fetched(let fetch)? = try? await fetchWindowedDetail(id: id),
-               liveTurn == nil, !isInFlight {
+               lifetime == lifecycle, liveTurn == nil, !isInFlight {
                 summary = fetch.detail.summary
                 turns = fetch.detail.turns
                 adoptTranscriptScope(fetch.detail)
@@ -597,7 +638,7 @@ final class SessionDetailViewModel {
     /// Guards the one-time draft option load so a re-run of `.task` can't refetch.
     private var didLoadDraftOptions = false
 
-    /// The screen is on screen. Call from `.onAppear`, which — unlike `.task` —
+    /// The screen is on screen. Call from `.onAppear`, which — unlike `load()` —
     /// only runs when the view really is being shown.
     ///
     /// `teardown` runs on `.onDisappear`, and that fires when this detail merely
@@ -609,10 +650,37 @@ final class SessionDetailViewModel {
     /// else would restart it.
     func activate() {
         isTornDown = false
+        startLoad()
         scheduleReanchorIfIdle()
     }
 
-    func load() async {
+    /// The error view's "try again". Distinct from `activate()` only in where it
+    /// is called from — the guarantee it needs is the same one.
+    func retryLoad() {
+        startLoad()
+    }
+
+    /// The single place a load is started. `lifecycle` is read HERE, synchronously,
+    /// at a point that is provably inside the screen's lifetime: `onAppear` is
+    /// running, or the user just tapped a button on a visible error view.
+    ///
+    /// Reading it at the top of `load()` instead would be worthless. A tap can be
+    /// the last thing the user does before navigating away, and a `.task`
+    /// cancelled before it ever started still runs its body — so the body can
+    /// begin *after* `teardown`, where `lifecycle` has already moved and the read
+    /// returns the new value.
+    private func startLoad() {
+        let lifetime = lifecycle
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in await self?.load(lifetime: lifetime) }
+    }
+
+    private func load(lifetime: Int) async {
+        // Returning early is not enough to be safe here, it is required: `load`
+        // takes a fetch generation, so a body that ran on anyway would supersede
+        // the load the user is actually waiting on, and end by re-attaching the
+        // stream `teardown` had just closed.
+        guard lifetime == lifecycle else { return }
         // NOT an activation point — see `activate()`. Draining here is safe
         // because `isTornDown` gates it: a live load whose fetch left the
         // obligation owed gets one more chance to clear it.
@@ -629,6 +697,14 @@ final class SessionDetailViewModel {
                 async let foldersReq = client.listFolders()
                 let detail = try await detailReq
                 let folders = try await foldersReq
+                // Torn down while these were in flight. Commit NOTHING — not even
+                // the window-independent fields, and above all not
+                // `reattachIfLive`, which would re-open the stream `teardown` just
+                // closed. Unlike `stale` below, `phase` needs no rescue here: this
+                // screen is gone, and if it came back it brought a load of its own
+                // that owns `phase` from `.loading` onward. Everything from here to
+                // the reattach is synchronous, so this one check covers all of it.
+                guard lifetime == lifecycle else { return }
                 // Superseded: adopt only the fields that describe the FULL
                 // transcript regardless of window (identity, stats, folders) and
                 // leave `turns`/`window` to whatever overtook this load. Falling
@@ -669,8 +745,14 @@ final class SessionDetailViewModel {
                 // discovery miss; the snapshot then decides what's actually running.
                 let serverSaysLive = detail.inFlightUserTurnId != nil
                     || detail.summary.status == .inProgress
-                await reattachIfLive(serverSaysLive: serverSaysLive)
+                await reattachIfLive(serverSaysLive: serverSaysLive, lifetime: lifetime)
             } catch {
+                // A CANCELLED load lands here too — both `teardown` and a retry
+                // cancel the one in flight, and `URLSession` reports that as a
+                // thrown error like any other. Neither is a failure the user
+                // caused, and writing `.failed` would paint an error over the
+                // `.loading` its own replacement has already put up.
+                guard !Task.isCancelled, lifetime == lifecycle else { return }
                 phase = .failed(Self.describe(error))
             }
 
@@ -679,6 +761,11 @@ final class SessionDetailViewModel {
             // folder + agent lists so the in-page pickers (the nav-bar agent
             // button) are ready. Nothing is sent until the user writes + taps send.
             phase = .loaded
+            // Deliberately NOT lifetime-guarded past here, unlike `.existing`.
+            // This population is one-shot: a load that comes back with the screen
+            // sees `didLoadDraftOptions` and returns without fetching, so refusing
+            // to commit from the older lifetime would leave the pickers empty for
+            // good. It writes only local picker state — no transcript, no stream.
             guard !didLoadDraftOptions else { return }
             didLoadDraftOptions = true
             await loadDraftOptions(preselectedFolderID: request.preselectedFolderID)
@@ -1552,8 +1639,14 @@ final class SessionDetailViewModel {
     ///
     /// Additive: it does not touch the send flow. The moment the user sends,
     /// `openStream` supersedes this stream (a generation bump ends this consumer).
-    func reattachIfLive(serverSaysLive: Bool = false) async {
-        guard let id = conversationID, summary != nil else { return }
+    ///
+    /// `lifetime` is the caller's captured `lifecycle`. Discovery can spend
+    /// seconds in backoff, and `isTornDown` is NOT enough to guard it: `activate`
+    /// clears that flag, so a teardown and a reappearance in the gap leave it
+    /// false again and this would sail through into a lifetime it does not belong
+    /// to — taking a fetch generation and opening a stream there.
+    func reattachIfLive(serverSaysLive: Bool = false, lifetime: Int) async {
+        guard lifetime == lifecycle, let id = conversationID, summary != nil else { return }
         // Nothing to do if we're already streaming locally, or for a finished session.
         guard liveTurn == nil, !isInFlight, stream == nil else { return }
         if summary?.status == .completed || summary?.status == .cancelled { return }
@@ -1570,8 +1663,9 @@ final class SessionDetailViewModel {
         let attempts = serverSaysLive ? 4 : 1
         var conn: String?
         for attempt in 0..<attempts {
-            // Bail if a send (or another reattach) started while we awaited.
-            guard liveTurn == nil, !isInFlight, stream == nil else { return }
+            // Bail if a send (or another reattach) started while we awaited — or
+            // if the screen this discovery belongs to is over.
+            guard lifetime == lifecycle, liveTurn == nil, !isInFlight, stream == nil else { return }
             if let found = try? await client.findConnection(
                 conversationId: id,
                 sessionId: summary?.externalId,
@@ -1590,12 +1684,14 @@ final class SessionDetailViewModel {
             // The server claimed a live turn but no connection ever surfaced — it
             // most likely finished during load, leaving our fetched transcript a
             // beat stale. Reconcile once so the final reply isn't missing.
-            if serverSaysLive { await reconcileAfterMissedLive() }
+            if serverSaysLive { await reconcileAfterMissedLive(lifetime: lifetime) }
             return
         }
 
-        // Re-check: a send may have started while we awaited.
-        guard liveTurn == nil, !isInFlight, stream == nil else { return }
+        // Re-check: a send may have started while we awaited — or the screen may
+        // have gone. The whole point of `teardown` closing the stream is undone
+        // by opening a new one after it.
+        guard lifetime == lifecycle, liveTurn == nil, !isInFlight, stream == nil else { return }
 
         connectionID = conn
         closeStream()
@@ -1605,7 +1701,7 @@ final class SessionDetailViewModel {
         stream = newStream
         newStream.start()
         consumerTask = Task { [weak self] in
-            await self?.consumeReattach(stream: newStream, connectionID: conn, generation: generation, serverSaysLive: serverSaysLive)
+            await self?.consumeReattach(stream: newStream, connectionID: conn, generation: generation, serverSaysLive: serverSaysLive, lifetime: lifetime)
         }
     }
 
@@ -1614,10 +1710,13 @@ final class SessionDetailViewModel {
     /// Quietly refetch the detail so the transcript shows the final reply rather
     /// than the snapshot we loaded a beat too early. No-op if a turn has since
     /// started locally — that path owns the transcript.
-    private func reconcileAfterMissedLive() async {
-        guard let id = conversationID, liveTurn == nil, !isInFlight, stream == nil else { return }
+    private func reconcileAfterMissedLive(lifetime: Int) async {
+        guard lifetime == lifecycle, let id = conversationID, liveTurn == nil, !isInFlight, stream == nil else { return }
         guard case .fetched(let fetch)? = try? await fetchWindowedDetail(id: id) else { return }
-        guard liveTurn == nil, !isInFlight, stream == nil else { return }
+        // Re-checked: this is reached only from the reattach path, which can have
+        // spent seconds in discovery before even getting here, and the fetch
+        // above is another suspension on top of that.
+        guard lifetime == lifecycle, liveTurn == nil, !isInFlight, stream == nil else { return }
         let detail = fetch.detail
         summary = detail.summary
         turns = detail.turns
@@ -1630,7 +1729,7 @@ final class SessionDetailViewModel {
     /// continuation to release and it BUILDS the live turn from the attach snapshot
     /// rather than being handed one. If the snapshot shows nothing in flight, it
     /// closes the stream (idle connection — leave it alone).
-    private func consumeReattach(stream: EventStream, connectionID conn: String, generation: Int, serverSaysLive: Bool = false) async {
+    private func consumeReattach(stream: EventStream, connectionID conn: String, generation: Int, serverSaysLive: Bool = false, lifetime: Int) async {
         var live: LiveTurn?
         for await frame in stream.frames {
             if Task.isCancelled { return }
@@ -1662,7 +1761,7 @@ final class SessionDetailViewModel {
                     // final reply isn't missing from the (now stale) transcript.
                     // (Before surfacing any error below: the reconcile bails when
                     // `liveTurn` is already set.)
-                    if serverSaysLive { await reconcileAfterMissedLive() }
+                    if serverSaysLive { await reconcileAfterMissedLive(lifetime: lifetime) }
                     surfaceSettledError(from: snap)
                     return
                 }
@@ -2081,6 +2180,9 @@ final class SessionDetailViewModel {
             return
         }
         let attempt = streamReconnects
+        // Captured at ENQUEUE, like every other spawn: the reconnect sleeps for
+        // up to 8s, and the consumer it starts outlives even that.
+        let lifetime = lifecycle
         closeStream()              // drop the dead socket (also bumps the generation)
         streamGeneration &+= 1
         let generation = streamGeneration
@@ -2098,7 +2200,7 @@ final class SessionDetailViewModel {
             newStream.start()
             self.consumerTask = Task { [weak self] in
                 if reattach {
-                    await self?.consumeReattach(stream: newStream, connectionID: conn, generation: generation)
+                    await self?.consumeReattach(stream: newStream, connectionID: conn, generation: generation, lifetime: lifetime)
                 } else {
                     await self?.consume(stream: newStream, connectionID: conn, live: live, generation: generation)
                 }
@@ -2544,6 +2646,10 @@ final class SessionDetailViewModel {
     func teardown() {
         isTornDown = true
         lifecycle &+= 1
+        loadTask?.cancel()
+        loadTask = nil
+        olderTurnsTask?.cancel()
+        olderTurnsTask = nil
         sendTask?.cancel()
         sendTask = nil
         consumerTask?.cancel()
