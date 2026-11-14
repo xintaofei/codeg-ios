@@ -369,30 +369,32 @@ struct TranscriptView<Header: View>: View {
             .environment(\.transcriptContentGrew, TranscriptGrowthAction {
                 if stuckToBottom { scrollToBottom() }
             })
-            // Track bottom-proximity. Mapping geometry to a Bool means `action`
-            // only fires when we cross the threshold (not every scroll pixel).
-            // `contentInsets.bottom` keeps the math correct across keyboard /
-            // compose-bar inset changes.
-            .onScrollGeometryChange(for: Bool.self) { geo in
-                geo.contentSize.height
-                    - (geo.contentOffset.y + geo.containerSize.height - geo.contentInsets.bottom)
-                    <= bottomThreshold
-            } action: { _, atBottom in
-                stuckToBottom = atBottom
-                onPinnedChange(atBottom)
-            }
-            // Something below the list grew into it — the running chip, a
-            // status strip, the keyboard — while the reader sat at the bottom
-            // and did not scroll: keep the newest line in view rather than
-            // leaving the last reply's footer under the chip.
+            // Bottom-following, from one reading of the geometry. Its action
+            // runs for every scrolled pixel, so state changes only on a crossing
+            // of the threshold. `contentInsets.bottom` keeps the math right
+            // across keyboard / compose-bar inset changes.
             .onScrollGeometryChange(for: BottomEdge.self) { geo in
                 BottomEdge(offset: geo.contentOffset.y,
                            visibleBottom: geo.containerSize.height - geo.contentInsets.bottom,
                            contentHeight: geo.contentSize.height)
             } action: { old, new in
-                guard new.offset == old.offset, new.visibleBottom < old.visibleBottom,
-                      old.hidden <= bottomThreshold, new.hidden > 0.5 else { return }
-                pinBottomEdge()
+                // The bottom of the visible area moved — the keyboard, the
+                // running chip, a status strip, or a keyboard re-layout that
+                // briefly resizes the list and carries the offset along (the
+                // pinyin keyboard does this as a sent message clears the field).
+                // While following and with the reader's hands off the list,
+                // that is the layout moving the content, not the reader: keep
+                // the newest line in view, and keep following.
+                let readerScrolling = scrollBox.scrollView.map { $0.isTracking || $0.isDecelerating } ?? false
+                if new.visibleBottom != old.visibleBottom, stuckToBottom, !readerScrolling {
+                    if new.hidden > 0.5 { pinBottomEdge() }
+                    return
+                }
+                let wasAtBottom = old.hidden <= bottomThreshold
+                let isAtBottom = new.hidden <= bottomThreshold
+                guard isAtBottom != wasAtBottom else { return }
+                stuckToBottom = isAtBottom
+                onPinnedChange(isAtBottom)
             }
             // Reveal older turns as the user scrolls toward the top. Mapped to a
             // Bool so `action` fires only when crossing into the near-top zone (not
