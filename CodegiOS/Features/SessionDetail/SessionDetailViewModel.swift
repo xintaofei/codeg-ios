@@ -261,6 +261,55 @@ final class SessionDetailViewModel {
     private var stream: EventStream?
     /// The outer send pipeline (resolve connection → open stream → prompt).
     private var sendTask: Task<Void, Never>?
+    /// The post-turn reconcile, and the re-anchor recovery it may end in. Held so
+    /// `teardown` can stop it: it outlives the turn by design — retrying the
+    /// server for seconds — and nothing else has a handle on it.
+    private var reconcileTask: Task<Void, Never>?
+    /// The transcript's coordinates were retired by a rewrite and have not been
+    /// re-anchored yet.
+    ///
+    /// A view-model flag, not a local: the reconcile that OBSERVES the rewrite is
+    /// not always the one that gets to act on it. A newer turn can take the
+    /// reconcile over and then be rolled back before it finalizes, and then no
+    /// reconcile finishes at all — leaving the window retired, which is the stall
+    /// this whole path exists to end.
+    private var windowNeedsReanchor = false {
+        didSet {
+            // Whoever records the obligation may not be in a position to act on
+            // it — the reconcile that saw the rewrite often exits at its ownership
+            // guard, and the send that took over may have rolled back before the
+            // rewrite was even detected. Draining on the transition covers every
+            // such ordering with one rule: if the screen is already idle, nothing
+            // else is coming.
+            if windowNeedsReanchor, !oldValue { scheduleReanchorIfIdle() }
+        }
+    }
+    /// The standalone re-anchor recovery. Kept apart from `reconcileTask` on
+    /// purpose: a drain must never cancel a reconcile, and reconciles overlap —
+    /// a cancelled one unwinds long after its successor started.
+    private var reanchorTask: Task<Void, Never>?
+    /// How many post-turn reconciles are in their body. A COUNT, not a flag: a
+    /// reconcile cancelled by the next turn's `finalize` still unwinds through
+    /// its `defer` while its successor is running, and a flag cleared there would
+    /// hand ownership to a drain that then cancels the successor mid-flight.
+    private var reconcileDepth = 0
+    /// The screen is gone RIGHT NOW. Cancelling `reconcileTask` is not enough on
+    /// its own: the cancelled reconcile still unwinds through its `defer`, which
+    /// drains the re-anchor obligation — and that drain would start a NEW task,
+    /// with a new fetch generation, after `teardown` retired the old one.
+    ///
+    /// Set by `teardown` and cleared by `activate` — the `onDisappear`/`onAppear`
+    /// pair — because the same model comes back when this screen pushes a route
+    /// over itself. Being resettable makes it useless to anything that must not
+    /// survive teardown AT ALL; for that, capture `lifecycle`.
+    private var isTornDown = false
+    /// Monotonic count of teardowns. Work that outlives its screen and cannot be
+    /// cancelled captures this and refuses to act once it moves: unlike
+    /// `isTornDown`, which a reappearance resets, a captured value is never valid
+    /// again. `teardown` + a quick Back would otherwise let a task suspended
+    /// before the teardown resume into the NEW lifetime, take a fresh fetch
+    /// generation, and supersede the load that the user is actually waiting on.
+    private var lifecycle = 0
     /// The long-lived loop consuming `stream.frames`.
     private var consumerTask: Task<Void, Never>?
     private let subscriptionID = UUID().uuidString
@@ -454,6 +503,13 @@ final class SessionDetailViewModel {
            fetched.total >= current.offset {
             return .fetched(WindowedFetch(detail: detail, reanchored: false))
         }
+        // Recorded HERE — the moment the rewrite is proven, before the round-trip
+        // that fetches the replacement. That request can be overtaken or throw,
+        // and the obligation has to outlive it: it is recorded on the model, not
+        // returned to the caller, precisely because the reconcile that sees the
+        // rewrite is often not the one that gets to act on it (see
+        // ``windowNeedsReanchor``).
+        windowNeedsReanchor = true
         let reset = try await client.conversationDetail(id: id, tailTurns: Self.tailTurns)
         guard isCurrentGeneration(generation) else { return .superseded }
         return .fetched(WindowedFetch(detail: reset, reanchored: true))
@@ -473,6 +529,9 @@ final class SessionDetailViewModel {
     /// transcript. A `nil` window on a legacy response is the truthful answer: it
     /// carried every turn.
     private func adoptTranscriptScope(_ detail: ConversationDetail) {
+        // Adopting a transcript wholesale re-establishes the coordinates, whatever
+        // retired them. Paired with every wholesale `turns = detail.turns`.
+        windowNeedsReanchor = false
         window = TranscriptWindow(detail)
         inFlightUserTurnId = detail.inFlightUserTurnId
     }
@@ -538,7 +597,26 @@ final class SessionDetailViewModel {
     /// Guards the one-time draft option load so a re-run of `.task` can't refetch.
     private var didLoadDraftOptions = false
 
+    /// The screen is on screen. Call from `.onAppear`, which — unlike `.task` —
+    /// only runs when the view really is being shown.
+    ///
+    /// `teardown` runs on `.onDisappear`, and that fires when this detail merely
+    /// pushes another route on top of itself; the view keeps the SAME `@State`
+    /// model, so the way back has to undo it. Reappearing is also a drain point:
+    /// teardown cancelled any pending recovery and left the obligation owed, its
+    /// `didSet` cannot re-fire (already true), and a `.new`-mode model that has
+    /// since linked returns from `load()` without fetching at all — so nothing
+    /// else would restart it.
+    func activate() {
+        isTornDown = false
+        scheduleReanchorIfIdle()
+    }
+
     func load() async {
+        // NOT an activation point — see `activate()`. Draining here is safe
+        // because `isTornDown` gates it: a live load whose fetch left the
+        // obligation owed gets one more chance to clear it.
+        defer { scheduleReanchorIfIdle() }
         switch mode {
         case .existing(let id):
             phase = .loading
@@ -914,7 +992,14 @@ final class SessionDetailViewModel {
         // transcript (slow server persistence, or refreshAfterTurn still retrying),
         // fold it into `turns` before we reuse the `liveTurn` slot — otherwise this
         // send would drop that reply from view until the next reconcile.
-        if let prior = liveTurn, !prior.isStreaming, !prior.isEmpty {
+        //
+        // Every settled predecessor, including an empty one: promotion is what
+        // moves its optimistic USER turn into `turns` too, and that turn outlives
+        // the empty reply. Skipping it left the user turn owned by nobody — no
+        // live turn to promote it later, and a rollback of THIS send only removes
+        // its own id — which then blocks re-anchoring indefinitely. (Promotion
+        // already drops a contentless assistant snapshot on its own.)
+        if let prior = liveTurn, !prior.isStreaming {
             promoteUnreconciled(prior)
         }
 
@@ -1420,7 +1505,14 @@ final class SessionDetailViewModel {
                 // re-attach silently, matching the web client.
                 guard isTurnActive else { return }
                 if reason == "connection_gone" {
-                    Task { [weak self] in await self?.reconcileOrFail(live: live, reason: reason) }
+                    // Lifetime captured HERE, not inside the callee: the task is
+                    // only ENQUEUED now, and a teardown + reappearance can both run
+                    // before its body starts — at which point reading `lifecycle`
+                    // there would read the NEW one and wave the task through.
+                    let lifetime = lifecycle
+                    Task { [weak self] in
+                        await self?.reconcileOrFail(live: live, reason: reason, lifetime: lifetime)
+                    }
                 } else {
                     reconnectStream(into: live, connectionID: conn, reason: reason)
                 }
@@ -1587,7 +1679,14 @@ final class SessionDetailViewModel {
                 // only `connection_gone` reconciles/fails.
                 guard isTurnActive, let live else { return }
                 if reason == "connection_gone" {
-                    Task { [weak self] in await self?.reconcileOrFail(live: live, reason: reason) }
+                    // Lifetime captured HERE, not inside the callee: the task is
+                    // only ENQUEUED now, and a teardown + reappearance can both run
+                    // before its body starts — at which point reading `lifecycle`
+                    // there would read the NEW one and wave the task through.
+                    let lifetime = lifecycle
+                    Task { [weak self] in
+                        await self?.reconcileOrFail(live: live, reason: reason, lifetime: lifetime)
+                    }
                 } else {
                     reconnectStream(into: live, connectionID: conn, reason: reason, reattach: true)
                 }
@@ -1880,7 +1979,8 @@ final class SessionDetailViewModel {
         closeStream()
         requestScrollToBottom()
         // Replace the optimistic + live turns with the authoritative server copy.
-        Task { [weak self] in await self?.refreshAfterTurn(reconciling: live) }
+        reconcileTask?.cancel()
+        reconcileTask = Task { [weak self] in await self?.refreshAfterTurn(reconciling: live) }
         // The keep-planning turn just ended — deliver the revision notes as the
         // follow-up prompt Grok expects (it discards them on the reply itself).
         if let planFollowUp { send(overrideText: planFollowUp) }
@@ -1923,6 +2023,9 @@ final class SessionDetailViewModel {
             attachments = sent
         }
         requestScrollToBottom()
+        // This send may have taken over a reconcile that had seen the transcript
+        // rewritten and then died before it could finalize. The screen is idle now.
+        scheduleReanchorIfIdle()
     }
 
     private func failLive(_ live: LiveTurn, message: String?, details: String? = nil) {
@@ -1944,6 +2047,14 @@ final class SessionDetailViewModel {
             liveTurn = nil
         }
         requestScrollToBottom()
+        // A turn can fail on the very fetch that discovered the rewrite
+        // (`reconcileOrFail`), and failing it makes the screen idle without ever
+        // reconciling — a terminal exit, so it drains. Only when the failure left
+        // nothing above `turns`, though: an inline error message is itself content
+        // (`isEmpty` counts `errorMessage`), so the usual failure keeps its turn on
+        // screen and re-anchors on the next turn that reconciles or rolls back
+        // before acceptance — the same deal an explicit cancel gets.
+        scheduleReanchorIfIdle()
     }
 
     // MARK: - Stream recovery (transient drops)
@@ -1963,7 +2074,10 @@ final class SessionDetailViewModel {
         guard liveTurn === live, isTurnActive else { return }
         streamReconnects += 1
         guard streamReconnects <= Self.maxStreamReconnects else {
-            Task { [weak self] in await self?.reconcileOrFail(live: live, reason: reason) }
+            let lifetime = lifecycle          // captured at ENQUEUE — see `reconcileOrFail`
+            Task { [weak self] in
+                await self?.reconcileOrFail(live: live, reason: reason, lifetime: lifetime)
+            }
             return
         }
         let attempt = streamReconnects
@@ -1997,8 +2111,16 @@ final class SessionDetailViewModel {
     /// during the outage, so re-fetch the transcript and adopt it silently when the
     /// reply has landed; only when the server still has nothing do we surface an
     /// error — and even then the partial streamed output stays on screen.
-    private func reconcileOrFail(live: LiveTurn, reason: String?) async {
-        guard liveTurn === live, isTurnActive else { return }
+    /// `lifetime` is the `lifecycle` value read at the moment the caller ENQUEUED
+    /// this work. It runs in an anonymous task nothing can cancel, so it has to
+    /// police its own lifetime — and a Boolean cannot: `teardown` sets
+    /// `isTornDown`, but a quick Back clears it again, and an instance that
+    /// crossed that pair would sail through, take a fresh fetch generation, and
+    /// supersede the very `load` the user came back for. Reading `lifecycle` here
+    /// instead of at the spawn site would have the same hole one boundary later —
+    /// the body does not start until the actor gets round to it.
+    private func reconcileOrFail(live: LiveTurn, reason: String?, lifetime: Int) async {
+        guard lifetime == lifecycle, liveTurn === live, isTurnActive else { return }
         streamReconnects = 0
         // Retried, because two outcomes are "no answer yet" rather than "the
         // turn is lost": a fetch superseded by a concurrently-loaded history
@@ -2007,7 +2129,7 @@ final class SessionDetailViewModel {
         // Failing on either would announce a dead connection for a turn that is
         // perfectly healthy.
         for attempt in 0..<3 {
-            guard liveTurn === live, isTurnActive else { return }
+            guard lifetime == lifecycle, liveTurn === live, isTurnActive else { return }
             if let id = conversationID,
                case .fetched(let fetch)? = try? await fetchWindowedDetail(id: id),
                liveTurn === live, isTurnActive {
@@ -2047,8 +2169,10 @@ final class SessionDetailViewModel {
         // Ownership is re-checked here, not just inside the loop: the final
         // attempt can end in `.superseded` or a throw, and a second turn may
         // have taken over during that await. Failing `live` then would tear
-        // down state the newer turn owns.
-        guard liveTurn === live, isTurnActive else { return }
+        // down state the newer turn owns — as would failing it after the user
+        // left, which the loop guard alone does not cover (teardown can land
+        // during the last attempt).
+        guard lifetime == lifecycle, liveTurn === live, isTurnActive else { return }
         failLive(live, message: "Lost the connection. Your reply may still be running — reopen the session to check.")
     }
 
@@ -2153,6 +2277,13 @@ final class SessionDetailViewModel {
     private func refreshAfterTurn(reconciling live: LiveTurn) async {
         // A new task that never got linked keeps its locally rendered turns.
         guard let id = conversationID else { return }
+        reconcileDepth += 1
+        defer {
+            reconcileDepth -= 1
+            // Every exit, including the ownership guards that return early: if the
+            // obligation outlived this reconcile, someone still has to drain it.
+            scheduleReanchorIfIdle()
+        }
         // Whether the finished live turn has content worth preserving. If it was
         // empty (e.g. a no-op turn), there's nothing to protect — adopt whatever
         // the server returns on the first successful fetch.
@@ -2173,15 +2304,18 @@ final class SessionDetailViewModel {
             // If the user started another turn while we were reconciling, that
             // newer turn now owns turns/pendingUserTurns/liveTurn; bail so we
             // don't wipe its in-flight state (its own finalize reconciles later).
-            guard liveTurn === live else { return }
+            // Cancellation means the screen is gone (`teardown`) — stop before
+            // issuing another request, not merely before committing one.
+            guard !Task.isCancelled, liveTurn === live else { return }
             do {
                 // `.superseded` (e.g. a history page the user pulled in while
                 // this retried) commits nothing and falls through to the backoff
                 // so the next attempt re-reads — it is not a failure.
                 if case .fetched(let fetch) = try await fetchWindowedDetail(id: id) {
                     let detail = fetch.detail
-                    // Re-check after the await — a new turn may have begun during it.
-                    guard liveTurn === live else { return }
+                    // Re-check after the await — a new turn may have begun during
+                    // it, or the screen may have gone.
+                    guard !Task.isCancelled, liveTurn === live else { return }
                     // Identity/stats are always safe to adopt, even before the reply
                     // is queryable, so the header stays fresh while we wait.
                     summary = detail.summary
@@ -2201,16 +2335,12 @@ final class SessionDetailViewModel {
                     // checked. Keep the live turn and retry; if the budget runs
                     // out, `promoteUnreconciled` below preserves the reply.
                     //
-                    // The window is then left anchored on coordinates the server
-                    // rewrote, so later refreshes keep re-anchoring and this
-                    // session falls back to promotion for its remaining turns.
-                    // That is the SAME outcome this screen had before windowing
-                    // existed (`turns.count` was equally stranded above a
-                    // compacted transcript's length), and reopening the session
-                    // clears it. Rebasing onto the re-anchored transcript here
-                    // was tried and removed: the rewritten tail can already
-                    // contain this round, and promoting on top of it duplicates
-                    // the user's prompt and reply — worse than the stall.
+                    // Adopting it mid-loop is not an option either: the rewritten
+                    // tail can already contain this round, which would then render
+                    // twice, once persisted and once live. The window is therefore
+                    // left on retired coordinates for now and repaired below, once
+                    // the turn has settled — leaving it retired is what used to
+                    // freeze this screen for the rest of the visit.
                     let advanced = !fetch.reanchored && detail.globalEnd > baselineEnd
                     if advanced, !mustPreserveReply || Self.transcriptHasReply(detail.turns) {
                         turns = detail.turns
@@ -2236,13 +2366,93 @@ final class SessionDetailViewModel {
         // attempt can end in `.superseded` or a throw, and sending is re-enabled
         // once a turn finalizes — so a second turn may have taken over during
         // that last await, and this one must touch nothing it now owns.
-        guard liveTurn === live else { return }
+        guard !Task.isCancelled, liveTurn === live else { return }
         // Gave up reconciling (the server hasn't persisted the reply within the
         // retry window). Fold the finalized reply — and its optimistic user turn —
         // into the authoritative `turns` so it survives a subsequent send instead
         // of living only in the single `liveTurn` slot; a later reconcile or full
         // load replaces it with the server's copy.
+        // Promotion moved the round INTO `turns`, which is exactly the state the
+        // drain in the `defer` above requires — it runs next and re-anchors if a
+        // rewrite retired the window.
         promoteUnreconciled(live)
+    }
+
+    /// Start the re-anchor recovery if one is owed and nothing else owns the
+    /// transcript right now.
+    ///
+    /// "Nothing else" includes anything locally synthesized held OUTSIDE `turns`:
+    /// an optimistic user turn or a live reply. The recovery replaces `turns`
+    /// wholesale with the server's tail, and that tail may already contain the
+    /// very round those slots are showing — adopting it underneath them renders
+    /// the round twice. Whoever is holding them folds them in first
+    /// (`promoteUnreconciled`) or drops them (`discardOptimisticSend`), and the
+    /// drain that follows finds this predicate true. Paths that deliberately keep
+    /// a finished reply on screen (`cancel`, a failed turn with partial output)
+    /// therefore do not re-anchor while it is up; the next settled turn does.
+    private func scheduleReanchorIfIdle() {
+        guard !isTornDown, windowNeedsReanchor, reconcileDepth == 0,
+              liveTurn == nil, pendingUserTurns.isEmpty,
+              let id = conversationID else { return }
+        reanchorTask?.cancel()
+        reanchorTask = Task { [weak self] in await self?.reanchorTranscript(id: id) }
+    }
+
+    /// Re-open the transcript at the tail after a rewrite retired the window's
+    /// coordinates.
+    ///
+    /// Every refresh above answered `reanchored`, and a re-anchored response
+    /// proves nothing about the turn being reconciled — so none could be adopted.
+    /// But refusing them also leaves the window pointing into a prefix the server
+    /// has rewritten, and `fetchWindowedDetail` goes on re-anchoring against those
+    /// same dead coordinates: without this the screen would keep showing
+    /// pre-compaction history, and never update again, for the rest of the visit.
+    /// The desktop has no equivalent stall — it commits the fresh tail on every
+    /// fingerprint mismatch (`fetchDetailWindowed` in
+    /// `conversation-runtime-store.ts`).
+    ///
+    /// The tail is adopted as-is — nothing locally synthesized is carried onto it.
+    /// Appending anything would assume it is newer than everything the tail holds,
+    /// and that is not knowable: the round may have persisted while the reconcile
+    /// was retrying, and another client may have written after it, so the append
+    /// can replay a round after content that already follows it. The cost is that
+    /// a round the rewrite did not preserve leaves the screen — which is also the
+    /// truthful answer, since a transcript rewritten server-side from what WAS
+    /// persisted does not contain it, and reopening the session has always shown
+    /// exactly this.
+    private func reanchorTranscript(id: Int) async {
+        // Retried: a single request is the ONLY thing standing between the user
+        // and a transcript that never updates again, and the obligation's `didSet`
+        // cannot re-fire (it is already true), so a transient failure here would
+        // strand the screen until some later turn happens to drain it.
+        for attempt in 0..<3 {
+            guard !Task.isCancelled, windowNeedsReanchor, liveTurn == nil else { return }
+            // Take a place in the shared order over transcript reads, exactly as
+            // `fetchWindowedDetail` does.
+            let generation = nextFetchGeneration()
+            if let detail = try? await client.conversationDetail(id: id, tailTurns: Self.tailTurns) {
+                // Ownership, including the ABA case a boolean re-check cannot see:
+                // a whole new round can start AND finish while this request is
+                // suspended, leaving `liveTurn` back at nil over a newer
+                // transcript.
+                guard !Task.isCancelled, liveTurn == nil else { return }
+                // Overtaken by another transcript read (a history page the user
+                // pulled in, say). Not a failure and NOT a reason to stop: that
+                // reader may itself fail, and this is the only task that owes the
+                // obligation — dropping out here would strand it. Retry instead;
+                // if the winner did adopt, the top-of-loop check sees the
+                // obligation already cleared and this exits on its own.
+                if isCurrentGeneration(generation) {
+                    summary = detail.summary
+                    turns = detail.turns
+                    adoptTranscriptScope(detail)
+                    sessionStats = detail.sessionStats ?? sessionStats
+                    requestScrollToBottom()
+                    return
+                }
+            }
+            if attempt < 2 { try? await Task.sleep(for: .milliseconds(600)) }
+        }
     }
 
     /// Fold a finalized-but-unreconciled live reply (plus the optimistic user
@@ -2309,6 +2519,12 @@ final class SessionDetailViewModel {
                 try? await self?.client.cancel(connectionId: conn)
             }
         }
+        // No re-anchor drain here: the cancelled reply is deliberately left on
+        // screen, and the server may have already persisted the same round — so
+        // adopting its tail underneath would show that round twice. Nor is one
+        // coming from this turn: the stream is closed and `isTurnActive` is false,
+        // so no terminal event will reconcile it. It drains on the next turn that
+        // either reconciles or rolls back before acceptance — or on reopening.
     }
 
     private func closeStream() {
@@ -2326,10 +2542,20 @@ final class SessionDetailViewModel {
 
     /// Tear down all live work — call from `.onDisappear` / deinit paths.
     func teardown() {
+        isTornDown = true
+        lifecycle &+= 1
         sendTask?.cancel()
         sendTask = nil
         consumerTask?.cancel()
         consumerTask = nil
+        reconcileTask?.cancel()
+        reconcileTask = nil
+        reanchorTask?.cancel()
+        reanchorTask = nil
+        // Cancellation stops the reconcile from ISSUING more work; retiring the
+        // fetch generation stops anything already in flight — a request suspended
+        // when the cancel landed — from committing to a screen the user has left.
+        _ = nextFetchGeneration()
         agentOptions.teardown()
         insertModel.teardown()
         closeStream()

@@ -136,6 +136,12 @@ struct SessionDetailView: View {
             try await model.agentSession(agentType: agent, sessionId: sessionId)
         })
         .task { await model.load() }
+        // `onAppear`/`onDisappear` are the lifetime pair: both run synchronously
+        // and only when the view really appears/disappears — including when this
+        // screen pushes another route over itself, which keeps the same `@State`
+        // model. `.task` is not a substitute: one cancelled before it started
+        // still runs its body.
+        .onAppear { model.activate() }
         .onDisappear { model.teardown() }
         // Haptics — the app's marquee "felt" moments, all keyed off existing
         // @Observable state. Vocabulary: success = a reply completed, error = it
