@@ -72,6 +72,9 @@ struct ToolCallVM: Identifiable {
     /// `tool_result`. Persisted only; the live path carries the same facts on
     /// `meta` instead.
     let agentStats: AgentExecutionStats?
+    /// The process exit code the transcript kept as a field
+    /// (`tool_result.exit_code`); nil when unknown. Persisted calls only.
+    let exitCode: Int?
     /// This call is being rendered from a turn whose wire data is still
     /// arriving. Only a background sub-agent launch reads it (see
     /// ``SubAgentSection``): such a launcher settles at its ack while the child
@@ -101,7 +104,7 @@ struct ToolCallVM: Identifiable {
     init(id: String, rawName: String, kind: String, state: ToolCallState,
          input: String?, output: String?, content: String?, isError: Bool,
          meta: AnyJSON? = nil, transcript: [SubAgentRun] = [],
-         agentStats: AgentExecutionStats? = nil, isLive: Bool = false) {
+         agentStats: AgentExecutionStats? = nil, isLive: Bool = false, exitCode: Int? = nil) {
         // A codex-acp command action (`createCommandActionEvent`) has no tool
         // name and NO input — only a human title, which arrives here as
         // `rawName`. Its identity, its query and its path all have to be read
@@ -140,6 +143,7 @@ struct ToolCallVM: Identifiable {
         self.meta = meta
         self.transcript = transcript
         self.agentStats = agentStats
+        self.exitCode = exitCode
         self.isLive = isLive
         self.commandAction = action
 
@@ -280,8 +284,9 @@ enum MessageRender {
                 var output: String?
                 var isErr = false
                 var stats: AgentExecutionStats?
-                if let r = resultIdx, case .toolResult(_, let outPreview, let e, let s) = blocks[r] {
-                    output = outPreview; isErr = e; stats = s; consumed.insert(r)
+                var exitCode: Int?
+                if let r = resultIdx, case .toolResult(_, let outPreview, let e, let s, let code) = blocks[r] {
+                    output = outPreview; isErr = e; stats = s; exitCode = code; consumed.insert(r)
                 }
                 let state = toolState(paired: resultIdx != nil, isError: isErr,
                                       status: status, liveness: liveness)
@@ -297,12 +302,13 @@ enum MessageRender {
                 parts.append(.tool(ToolCallVM(
                     id: toolID ?? "tool-\(idx)", rawName: name, kind: "", state: state,
                     input: inputPreview, output: output, content: nil, isError: isErr, meta: meta,
-                    agentStats: stats)))
-            case .toolResult(let toolID, let outPreview, let e, let stats):
+                    agentStats: stats, exitCode: exitCode)))
+            case .toolResult(let toolID, let outPreview, let e, let stats, let exitCode):
                 // Orphan result (no preceding tool_use) — show it on its own.
                 parts.append(.tool(ToolCallVM(
                     id: toolID ?? "result-\(idx)", rawName: "result", kind: "", state: e ? .error : .done,
-                    input: nil, output: outPreview, content: nil, isError: e, agentStats: stats)))
+                    input: nil, output: outPreview, content: nil, isError: e, agentStats: stats,
+                    exitCode: exitCode)))
             case .turnError(let message):
                 if !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     parts.append(.turnError(message))
@@ -501,7 +507,7 @@ enum MessageRender {
         // Prefer an exact id match anywhere later.
         if let toolID {
             for j in (idx + 1)..<blocks.count where !consumed.contains(j) {
-                if case .toolResult(let rid, _, _, _) = blocks[j], rid == toolID { return j }
+                if case .toolResult(let rid, _, _, _, _) = blocks[j], rid == toolID { return j }
             }
         }
         // Otherwise the next unconsumed result — but stop at the next tool_use so

@@ -32,7 +32,7 @@ struct ContentBlockView: View {
                 state: MessageRender.toolState(paired: false, isError: false,
                                                status: status, liveness: .settled),
                 input: inputPreview, output: nil, content: nil, isError: false, meta: meta))
-        case .toolResult(let id, let outputPreview, let isError, let stats):
+        case .toolResult(let id, let outputPreview, let isError, let stats, _):
             ToolCallCard(vm: ToolCallVM(
                 id: id ?? "result", rawName: "result", kind: "", state: isError ? .error : .done,
                 input: nil, output: outputPreview, content: nil, isError: isError, agentStats: stats))

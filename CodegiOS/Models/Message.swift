@@ -85,7 +85,11 @@ enum ContentBlock: Hashable, Sendable, Decodable {
     case image(ImageData)
     case imageGeneration(revisedPrompt: String?, image: ImageData?)
     case toolUse(id: String?, name: String, inputPreview: String?, status: ToolUseStatus, meta: AnyJSON?)
-    case toolResult(id: String?, outputPreview: String?, isError: Bool, agentStats: AgentExecutionStats?)
+    /// `exitCode`: the command's exit status when the transcript keeps it as a
+    /// field (pi's `bashExecution.exitCode`, Cursor's shell results,
+    /// Antigravity's runs — codeg 0.30+). Nil means unknown: most agents only
+    /// print it, and the activity timeline reads it from the output then.
+    case toolResult(id: String?, outputPreview: String?, isError: Bool, agentStats: AgentExecutionStats?, exitCode: Int? = nil)
     /// The turn FAILED, in the agent's own words ("stream disconnected before
     /// completion: …", "API Error: 503 …") — Rust `ContentBlock::TurnError`
     /// (codeg 0.30+). Never agent prose: the parser puts it alone in a `system`
@@ -98,7 +102,7 @@ enum ContentBlock: Hashable, Sendable, Decodable {
         // here already camelCased — match them in camelCase.
         case type, text, data, mimeType, uri, revisedPrompt, image
         case toolUseId, toolName, inputPreview, status, meta
-        case outputPreview, isError, agentStats, message
+        case outputPreview, isError, agentStats, message, exitCode
     }
 
     init(from decoder: Decoder) throws {
@@ -135,7 +139,10 @@ enum ContentBlock: Hashable, Sendable, Decodable {
                 id: try c.decodeIfPresent(String.self, forKey: .toolUseId),
                 outputPreview: try c.decodeIfPresent(String.self, forKey: .outputPreview),
                 isError: try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false,
-                agentStats: try c.decodeIfPresent(AgentExecutionStats.self, forKey: .agentStats)
+                agentStats: try c.decodeIfPresent(AgentExecutionStats.self, forKey: .agentStats),
+                // An i64 on the wire (a Windows exit status is an unsigned
+                // 32-bit value); anything out of range is "unknown".
+                exitCode: (try? c.decodeIfPresent(Int.self, forKey: .exitCode)) ?? nil
             )
         case "turn_error":
             self = .turnError(try c.decodeIfPresent(String.self, forKey: .message) ?? "")
