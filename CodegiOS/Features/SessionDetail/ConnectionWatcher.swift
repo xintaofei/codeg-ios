@@ -34,6 +34,11 @@ final class ConnectionWatcher {
     /// Follow-up work the owner hangs off a watch (re-reading the transcript
     /// after an autonomous turn), cancelled with it.
     var followUpTask: Task<Void, Never>?
+    /// What else the screen takes off the watched connection besides the
+    /// running list — its commands, whether it can fork. Both are current
+    /// state, so a frame the turn stream also delivered does no harm.
+    var onSnapshot: (@MainActor (LiveSessionSnapshot) -> Void)?
+    var onEvent: (@MainActor (AcpEvent) -> Void)?
 
     /// Everything one watch needs, fixed when it is requested.
     private struct Target {
@@ -122,11 +127,16 @@ final class ConnectionWatcher {
             case .snapshot(let snap):
                 reconnects = 0
                 runs.hydrate(snap, connection: conn)
+                onSnapshot?(snap)
             case .replay(let events):
                 reconnects = 0
-                for envelope in events { runs.apply(envelope.event, seq: envelope.seq) }
+                for envelope in events {
+                    runs.apply(envelope.event, seq: envelope.seq)
+                    onEvent?(envelope.event)
+                }
             case .event(let envelope):
                 runs.apply(envelope.event, seq: envelope.seq)
+                onEvent?(envelope.event)
             case .pong:
                 break
             case .detached(let reason):

@@ -2060,6 +2060,10 @@ final class SessionDetailViewModel {
     private func adoptResolvedConnection(_ conn: String, for context: ConnectionContext) {
         guard connectionContext == context else { return }
         connectionID = conn
+        // A connection resolved between turns (the options sheet, a fork) has
+        // no turn stream on it: watch it, or what it does until the next send
+        // goes unseen. A no-op while a turn stream is open.
+        resumeWatching()
     }
 
     /// How long to keep asking a connection what it accepts, matching the
@@ -3854,6 +3858,21 @@ extension SessionDetailViewModel {
         runs.onAutonomousTurnSettled = { [weak self] in
             self?.refreshAfterAutonomousTurn()
         }
+        // Between turns the watch is the only stream: the commands the agent
+        // re-advertises and its fork support arrive on it too.
+        watcher.onSnapshot = { [weak self] snap in
+            guard let self else { return }
+            self.composer.adoptSnapshotCommands(snap.availableCommands)
+            self.adoptForkSupport(status: snap.status, supported: snap.forkSupported)
+        }
+        watcher.onEvent = { [weak self] event in
+            guard let self else { return }
+            switch event {
+            case .availableCommands(let list): self.composer.adoptLiveCommands(list)
+            case .forkSupported(let supported): self.forkSupported = supported
+            default: break
+            }
+        }
     }
 
     /// Watch the conversation's connection between turns: while the screen is
@@ -4012,8 +4031,11 @@ extension SessionDetailViewModel {
             scheduleQueueFlush()
         }
         let result: ForkResult
+        let forkConnection: String
         do {
-            result = try await forkOnce(request, conversationID: id)
+            let forked = try await forkOnce(request, conversationID: id)
+            result = forked.0
+            forkConnection = forked.connection
         } catch {
             // The screen went: its cancellation is nobody's failure, and a fork
             // the backend already took runs on there regardless — the screen
@@ -4034,21 +4056,26 @@ extension SessionDetailViewModel {
         forkOutcome = ForkOutcome(siblingConversationID: result.siblingConversationId)
         // The renamed row and the new sibling.
         notifyConversationsChanged()
+        // The fork's connection carries the forked session from here on, and
+        // nothing streams it between turns but the watch — even when its id
+        // was not cached because the screen moved on during the resolution.
+        resumeWatching(connection: forkConnection)
         await reloadAfterFork(forkedSessionId: result.forkedSessionId, conversationID: id, lifetime: lifetime)
     }
 
     /// Resolve a connection and fork on it. A connection the server dropped
     /// between the lookup and the fork (reported as a 500, "connection not
     /// found") is looked up again once, from scratch.
-    private func forkOnce(_ request: ReplyForkPoint.Request, conversationID id: Int) async throws -> ForkResult {
+    private func forkOnce(_ request: ReplyForkPoint.Request,
+                          conversationID id: Int) async throws -> (ForkResult, connection: String) {
         let conn = try await resolveConnectionForOptions()
         do {
-            return try await sendFork(request, connection: conn, conversationID: id)
+            return (try await sendFork(request, connection: conn, conversationID: id), conn)
         } catch let error where ForkFailure.isConnectionGone(error) {
             try Task.checkCancellation()
             if connectionID == conn { connectionID = nil }
             let fresh = try await resolveConnectionForOptions()
-            return try await sendFork(request, connection: fresh, conversationID: id)
+            return (try await sendFork(request, connection: fresh, conversationID: id), fresh)
         }
     }
 
