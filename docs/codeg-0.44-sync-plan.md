@@ -90,7 +90,27 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
 
 从指定 turn fork（`acp_fork{forkFromTurnId}`，fork 点用 `agent_message_id`）、消息导航器（`get_folder_conversation_outline`）、live runs 芯片 + `acp_stop_async_task`、`prompt_suggestion`、斜杠菜单 skills、@ 面板、Markdown 图片 / 任务复选框、Mermaid / HTML / json-render。
 
----
+### 4.1 调研结论（2026-11-14）
+
+| 项 | 线格式 / 后端 | web 做法 | iOS 现状 → 做法 | 规模 |
+|---|---|---|---|---|
+| fork | `POST acp_fork {connectionId, conversationId, folderId, forkFromTurnId}` → **camelCase** `{forkedSessionId, originalSessionId, siblingConversationId}`；409 `turn_in_progress`，其余 500。`forkFromTurnId` 是该回复**最后一个** assistant turn 的 codeg id（服务端自己查 `agent_message_id`，iOS 不需解码）；解析不了 fork 点时**静默 fork 到末尾**（只有 claude/codex/deepseek 支持定点） | 每条完成回复的 footer 有「从这里 fork」；**当前会话被截到 fork 点并改名 `[Fork] …`**，原完整历史成了新的兄弟会话；留在当前会话 | 无。footer 的 merged turn 取的是**第一个** turn id，要改成最后一个；`summary.externalId` 必须随 fork 刷新（否则重连恢复的是兄弟会话的 session）。闲置会话要先起连接。加确认框（结果反直觉）+「打开原会话」 | M |
+| 消息导航 | `POST get_folder_conversation_outline {conversationId, beforeIndex}` → `{turns, turns_total, prefix_hash}`（窗口以上**全部**、精简过的 turns，不分页）；detail/page 新字段 `user_turns_before_offset`（缺省 = 服务端无此路由，0.36 起） | 侧栏每条用户消息一行（序号、首行、时间、+/− 行数、文件/子 agent 数）；点击跳转，窗口外的先 `loadOlderTurnsThrough` 再跳 | 无。「…」菜单 →「消息」sheet；outline 用「锚点 = window 的 offset+prefixHash」校验（不移植 JS 指纹）；跳转要把 VM 窗口和 `TranscriptView` 本地窗口都放到目标处再 `scrollTo` | M（全量 parity L） |
+| live runs + 停止 | 事件 `async_task{delta}`、`background_activity{outstanding_tasks}`、`delegation_started/completed/child_running`；snapshot `async_tasks`/`background_outstanding_tasks`/`delegated_children`/`active_delegations`；`POST acp_stop_async_task {connectionId, taskId}` → 裸 bool | composer 上方「N 运行中」芯片 → 分组弹层（后台任务可 Stop / 后台子 agent / 委派）；回合结束后仍在 | **iOS 回合结束就关 WS**，看不到回合外的任何东西 → 需要**空闲连接观察者**（屏幕可见、有连接、无回合流时 attach，回合流开时让位，`since_seq` 重连）。移植 `async-tasks.ts` / `live-runs.ts` + 测试 | L |
+| `prompt_suggestion` | 事件 `{type:"prompt_suggestion", text|null}`、snapshot `prompt_suggestion`；只 Claude/Codex；**在 `turn_complete` 之后**才到；`prompting` 清除 | 空输入框的 placeholder「{建议}（Tab 使用）」，Tab 填入不发送 | 依赖上面的观察者。placeholder + 框内「使用」按钮 + 硬件 Tab | S（有观察者时） |
+| `/` 菜单 + skills | 命令来自连接（snapshot / `available_commands` 事件 / 草稿 probe），`skill`/`skill_path` 字段；codex/opencode/antigravity/custom 另扫磁盘 `acp_list_agent_runtime_skills {agentType, workspacePath}`（codex 用 `$`）；prompt 里就是纯文本 `/name ` / `$name ` | caret 前 `(^|\s)([/$])(\S*)$` 触发内联弹层，`rankByTextMatch` 排序 | 只有「+」→ sheet；`$` 命令被插成 `/$x`（bug）；仍按已删的 `expertIdSet` 过滤。用 iOS 26 `TextField(selection:)` 拿 caret，输入框上方建议卡 | M |
+| @ 面板 | 文件 `POST search_workspace_files {path, query, limit, request:{consumerId, generation}}`（0.43 起，generation 单调，冷索引很慢）；prompt 里是**纯文本 Markdown 链接** `[README.md](file:///abs/…)`、`[@Codex](codeg://agent/codex)`（后端据此路由委派） | 五个 tab（agent/assistant/file/session/commit），顺序可配置（本机） | 无。输入框里显示 `@relpath`，VM 记 token 表，发送/插入/排队时编码成 web 同款链接，放回时解码 | M（files+agents）/ L（全部） |
+| Markdown 图片 | `POST read_workspace_file_base64 {rootPath, path, maxBytes}` / `read_file_base64 {path, maxBytes}` → 裸 base64 字符串；上限 8 MiB；本地路径规则 `localImagePath`/`resolveLocalImage` | 本地图读文件夹内（越界走绝对路径），远程只放 http(s)，**不缓存字节** | 只显示 alt 文本。parser 加 image 块 + 加载器（并发 4、合并在途）+ 全屏查看；SVG 先回退文字 | M |
+| 任务复选框 | — | `- [ ]`/`- [x]` 替换项目符号，只读 | 显示成 `• [ ] foo` | S |
+| Mermaid | 纯前端（mermaid 11.17.2） | 流式重画、失败保留上次结果、缩放/导出 | 代码块。方案：**共享离屏 WebKit + 打包 mermaid.min.js（~3.6 MB，压缩 ~1 MB，离线）**，渲染成静态图，全屏可缩放；围栏闭合后才渲染（parser 需 `closed` 标志） | M |
+| HTML 预览 | 纯前端；**默认关**（外观设置） | ```html 围栏 + 原始 HTML 块，iframe `allow-scripts` + 严格 CSP + 清洗 | 代码块。方案：可选设置默认关，只做闭合的 html 围栏，WebKit 禁 JS + 屏蔽网络，内联快照 + 全屏 | M |
+| json-render | 纯前端；```spec 围栏的 JSONL（RFC 6902 patch 建 `{root, elements, state}`），43 个组件（shadcn + 7 种图表）；**无开关**——用户给 agent 开了 `ui-render` skill 就会输出 | — | 原样显示 JSONL。方案：**原生 SwiftUI 解释器**（Swift Charts），分期：0 = 折叠卡片；1 = 展示组件 + 图表 + 只读 state；2 = 表单/动作 | L |
+
+### 4.2 做法与顺序
+
+- **第一波（并行写代码）**：① fork + 消息导航；② `/` 菜单 + @ 面板（文件 + agent）；③ 空闲连接观察者 + live runs + `prompt_suggestion`；④ Markdown 图片 + 任务复选框 + 围栏 `closed` 标志 + json-render 第 0 期（折叠卡）。
+- **第二波**：Mermaid、HTML 预览、json-render 第 1 期（依赖 ④ 的 `closed` 标志与图片加载器）。
+- **刻意不做 / 推后**：PlantUML；@ 面板的 assistant/session/commit tab 与 tab 偏好设置页；导航器里的内联 diff、子 agent 行、视口当前消息高亮；live runs 的委派行跳转子会话与「等待中」琥珀点；json-render 第 2 期（表单、动作、浮层）；`ui-render` skill 的设置开关。
 
 ## 5. 未验证 / 待定
 
