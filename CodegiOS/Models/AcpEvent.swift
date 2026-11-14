@@ -126,6 +126,8 @@ enum AcpEvent: Hashable, Sendable, Decodable {
     /// Whether the agent has `session/fork` — emitted once its `initialize`
     /// has run (until then the snapshot's flag reads false).
     case forkSupported(supported: Bool)
+    /// The agent's slash commands, re-advertised. Replaces the whole list.
+    case availableCommands([AvailableCommandInfo])
 
     private enum CodingKeys: String, CodingKey {
         case type, text, title, kind, status, content, meta
@@ -137,6 +139,7 @@ enum AcpEvent: Hashable, Sendable, Decodable {
         case attempt, maxRetries, retryDelayMs, errorStatus, record, notice, failures
         case item, ids, deliveredAt
         case supported
+        case commands
     }
 
     init(from decoder: Decoder) throws {
@@ -289,6 +292,14 @@ enum AcpEvent: Hashable, Sendable, Decodable {
                 return
             }
             self = .forkSupported(supported: supported)
+        case "available_commands":
+            // A list that does not decode is not an empty one: replacing the
+            // menu with nothing would be worse than ignoring the update.
+            guard let commands = (try? c.decodeIfPresent([AvailableCommandInfo].self, forKey: .commands)) ?? nil else {
+                self = .unknown(type: type)
+                return
+            }
+            self = .availableCommands(commands)
         default:
             self = AcpEvent.decodeRunsEvent(type: type, from: decoder) ?? .unknown(type: type)
         }
@@ -357,12 +368,16 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     /// so only an initialized connection's value is an answer (see
     /// ``ForkSupport``); nil from a server that doesn't send it.
     let forkSupported: Bool?
+    /// The agent's slash commands as the connection holds them. Nil when the
+    /// field is absent or did not decode — never read as "no commands".
+    let availableCommands: [AvailableCommandInfo]?
 
     private enum CodingKeys: String, CodingKey {
         case connectionId, conversationId, folderId, status, externalId, eventSeq
         case liveMessage, activeToolCalls, pendingPermission, pendingQuestion, pendingPlanApproval
         case lastError, sessionFailures, feedback, feedbackToolAvailable, nativeSteeringAvailable
         case forkSupported
+        case availableCommands
     }
 
     init(from decoder: Decoder) throws {
@@ -385,6 +400,7 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         nativeSteeringAvailable = ((try? c.decodeIfPresent(Bool.self, forKey: .nativeSteeringAvailable)) ?? nil) ?? false
         runs = ConnectionRunsSnapshot.lenient(from: decoder)
         forkSupported = (try? c.decodeIfPresent(Bool.self, forKey: .forkSupported)) ?? nil
+        availableCommands = (try? c.decodeIfPresent([AvailableCommandInfo].self, forKey: .availableCommands)) ?? nil
     }
 }
 

@@ -437,6 +437,17 @@
         }
       }
     },
+    "Loading commands…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载命令…"
+          }
+        }
+      }
+    },
     "Loading earlier messages…" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -444,6 +455,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在加载更早的消息…"
+          }
+        }
+      }
+    },
+    "More results — keep typing to filter" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还有更多结果，继续输入以筛选"
           }
         }
       }

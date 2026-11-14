@@ -57,8 +57,8 @@ final class ComposeInsertModel {
 
     private(set) var phases: [Source: Phase] = [:]
     private var tasks: [Source: Task<Void, Never>] = [:]
-    /// Memoized (on success) global built-in expert ids, used for both the
-    /// replace-prefix known set and the slash-command filter.
+    /// Memoized (on success) global built-in expert ids, the replace-prefix
+    /// known set.
     private var builtInIDs: Set<String>?
 
     private let client: CodegClient
@@ -74,16 +74,13 @@ final class ComposeInsertModel {
         switch source {
         case .quickMessages: return quickMessages.isEmpty
         case .experts: return experts.isEmpty
-        case .slashCommands: return visibleCommands.isEmpty
+        case .slashCommands: return commands.isEmpty
         }
     }
 
-    /// Slash commands with expert-backed commands removed (web parity:
-    /// `availableCommands.filter(cmd => !expertIdSet.has(cmd.name))`). Reactive —
-    /// re-filters when `knownExpertIDs` updates.
-    var visibleCommands: [AvailableCommandInfo] {
-        commands.filter { !knownExpertIDs.contains($0.name) }
-    }
+    /// The agent's commands verbatim — 0.44 lists expert-backed commands with
+    /// the rest (its `expertIdSet` filter is gone), as the inline `/` menu does.
+    var visibleCommands: [AvailableCommandInfo] { commands }
 
     // MARK: - Load
 
@@ -117,14 +114,8 @@ final class ComposeInsertModel {
                     }
                     self.knownExpertIDs = builtIn.union(list.map { $0.metadata.id })
                 case .slashCommands:
-                    // Resolve the known-expert set too, so the filter (below /
-                    // `visibleCommands`) can hide expert-backed commands even when
-                    // Expert Skills was never opened (web parity).
-                    async let cmds = (self.loadCommandsAction?() ?? [])
-                    let known = await self.builtInKnownIDs()
-                    let list = try await cmds
+                    let list = try await (self.loadCommandsAction?() ?? [])
                     if Task.isCancelled { return }
-                    self.knownExpertIDs.formUnion(known)
                     self.commands = list
                 }
                 if Task.isCancelled { return }
@@ -170,11 +161,13 @@ final class ComposeInsertModel {
         return draft + (needsSpace ? " " : "") + content
     }
 
-    /// Append a slash command (`/<name> `) to the draft, mirroring the web's
-    /// `handleSlashPopoverSelect` spacing (a leading space when needed).
+    /// Append a slash command's invocation token and a space to the draft,
+    /// mirroring the web's `insertSlashCommand` spacing (a leading space when
+    /// needed). The token is `/<name>` — except a Codex skill-as-command named
+    /// `$<skill>`, which runs as written (`/$deploy` is rejected).
     func draftAppendingCommand(_ name: String, to draft: String) -> String {
         let needsSpace = !draft.isEmpty && !(draft.last?.isWhitespace ?? false)
-        return draft + (needsSpace ? " " : "") + "/\(name) "
+        return draft + (needsSpace ? " " : "") + ComposerInvocations.commandInvocationToken(name) + " "
     }
 
     /// Prepend an expert mention (`<prefix><id> `) to the draft, replacing an

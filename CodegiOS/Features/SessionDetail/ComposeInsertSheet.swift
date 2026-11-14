@@ -82,9 +82,9 @@ struct ComposeInsertSheet: View {
                 let items = filteredCommands
                 if items.isEmpty { noMatchesRow } else {
                     ForEach(items) { item in
-                        row(title: "/\(item.name)",
+                        row(title: ComposerInvocations.commandInvocationToken(item.name),
                             subtitle: item.description,
-                            token: item.inputHint,
+                            token: ComposerInvocations.commandInputHint(item),
                             monospacedTitle: true) {
                             onInsert { model.draftAppendingCommand(item.name, to: $0) }
                             dismiss()
@@ -206,18 +206,10 @@ struct ComposeInsertSheet: View {
         }
     }
 
-    /// Name matches first, then description-only matches — mirroring the web's
-    /// `filteredSlashDropdownCommands`. Operates over `visibleCommands` (expert-
-    /// backed commands already removed).
+    /// Ranked like the web add-menu's `filteredSlashCommands`: the shared
+    /// `rankByTextMatch` over the name, the description as a fallback that
+    /// always ranks below any name hit.
     private var filteredCommands: [AvailableCommandInfo] {
-        let base = model.visibleCommands
-        guard !query.isEmpty else { return base }
-        var nameMatches: [AvailableCommandInfo] = []
-        var descOnly: [AvailableCommandInfo] = []
-        for cmd in base {
-            if cmd.name.lowercased().contains(query) { nameMatches.append(cmd) }
-            else if cmd.description.lowercased().contains(query) { descOnly.append(cmd) }
-        }
-        return nameMatches + descOnly
+        FuzzyTextMatch.rank(search, model.visibleCommands, primary: { $0.name }, secondary: { $0.description })
     }
 }

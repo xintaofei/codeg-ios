@@ -44,10 +44,18 @@ struct ComposeBar: View {
     /// placeholder; "Use" (or a bare hardware Tab) fills it in — never sends.
     var suggestion: String? = nil
     var onUseSuggestion: () -> Void = {}
+    /// Backs the inline `/`·`$` command menu shown above the field. Nil turns
+    /// it off.
+    var suggestions: ComposerSuggestionModel? = nil
 
     @FocusState private var focused: Bool
     /// Bumped when the suggestion is taken, for its selection tick.
     @State private var suggestionHaptic = 0
+    /// The field's caret / selection, read for the inline triggers and set to
+    /// put the caret after an inserted suggestion.
+    @State private var selection: TextSelection?
+    /// Bumped on each suggestion pick, for a selection tick.
+    @State private var pickTick = 0
     /// Bumped on each send tap to fire a light "sent" impact immediately (rather
     /// than waiting for the turn to start streaming).
     @State private var sendHaptic = 0
@@ -88,11 +96,23 @@ struct ComposeBar: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
+            if let suggestions, let panel = suggestions.panel {
+                ComposerSuggestionPanel(
+                    state: panel,
+                    onPick: { pickSuggestion($0, from: suggestions) }
+                )
+            }
+
             GlassEffectContainer(spacing: 8) {
                 HStack(alignment: .bottom, spacing: 8) {
                     addButton
-                    TextField("Message", text: $text,
+                    TextField("Message", text: $text, selection: $selection,
                               prompt: offeredSuggestion.map { Text(verbatim: $0) }, axis: .vertical)
+                        // The inline menu's keys first: it ignores them while
+                        // closed, which leaves Tab to the predicted prompt below.
+                        .onKeyPress(keys: [.upArrow, .downArrow, .return, .tab, .escape]) { press in
+                            handleSuggestionKey(press)
+                        }
                         .textInputAutocapitalization(.sentences)
                         // A suggestion is a placeholder, not a draft: two lines at most.
                         .lineLimit(offeredSuggestion == nil ? 1...6 : 1...2)
@@ -168,6 +188,12 @@ struct ComposeBar: View {
         .animation(.snappy(duration: 0.26), value: focused)
         .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: sendHaptic)
         .sensoryFeedback(.selection, trigger: suggestionHaptic)
+        // The inline `/`·`$` triggers read the text before the caret.
+        .onChange(of: text) { _, _ in refreshSuggestions() }
+        .onChange(of: selection) { _, _ in refreshSuggestions() }
+        .onChange(of: focused) { _, _ in refreshSuggestions() }
+        .animation(Theme.Motion.expand, value: suggestions?.panel != nil)
+        .sensoryFeedback(.selection, trigger: pickTick)
     }
 
     /// "Use" inside the field, while the predicted prompt is its placeholder.
@@ -191,6 +217,42 @@ struct ComposeBar: View {
         guard offeredSuggestion != nil else { return }
         suggestionHaptic &+= 1
         onUseSuggestion()
+    }
+
+    // MARK: - Inline suggestions
+
+    /// Report text + caret to the suggestion model.
+    private func refreshSuggestions() {
+        suggestions?.update(text: text, caretUTF16: ComposerCaret.offset(of: selection, in: text), focused: focused)
+    }
+
+    private func pickSuggestion(_ row: ComposerSuggestionRow, from model: ComposerSuggestionModel) {
+        guard let result = model.pick(row, in: text) else { return }
+        replaceText(result.text, caretUTF16: result.caret)
+    }
+
+    private func handleSuggestionKey(_ press: KeyPress) -> KeyPress.Result {
+        guard let suggestions else { return .ignored }
+        switch suggestions.handleKey(press.key, shift: press.modifiers.contains(.shift), text: text) {
+        case .ignored:
+            return .ignored
+        case .handled:
+            return .handled
+        case .replace(let newText, let caret):
+            replaceText(newText, caretUTF16: caret)
+            return .handled
+        }
+    }
+
+    /// Swap in the edited text, then put the caret after the insertion on the
+    /// next runloop — set together, the field would apply the text change after
+    /// the selection and drop it.
+    private func replaceText(_ newText: String, caretUTF16: Int) {
+        pickTick &+= 1
+        text = newText
+        DispatchQueue.main.async {
+            selection = TextSelection(insertionPoint: ComposerCaret.index(utf16: caretUTF16, in: text))
+        }
     }
 
     // MARK: - Buttons

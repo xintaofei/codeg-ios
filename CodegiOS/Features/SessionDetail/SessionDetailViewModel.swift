@@ -49,6 +49,8 @@ final class SessionDetailViewModel {
     /// Which replies are folded in the activity timeline. A send folds every
     /// reply above it; see ``ReplyFoldStore``.
     let replyFolds = ReplyFoldStore()
+    /// The composer's inline `/`·`$` command and skill menu.
+    let composer: ComposerSuggestionModel
 
     // MARK: - Observable state
 
@@ -529,6 +531,7 @@ final class SessionDetailViewModel {
         // is initialized.
         self.agentOptions = AgentOptionsModel(client: client)
         self.insertModel = ComposeInsertModel(client: client)
+        self.composer = ComposerSuggestionModel(client: client)
         // Apply actions resolve (and cache) the same chat connection the send
         // flow uses, so a mode/config change targets the agent the next prompt
         // will reuse — and never spawns a second one.
@@ -543,6 +546,7 @@ final class SessionDetailViewModel {
             guard let self, let id = self.conversationID else { return nil }
             let snapshot = try await self.client.sessionSnapshot(conversationId: id)
             self.adoptPromptCapabilities(from: snapshot)
+            self.composer.adoptSnapshotCommands(snapshot?.availableCommands)
             return snapshot
         }
 
@@ -561,12 +565,12 @@ final class SessionDetailViewModel {
             guard let self else { return [] }
             return try await self.client.builtInExperts()
         }
+        // The sheet lists exactly what the inline `/` menu does.
         insertModel.loadCommandsAction = { [weak self] in
-            guard let self, let id = self.conversationID else { return [] }
-            let snapshot = try await self.client.sessionSnapshot(conversationId: id)
-            self.adoptPromptCapabilities(from: snapshot)
-            return snapshot?.availableCommands ?? []
+            guard let self else { return [] }
+            return await self.composer.loadCommands()
         }
+        wireComposer()
 
         wireConnectionRuns()
     }
@@ -915,6 +919,8 @@ final class SessionDetailViewModel {
                 // The agent and folder are only known now, and they are what
                 // decides whether pi has anything to ask about.
                 refreshPiTrust()
+                // …and what the composer's `/` menu lists.
+                composer.screenDidLoad()
                 // Initial load lands at the latest message — but not when this
                 // load was superseded; the transcript belongs to something else.
                 if !stale { requestStickToBottom() }
@@ -1144,6 +1150,7 @@ final class SessionDetailViewModel {
         }
         if let agent = selectedAgent { insertModel.agentType = agent }
         refreshPiTrust()
+        composer.screenDidLoad()
     }
 
     // MARK: - Draft selection (new session only)
@@ -2271,6 +2278,7 @@ final class SessionDetailViewModel {
                     hydrateFeedback(from: snap, connection: conn, notes: readyContinuation == nil)
                     runs.hydrate(snap, connection: conn)
                     adoptForkSupport(status: snap.status, supported: snap.forkSupported)
+                    composer.adoptSnapshotCommands(snap.availableCommands)
                 }
                 // A reconnect answered with a snapshot rather than a replay —
                 // first attach after a drop with no cursor, or a gap too large
@@ -2475,6 +2483,7 @@ final class SessionDetailViewModel {
                 hydrateFeedback(from: snap, connection: conn, notes: true)
                 runs.hydrate(snap, connection: conn)
                 adoptForkSupport(status: snap.status, supported: snap.forkSupported)
+                composer.adoptSnapshotCommands(snap.availableCommands)
                 if let rebuilt = buildLiveTurn(from: snap) {
                     live = rebuilt
                     liveTurn = rebuilt
@@ -2881,6 +2890,9 @@ final class SessionDetailViewModel {
 
         case .feedbackConsumed(let ids, let deliveredAt):
             feedbackNotes.consumed(ids: ids, at: deliveredAt)
+
+        case .availableCommands(let commands):
+            composer.adoptLiveCommands(commands)
 
         case .sessionStarted, .conversationStatusChanged, .userPromptSent, .unknown:
             break
@@ -3703,6 +3715,7 @@ final class SessionDetailViewModel {
         _ = nextFetchGeneration()
         agentOptions.teardown()
         insertModel.teardown()
+        composer.teardown()
         closeStream()
     }
 
@@ -4283,5 +4296,46 @@ extension SessionDetailViewModel {
             }
             expected = OutlineAnchor(now)
         }
+    }
+}
+
+// MARK: - Composer suggestions (inline `/` menu)
+
+extension SessionDetailViewModel {
+    /// Point the composer's suggestion model at this screen: whose agent and
+    /// folder it lists for, and where the agent's commands can be read.
+    fileprivate func wireComposer() {
+        composer.context = { [weak self] in
+            guard let self else { return ComposerSuggestionModel.Context(agent: .claudeCode, workspaceRoot: nil) }
+            return ComposerSuggestionModel.Context(agent: self.agentTypeForUI, workspaceRoot: self.folder?.path)
+        }
+        composer.fetchCommands = { [weak self] allowProbe in
+            await self?.fetchComposerCommands(allowProbe: allowProbe)
+        }
+        // The options sheet's probe also lists the commands; worth showing
+        // while nothing else has.
+        composer.fallbackCommands = { [weak self] in
+            guard let self, self.agentOptions.agentType == self.agentTypeForUI else { return [] }
+            return self.agentOptions.snapshot?.availableCommands ?? []
+        }
+    }
+
+    /// The agent's commands, cheapest source first: the live connection this
+    /// screen holds (works before it is bound to the conversation), the
+    /// conversation's bound one, and — only when `allowProbe` — a throwaway
+    /// probe agent (`acp_describe_agent_options`), which is how a draft or an
+    /// idle session with no live connection gets a list at all.
+    fileprivate func fetchComposerCommands(allowProbe: Bool) async -> [AvailableCommandInfo]? {
+        if let conn = connectionID, let snapshot = try? await client.connectionSnapshot(connectionId: conn) {
+            adoptPromptCapabilities(from: snapshot)
+            if !snapshot.availableCommands.isEmpty { return snapshot.availableCommands }
+        }
+        if let id = conversationID, let snapshot = try? await client.sessionSnapshot(conversationId: id) {
+            adoptPromptCapabilities(from: snapshot)
+            if !snapshot.availableCommands.isEmpty { return snapshot.availableCommands }
+        }
+        guard allowProbe else { return nil }
+        let probe = try? await client.describeAgentOptions(agentType: agentTypeForUI, workingDir: folder?.path)
+        return probe?.availableCommands
     }
 }

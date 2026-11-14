@@ -115,17 +115,24 @@ struct ExpertMetadata: Decodable, Hashable, Sendable {
 // MARK: - Slash Commands
 
 /// A slash command the live agent advertises (`available_commands` in the live
-/// session snapshot → Rust `AvailableCommandInfo`). Selecting one inserts
-/// `/<name>` into the draft.
+/// session snapshot → Rust `AvailableCommandInfo`). Selecting one inserts its
+/// invocation token (``ComposerInvocations/commandInvocationToken(_:)``) —
+/// `/<name>`, or the bare `$<skill>` Codex names its skills-as-commands.
 struct AvailableCommandInfo: Decodable, Hashable, Sendable, Identifiable {
     let name: String
     let description: String
     let inputHint: String?
+    /// The agent marks the command as a skill (claude-agent-acp, JetBrains
+    /// AIR). Absent on the wire when false.
+    var skill: Bool = false
+    /// The skill's `SKILL.md`, when the agent sent it. Only set with `skill`.
+    var skillPath: String? = nil
 
     var id: String { name }
 
     private enum CodingKeys: String, CodingKey {
         case name, description, inputHint
+        case skill, skillPath
     }
 
     init(from decoder: Decoder) throws {
@@ -133,9 +140,12 @@ struct AvailableCommandInfo: Decodable, Hashable, Sendable, Identifiable {
         name = try c.decode(String.self, forKey: .name)
         description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
         inputHint = try c.decodeIfPresent(String.self, forKey: .inputHint)
+        skill = ((try? c.decodeIfPresent(Bool.self, forKey: .skill)) ?? nil) ?? false
+        skillPath = (try? c.decodeIfPresent(String.self, forKey: .skillPath)) ?? nil
     }
 
-    init(name: String, description: String, inputHint: String?) {
+    init(name: String, description: String, inputHint: String?, skill: Bool = false, skillPath: String? = nil) {
         self.name = name; self.description = description; self.inputHint = inputHint
+        self.skill = skill; self.skillPath = skillPath
     }
 }

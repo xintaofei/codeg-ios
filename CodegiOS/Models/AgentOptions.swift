@@ -19,9 +19,14 @@ struct AgentOptionsSnapshot: Hashable, Sendable, Decodable {
     /// What the probe's session said it accepts in a prompt. Nil when the agent
     /// advertised nothing within the probe's window.
     let promptCapabilities: PromptCapabilities?
+    /// The slash commands the probe's session advertised (empty when it named
+    /// none within the probe's window) — how a draft, which has no live
+    /// session, still gets a `/` menu.
+    let availableCommands: [AvailableCommandInfo]
 
     private enum CodingKeys: String, CodingKey {
         case modes, configOptions, promptCapabilities
+        case availableCommands
     }
 
     init(from decoder: Decoder) throws {
@@ -31,13 +36,18 @@ struct AgentOptionsSnapshot: Hashable, Sendable, Decodable {
         // server that omits it can't fail the whole decode.
         configOptions = try c.decodeIfPresent([SessionConfigOption].self, forKey: .configOptions) ?? []
         promptCapabilities = try c.decodeIfPresent(PromptCapabilities.self, forKey: .promptCapabilities)
+        // `#[serde(default)]` server-side; a shape surprise must not take the
+        // modes and config down with it.
+        availableCommands = ((try? c.decodeIfPresent([AvailableCommandInfo].self, forKey: .availableCommands)) ?? nil) ?? []
     }
 
     /// Direct initializer for previews / tests.
-    init(modes: SessionModeState?, configOptions: [SessionConfigOption], promptCapabilities: PromptCapabilities? = nil) {
+    init(modes: SessionModeState?, configOptions: [SessionConfigOption], promptCapabilities: PromptCapabilities? = nil,
+         availableCommands: [AvailableCommandInfo] = []) {
         self.modes = modes
         self.configOptions = configOptions
         self.promptCapabilities = promptCapabilities
+        self.availableCommands = availableCommands
     }
 
     /// True when there is nothing the user can pick — used to show a

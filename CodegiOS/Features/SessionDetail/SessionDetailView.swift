@@ -392,7 +392,8 @@ struct SessionDetailView: View {
                     isSteering: model.isSteering,
                     onSteer: { model.steerDraft() },
                     suggestion: model.promptSuggestionOffer,
-                    onUseSuggestion: { model.usePromptSuggestion() }
+                    onUseSuggestion: { model.usePromptSuggestion() },
+                    suggestions: model.composer
                 )
                 // A fork re-points the session under the composer.
                 .disabled(model.isForking)
