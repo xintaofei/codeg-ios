@@ -292,8 +292,13 @@ enum TranscriptTimeline {
         // will turn out to be the answer is not known yet.
         let model = BuildActivity.build(parts, isStreaming: !completed, keepAnswer: !completed)
         let bodyCount = parts.count - model.answer.count
-        // Nothing but an empty answer: no header, just what there is.
-        if completed, bodyCount == 0, !BuildActivity.hasVisibleAnswer(model.answer) {
+        // Nothing but an empty answer — or a settled reply that did no steps
+        // and has no time to report — gets no header, just what there is. (The
+        // web keeps a bare `Reply` capsule there so the slot never blinks while
+        // a reply settles; on a phone a capsule saying nothing is a wasted row.
+        // A live reply keeps its `Working` header for that continuity.)
+        if completed, bodyCount == 0,
+           !BuildActivity.hasVisibleAnswer(model.answer) || (durationMs ?? 0) <= 0 {
             return parts.enumerated().map { idx, part in node(for: part, ownerID: ownerID, index: idx, agent: agent) }
         }
         // Folding trades the process away to keep the answer, so a reply with no
