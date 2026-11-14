@@ -170,7 +170,7 @@ struct BuildActivityTests {
     private func text(_ text: ActivityText) -> String {
         switch text {
         case .settled(let s): return s
-        case .live(let run): return run.fullText
+        case .live(let run, _): return run.fullText
         }
     }
 

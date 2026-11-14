@@ -192,6 +192,20 @@ struct ToolCallCard: View {
         }
     }
 
+    private var bodyContent: some View {
+        ToolCallBody(vm: vm, showsTranscript: showsTranscript)
+    }
+}
+
+/// A tool call's expanded body — its diff, or its input, sub-agent section and
+/// output — shared by `ToolCallCard` and the activity timeline's tool rows.
+struct ToolCallBody: View {
+    let vm: ToolCallVM
+    /// Show the live sub-agent transcript (only while the call is running).
+    var showsTranscript: Bool
+
+    var body: some View { bodyContent }
+
     @ViewBuilder
     private var bodyContent: some View {
         if let files = vm.diffFiles {

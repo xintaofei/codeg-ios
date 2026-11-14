@@ -77,7 +77,10 @@ struct TimelineNode: Identifiable {
         /// The agent's reasoning between its calls, titled and folded.
         case thought(ActivityText, streaming: Bool)
         /// A folded run of explore / command calls.
-        case activityGroup(kind: ActivityGroupKind, steps: [ActivityToolStep], status: StepStatus)
+        case activityGroup(kind: ActivityGroupKind, steps: [ActivityToolStep], status: StepStatus, recoveredKeys: Set<String>)
+        /// One plain tool call as an activity row. `recovered`: it failed and a
+        /// later step of the reply redid it successfully.
+        case activityTool(ActivityToolStep, recovered: Bool)
     }
 
     /// What a reply's header (and foot) say.
@@ -120,9 +123,12 @@ struct TimelineNode: Identifiable {
         case .replyHeader: return .assistant(agent)
         case .replyFoot: return .footer
         case .thought: return .reasoning
-        case .activityGroup(_, let steps, let status):
-            return .toolGroup(error: status.isFailure || steps.contains { $0.tool.status.isFailure },
+        case .activityGroup(_, let steps, let status, let recovered):
+            return .toolGroup(error: steps.contains { $0.tool.status.isFailure && !recovered.contains($0.key) },
                               streaming: status.isLive)
+        case .activityTool(let step, let recovered):
+            return .tool(icon: ActivityRowStyle.icon(step.tool),
+                         state: ActivityRowStyle.markerState(step.tool.status, recovered: recovered))
         }
     }
 }
@@ -306,8 +312,9 @@ enum TranscriptTimeline {
 
         var out: [TimelineNode] = [member(
             TimelineNode(id: "\(ownerID)#header", content: .replyHeader(header), agent: agent), .header)]
+        let recovered = model.summary.recoveredKeys
         for item in model.items {
-            out.append(member(node(for: item, ownerID: ownerID, agent: agent),
+            out.append(member(node(for: item, ownerID: ownerID, agent: agent, recovered: recovered),
                               canOutliveReply(item) ? .pinned : .body))
         }
         if foldable {
@@ -336,24 +343,31 @@ enum TranscriptTimeline {
         }
     }
 
-    private static func node(for item: ActivityItem, ownerID: String, agent: AgentType) -> TimelineNode {
+    private static func node(for item: ActivityItem, ownerID: String, agent: AgentType,
+                             recovered: Set<String>) -> TimelineNode {
         switch item {
         case .group(_, let kind, let steps, let status):
             // Keyed like the older tool group (its first call), so the row keeps
             // its identity while the run grows and across the live → history
             // hand-over.
             let gid = steps.first.map { "toolgroup-\($0.call.id)" } ?? "\(ownerID)#group"
-            return TimelineNode(id: gid, content: .activityGroup(kind: kind, steps: steps, status: status), agent: agent)
+            return TimelineNode(id: gid, content: .activityGroup(
+                kind: kind, steps: steps, status: status,
+                recoveredKeys: recovered.intersection(steps.map(\.key))), agent: agent)
         case .step(let step):
-            return node(for: step, ownerID: ownerID, agent: agent)
+            return node(for: step, ownerID: ownerID, agent: agent, recovered: recovered)
         }
     }
 
-    private static func node(for step: ActivityStep, ownerID: String, agent: AgentType) -> TimelineNode {
+    private static func node(for step: ActivityStep, ownerID: String, agent: AgentType,
+                             recovered: Set<String>) -> TimelineNode {
         let base = "\(ownerID)#\(BuildActivity.rowIdentity(step.key))"
         switch step {
         case .tool(let tool):
-            return TimelineNode(id: "tool-\(tool.call.id)", content: .tool(tool.call), agent: agent)
+            let content: TimelineNode.Content = ActivityRowStyle.usesRow(tool)
+                ? .activityTool(tool, recovered: recovered.contains(tool.key))
+                : .tool(tool.call)
+            return TimelineNode(id: "tool-\(tool.call.id)", content: content, agent: agent)
         case .thought(_, let text, let streaming):
             if case .live(let run, _) = text {
                 return TimelineNode(id: "k-\(run.id)", content: .thought(text, streaming: streaming), agent: agent)

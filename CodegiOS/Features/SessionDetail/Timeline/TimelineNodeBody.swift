@@ -66,8 +66,10 @@ struct NodeBody: View {
             ReplyFootView(header: header, currentRound: node.currentRound)
         case .thought(let text, let streaming):
             ThoughtNodeBody(text: text, streaming: streaming)
-        case .activityGroup(let kind, let steps, let status):
-            ActivityGroupBody(kind: kind, steps: steps, status: status)
+        case .activityGroup(let kind, let steps, let status, let recovered):
+            ActivityGroupRow(kind: kind, steps: steps, status: status, recoveredKeys: recovered)
+        case .activityTool(let step, let recovered):
+            ActivityToolRow(step: step, recovered: recovered)
         }
     }
 }

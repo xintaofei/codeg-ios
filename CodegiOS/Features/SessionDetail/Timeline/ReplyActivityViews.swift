@@ -133,8 +133,10 @@ struct ReplyFootView: View {
     }
 }
 
-/// The agent's reasoning between its calls: named by what it is about,
-/// folded by default.
+/// The agent's reasoning between its calls (web `ThoughtRow`): one line —
+/// `Thought  Checking the auth flow ›` — named by what it is about, opening onto
+/// the full text. Folded by default; it is the agent's voice between its calls,
+/// not something the reader has to see.
 struct ThoughtNodeBody: View {
     let text: ActivityText
     let streaming: Bool
@@ -142,7 +144,7 @@ struct ThoughtNodeBody: View {
     var body: some View {
         switch text {
         case .settled(let s):
-            ReasoningBlock(text: s, streaming: false, titled: true)
+            ThoughtRow(text: s, streaming: false)
         case .live(let run, _):
             LiveThought(run: run, streaming: streaming)
         }
@@ -152,18 +154,50 @@ struct ThoughtNodeBody: View {
     private struct LiveThought: View {
         @Bindable var run: LiveTextRun
         let streaming: Bool
-        var body: some View { ReasoningBlock(text: run.text, streaming: streaming, titled: true) }
+        var body: some View { ThoughtRow(text: run.text, streaming: streaming) }
     }
 }
 
-/// A folded run of explore / command calls. Drawn by the existing group card
-/// for now; the run itself is the activity model's (same family only).
-struct ActivityGroupBody: View {
-    let kind: ActivityGroupKind
-    let steps: [ActivityToolStep]
-    let status: StepStatus
+private struct ThoughtRow: View {
+    let text: String
+    let streaming: Bool
+
+    @State private var expanded = false
 
     var body: some View {
-        ToolGroupCard(items: steps.map(\.call), streaming: status.isLive)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(streaming
+                     ? String(localized: "activity.thinking", defaultValue: "Thinking", comment: "Thought row: a thought still being written")
+                     : String(localized: "Thought"))
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Theme.textSecondary)
+                if let title = ThoughtTitle.thoughtTitle(text, streaming: streaming) {
+                    Text(verbatim: title)
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Theme.textTertiary)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(Theme.Motion.expand) { expanded.toggle() } }
+
+            if expanded {
+                Group {
+                    if streaming {
+                        MarkdownText(raw: text, color: Theme.textSecondary, plain: true)
+                    } else {
+                        MarkdownContent(raw: text)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
     }
 }

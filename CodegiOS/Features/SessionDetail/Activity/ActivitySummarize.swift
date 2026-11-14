@@ -92,7 +92,11 @@ enum ActivitySummarize {
                 case .compaction, .todo, .delegationStatus, .shellSession:
                     break   // continuations and bookkeeping, not steps of their own
                 default:
-                    summary.steps += 1
+                    // An orphan result (iOS makes it a call named "result" with
+                    // no input) is the web's `tool-result` part, which is no step.
+                    if !(toolStep.call.rawName == "result" && toolStep.call.input == nil) {
+                        summary.steps += 1
+                    }
                 }
 
                 switch tool.kind {
