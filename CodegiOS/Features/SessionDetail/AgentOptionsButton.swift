@@ -47,10 +47,16 @@ struct SessionBranchConfig {
     var onOpenSession: ((Int) -> Void)? = nil
 }
 
-/// The circular agent avatar in the session detail's navigation bar (trailing).
-/// Shows the conversation's (or draft's) agent glyph; tapping opens a sheet that
-/// auto-loads the agent's Mode + config selectors. For a new-session draft it
-/// additionally hosts the Agent + Folder pickers (`newSession`).
+/// The agent chip in the session detail's navigation bar (trailing): the agent's
+/// glyph followed by its current settings at a glance — "Opus 5.5 / High /
+/// Plan", codeg 0.44's merged settings chip (`session-settings-picker.tsx`).
+/// Tapping opens a sheet that auto-loads the agent's Mode + config selectors; for
+/// a new-session draft it additionally hosts the Agent + Folder pickers
+/// (`newSession`).
+///
+/// The summary is read with ``AgentOptionsModel/refreshSummary(agentType:workingDir:)``,
+/// which never spawns a probe agent: until a catalog exists (a live session, or
+/// the sheet having been opened once) the chip is just the glyph, as before.
 struct AgentOptionsButton: View {
     let agentType: AgentType
     let workingDir: String?
@@ -62,20 +68,57 @@ struct AgentOptionsButton: View {
     var branch: SessionBranchConfig? = nil
 
     @State private var showSheet = false
+    @Environment(\.locale) private var locale
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// Re-read the summary when the agent or folder changes (draft pickers) and
+    /// when a turn settles — the agent may have moved its own mode (plan exit).
+    private struct SummaryTrigger: Hashable {
+        let agentType: AgentType
+        let workingDir: String?
+        let isBusy: Bool
+    }
+
+    /// The settings to summarize — only while the model holds THIS agent's
+    /// catalog, so a draft that just switched agents shows the bare glyph rather
+    /// than the previous agent's values.
+    private var settings: [SessionSetting] {
+        guard options.agentType == agentType else { return [] }
+        return options.sessionSettings(modeTitle: localized("Mode"))
+    }
+
+    /// The summary's width cap. A compact-width navigation bar shares its row
+    /// with the back button, the title and the actions menu, so the chip stays
+    /// small there and long values truncate. (The web drops the values in a
+    /// composer narrower than 16rem; a phone always has room for a short one.)
+    private var summaryMaxWidth: CGFloat { sizeClass == .regular ? 240 : 112 }
 
     var body: some View {
-        // iOS 26 already wraps a toolbar button in its own Liquid Glass circle, so
+        let settings = self.settings
+        let parts = SessionSettings.summaryParts(settings)
+        // iOS 26 already wraps a toolbar button in its own Liquid Glass shape, so
         // the bare brand glyph is all that's needed — `AgentAvatar`'s tinted disc +
-        // ring would sit *inside* that glass as a redundant second border. Render
-        // just the glyph and let the system glass be the single container, matching
-        // the back button's clean single-ring look.
+        // ring would sit *inside* that glass as a redundant second border. With
+        // values beside it the system glass simply becomes a capsule.
         Button { showSheet = true } label: {
-            AgentIcon(agent: agentType)
-                .frame(width: 22, height: 22)
-                .accessibilityHidden(true)
+            HStack(spacing: 6) {
+                AgentIcon(agent: agentType)
+                    .frame(width: 22, height: 22)
+                if !parts.isEmpty {
+                    SessionSettingsSummary(parts: parts)
+                        .frame(maxWidth: summaryMaxWidth, alignment: .leading)
+                }
+            }
+            .padding(.horizontal, parts.isEmpty ? 0 : 4)
+            .accessibilityElement(children: .ignore)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(newSession == nil ? "Agent settings" : "Choose agent, folder, and options")
+        .accessibilityLabel(newSession == nil ? Text("Agent settings") : Text("Choose agent, folder, and options"))
+        // Every setting, including the ones the visible label leaves out (a
+        // `default` value, a switch that is off).
+        .accessibilityValue(Text(verbatim: SessionSettings.accessibilityValue(
+            settings, on: localized("On"), off: localized("Off")
+        )))
         .sheet(isPresented: $showSheet) {
             // `dismissSheet` lets the branch picker close the WHOLE sheet (not just
             // pop itself) before navigating to a worktree session — a `.sheet`
@@ -90,6 +133,52 @@ struct AgentOptionsButton: View {
         .onChange(of: showSheet) { _, shown in
             if shown { options.prepare(agentType: agentType, workingDir: workingDir) }
         }
+        .task(id: SummaryTrigger(agentType: agentType, workingDir: workingDir, isBusy: isBusy)) {
+            // The sheet runs its own (fuller) load; mid-turn the values are about
+            // to move anyway.
+            guard !showSheet, !isBusy else { return }
+            options.refreshSummary(agentType: agentType, workingDir: workingDir)
+        }
+    }
+
+    /// A catalog string in the in-app language (`String(localized:)` alone
+    /// follows the device language, not the Language setting).
+    private func localized(_ key: String.LocalizationValue) -> String {
+        var resource = LocalizedStringResource(key)
+        resource.locale = locale
+        return String(localized: resource)
+    }
+}
+
+/// The chip's values joined by "/", on one line. A short value
+/// (``SessionSettings/isShortSummary(_:)``) never truncates; longer ones share
+/// the squeeze, and whatever still doesn't fit is clipped at the trailing edge
+/// rather than drawn past it (the web's `overflow-hidden`).
+private struct SessionSettingsSummary: View {
+    let parts: [String]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
+                if index > 0 {
+                    Text(verbatim: "/")
+                        .foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 3)
+                        .fixedSize()
+                }
+                if SessionSettings.isShortSummary(part) {
+                    Text(verbatim: part).fixedSize()
+                } else {
+                    Text(verbatim: part)
+                        .truncationMode(.tail)
+                        .frame(minWidth: 36, alignment: .leading)
+                }
+            }
+        }
+        .lineLimit(1)
+        .font(.footnote.weight(.medium))
+        .foregroundStyle(Theme.textSecondary)
+        .clipped()
     }
 }
 
@@ -396,112 +485,108 @@ private struct AgentOptionsSheet: View {
         .hairlineBorder(Theme.Radius.md, color: Theme.danger.opacity(0.4))
     }
 
+
+    /// The agent's settings in the button's order — model, effort, mode, the
+    /// rest, then the switches (``SessionSettings/build(configOptions:modes:currentModeId:modeTitle:)``).
+    ///
+    /// The builder applies the same gates this sheet always had: only options
+    /// this build can draw (a kind newer than this app would otherwise suppress
+    /// the Mode section for nothing — the server strips only the kinds IT can't
+    /// decode), and the legacy Mode list only when the agent has no config
+    /// options (the web's `showModeSelector = hasModes && !hasConfigOptions`).
     @ViewBuilder
     private var selectors: some View {
-        // Only options this build has a control for. An option whose `kind` is
-        // newer than this app can't be drawn, and counting it would suppress the
-        // Mode section below for nothing (the server strips only the kinds IT
-        // can't decode, so a too-new kind still reaches us).
-        let configOptions = (options.snapshot?.configOptions ?? []).filter { $0.kind.isRenderable }
-        let modes = options.snapshot?.modes
-        let hasConfig = !configOptions.isEmpty
-        let hasModes = !(modes?.availableModes.isEmpty ?? true)
-
-        // Modes and config options are mutually exclusive surfaces, exactly as the
-        // web client gates them (`showModeSelector = hasModes && !hasConfigOptions`).
-        // When an agent exposes config options, its mode is represented there, so
-        // showing the Mode section too would duplicate it.
-        if hasModes, !hasConfig, let modes {
-            OptionSection(title: Text("Mode")) {
-                ForEach(Array(modes.availableModes.enumerated()), id: \.element.id) { index, mode in
-                    if index > 0 { rowSeparator }
-                    OptionRow(
-                        title: mode.name,
-                        subtitle: mode.description,
-                        isSelected: options.selectedModeId == mode.id,
-                        isApplying: options.applying.contains(.mode) && options.selectedModeId == mode.id,
-                        disabled: isBusy || options.applying.contains(.mode),
-                        action: { options.selectMode(mode.id) }
-                    )
-                }
-            }
-        }
-
-        ForEach(configOptions) { option in
-            configSection(option)
+        ForEach(options.sessionSettings(modeTitle: "Mode")) { setting in
+            settingSection(setting)
         }
     }
 
-    /// One config option. A boolean is one switch; a select renders grouped
-    /// options (group label + its options) when `groups` is non-empty, ELSE the
-    /// flat options — never both, matching the web's `groups.length > 0 ? groups
-    /// : options` ternary (the source of the duplicate rows when both were
-    /// rendered).
+    /// The section title: the localized "Mode" for the legacy list, the agent's
+    /// own (verbatim) name for a config option.
+    private func sectionTitle(_ setting: SessionSetting) -> Text {
+        setting.target == .mode ? Text("Mode") : Text(verbatim: setting.title)
+    }
+
+    /// One setting. A switch is one row; a searchable list (more than
+    /// ``SessionSettings/searchThreshold`` values) is a row that pushes a
+    /// searchable picker, so a long model list never renders inline; anything
+    /// shorter lists its values in place, under group headers when it has named
+    /// groups — never the groups AND the flat list (the web's `groups.length > 0
+    /// ? groups : options`, the source of duplicate rows when both were drawn).
+    ///
+    /// The web's segmented control for a short select is not ported: radio rows
+    /// with descriptions read better at phone width.
     @ViewBuilder
-    private func configSection(_ option: SessionConfigOption) -> some View {
-        let groups = option.kind.selectGroups ?? []
-        let flat = option.kind.selectOptions ?? []
-        if case .boolean(let advertised) = option.kind {
-            OptionSection(title: Text(verbatim: option.name)) {
-                booleanRow(option: option, advertised: advertised)
+    private func settingSection(_ setting: SessionSetting) -> some View {
+        switch setting.control {
+        case .toggle(let isOn, let onValue, let offValue):
+            OptionSection(title: sectionTitle(setting)) {
+                toggleRow(setting, isOn: isOn, onValue: onValue, offValue: offValue)
             }
-        } else if !groups.isEmpty {
-            OptionSection(title: Text(verbatim: option.name)) {
-                ForEach(Array(groups.enumerated()), id: \.element.id) { groupIndex, group in
+        case .choice(let choice) where choice.searchable:
+            OptionSection(title: sectionTitle(setting)) {
+                listLinkRow(setting, choice: choice)
+            }
+        case .choice(let choice):
+            OptionSection(title: sectionTitle(setting)) {
+                ForEach(Array(choice.groups.enumerated()), id: \.element.key) { groupIndex, group in
                     if groupIndex > 0 { rowSeparator }
-                    groupHeader(group.name)
-                    ForEach(Array(group.options.enumerated()), id: \.element.id) { index, choice in
+                    if let name = group.name { OptionGroupHeader(name: name) }
+                    ForEach(Array(group.options.enumerated()), id: \.element.id) { index, value in
                         if index > 0 { rowSeparator }
-                        optionRow(option: option, choice: choice)
+                        SettingValueRow(options: options, setting: setting, choice: choice, value: value, isBusy: isBusy)
                     }
                 }
             }
-        } else if !flat.isEmpty {
-            OptionSection(title: Text(verbatim: option.name)) {
-                ForEach(Array(flat.enumerated()), id: \.element.id) { index, choice in
-                    if index > 0 { rowSeparator }
-                    optionRow(option: option, choice: choice)
-                }
-            }
         }
     }
 
-    /// The single switch behind a boolean option. `advertised` is the catalog's
-    /// own value, used until a selection has been seeded (or when the option was
-    /// never seeded at all) so the switch never reads "off" for an option the
-    /// agent says is on. A flip applies through the same string-valued path as a
+    /// The switch behind a boolean option or an on/off select. A flip sends the
+    /// agent's own value for on or off through the same string-valued path as a
     /// select — see ``SessionConfigKind``.
-    private func booleanRow(option: SessionConfigOption, advertised: Bool) -> some View {
-        let isOn = options.selectedConfig[option.id].map { $0 == "true" } ?? advertised
+    private func toggleRow(_ setting: SessionSetting, isOn: Bool, onValue: String, offValue: String) -> some View {
+        let applying = options.applying.contains(setting.target)
         return BooleanOptionRow(
-            name: option.name,
-            title: option.description.flatMap { $0.isEmpty ? nil : $0 },
+            name: setting.title,
+            title: setting.description.flatMap { $0.isEmpty ? nil : $0 },
             isOn: isOn,
-            isApplying: options.applying.contains(.config(id: option.id)),
-            disabled: isBusy || options.applying.contains(.config(id: option.id)),
-            set: { on in options.selectConfig(optionId: option.id, valueId: on ? "true" : "false") }
+            isApplying: applying,
+            disabled: isBusy || applying,
+            set: { on in options.apply(setting.target, value: on ? onValue : offValue) }
         )
     }
 
-    private func optionRow(option: SessionConfigOption, choice: SessionConfigSelectOption) -> some View {
-        OptionRow(
-            title: choice.name,
-            subtitle: choice.description,
-            isSelected: options.selectedConfig[option.id] == choice.value,
-            isApplying: options.applying.contains(.config(id: option.id)) && options.selectedConfig[option.id] == choice.value,
-            disabled: isBusy || options.applying.contains(.config(id: option.id)),
-            action: { options.selectConfig(optionId: option.id, valueId: choice.value) }
-        )
-    }
-
-    private func groupHeader(_ name: String) -> some View {
-        Text(name)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(Theme.textTertiary)
-            .frame(maxWidth: .infinity, alignment: .leading)
+    /// A long list's row: the current value, pushing the searchable picker.
+    private func listLinkRow(_ setting: SessionSetting, choice: SessionChoice) -> some View {
+        NavigationLink {
+            SettingListPicker(options: options, settingKey: setting.key, isBusy: isBusy)
+        } label: {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: choice.currentLabel)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    if let description = choice.currentDescription, !description.isEmpty {
+                        Text(verbatim: description)
+                            .font(.caption)
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                if options.applying.contains(setting.target) {
+                    ProgressView().controlSize(.small)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Theme.textTertiary)
+            }
             .padding(.horizontal, 14)
-            .padding(.top, 10)
-            .padding(.bottom, 2)
+            .padding(.vertical, 11)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var rowSeparator: some View {
@@ -590,10 +675,136 @@ private struct BooleanOptionRow: View {
     }
 }
 
+/// A value row of a select setting, wired to the model: checked when it is the
+/// current value, spinning while that selector applies, badged when the agent
+/// recommends it (`recommended_value`, codex-acp 1.11.0+ / claude-agent-acp
+/// 0.76.0+) — a claim independent of the checkmark, so both can land on the
+/// same row or on different ones.
+private struct SettingValueRow: View {
+    let options: AgentOptionsModel
+    let setting: SessionSetting
+    let choice: SessionChoice
+    let value: SessionConfigSelectOption
+    let isBusy: Bool
+
+    var body: some View {
+        let isSelected = value.value == choice.currentValue
+        let applying = options.applying.contains(setting.target)
+        OptionRow(
+            title: value.name,
+            subtitle: value.description,
+            isRecommended: value.value == choice.recommendedValue,
+            isSelected: isSelected,
+            isApplying: applying && isSelected,
+            disabled: isBusy || applying,
+            action: { options.apply(setting.target, value: value.value) }
+        )
+    }
+}
+
+/// A provider / server group's label above its rows.
+private struct OptionGroupHeader: View {
+    let name: String
+
+    var body: some View {
+        Text(verbatim: name)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(Theme.textTertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
+    }
+}
+
+private struct OptionRowSeparator: View {
+    var body: some View {
+        Rectangle()
+            .fill(Theme.hairline)
+            .frame(height: 0.75)
+            .padding(.leading, 14)
+    }
+}
+
+/// A long setting's values — the model list, or any select past
+/// ``SessionSettings/searchThreshold`` values — on their own page with a search
+/// field (the web's `ModelOptionList`). Matches the display name OR the value id
+/// (``ModelOptionGroups/filter(_:query:)``), so a provider prefix stripped from
+/// the labels still finds its models. Lazy, since a provider catalog can run to
+/// hundreds of rows, and opened on the current value. A pick applies at once and
+/// the page stays, like the web popover.
+///
+/// Reads the setting from the model by key on every render, so the checkmark
+/// follows a pick (and its reconciliation) live.
+private struct SettingListPicker: View {
+    let options: AgentOptionsModel
+    let settingKey: String
+    let isBusy: Bool
+
+    @State private var query = ""
+
+    var body: some View {
+        let setting = options.sessionSettings(modeTitle: "Mode").first { $0.key == settingKey }
+        let choice = setting?.choice
+        let groups = choice.map { ModelOptionGroups.filter($0.groups, query: query) } ?? []
+        ZStack {
+            CodegBackground()
+            if let setting, let choice {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        if groups.isEmpty {
+                            Text(choice.isModel ? "No models found" : "No options found")
+                                .font(.callout)
+                                .foregroundStyle(Theme.textSecondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 32)
+                        } else {
+                            LazyVStack(spacing: 0) {
+                                ForEach(Array(groups.enumerated()), id: \.element.key) { groupIndex, group in
+                                    if groupIndex > 0 { OptionRowSeparator() }
+                                    if let name = group.name { OptionGroupHeader(name: name) }
+                                    ForEach(Array(group.options.enumerated()), id: \.element.id) { index, value in
+                                        if index > 0 { OptionRowSeparator() }
+                                        SettingValueRow(options: options, setting: setting, choice: choice, value: value, isBusy: isBusy)
+                                            .id(Self.rowID(group: group.key, value: value.value))
+                                    }
+                                }
+                            }
+                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                            .hairlineBorder(Theme.Radius.md)
+                            .padding(16)
+                        }
+                    }
+                    .onAppear {
+                        // Open on the row the user came to change: a long list
+                        // opened at its top would hide it.
+                        guard let group = choice.groups.first(where: { $0.options.contains { $0.value == choice.currentValue } })
+                        else { return }
+                        proxy.scrollTo(Self.rowID(group: group.key, value: choice.currentValue), anchor: .center)
+                    }
+                }
+            }
+        }
+        .navigationTitle(Text(verbatim: setting?.title ?? ""))
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(
+            text: $query,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: Text(choice?.isModel == true ? "Search models" : "Search options")
+        )
+        .autocorrectionDisabled()
+        .textInputAutocapitalization(.never)
+    }
+
+    /// Keyed by group as well: the same value may sit in two server groups.
+    private static func rowID(group: String, value: String) -> String { "\(group)\u{1F}\(value)" }
+}
+
 /// A single selectable option row (radio-style), with a trailing check or spinner.
 private struct OptionRow: View {
     let title: String
     let subtitle: String?
+    var isRecommended = false
     let isSelected: Bool
     let isApplying: Bool
     let disabled: Bool
@@ -603,11 +814,24 @@ private struct OptionRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(Theme.textPrimary)
+                    HStack(spacing: 6) {
+                        Text(verbatim: title)
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(Theme.textPrimary)
+                        if isRecommended {
+                            // Fixed so a long model name wraps instead of
+                            // squeezing the badge away.
+                            Text("Recommended")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(Theme.textSecondary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .overlay(Capsule().strokeBorder(Theme.surfaceStroke))
+                                .fixedSize()
+                        }
+                    }
                     if let subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
+                        Text(verbatim: subtitle)
                             .font(.caption)
                             .foregroundStyle(Theme.textTertiary)
                             .lineLimit(2)
@@ -630,5 +854,6 @@ private struct OptionRow: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled && !isSelected && !isApplying ? 0.5 : 1)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

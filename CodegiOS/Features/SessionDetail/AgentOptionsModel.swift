@@ -79,11 +79,16 @@ final class AgentOptionsModel {
     /// probe when there's no live session.
     private var cache: [AgentType: AgentOptionsSnapshot] = [:]
 
-    private var agentType: AgentType?
+    /// The agent the catalog + selection on screen belong to. Read by the
+    /// options button so a draft that just switched agents never summarizes the
+    /// previous agent's settings under the new agent's icon.
+    private(set) var agentType: AgentType?
     private var workingDir: String?
     private var loadTask: Task<Void, Never>?
     /// The cheap auto snapshot-load kicked off on `prepare`.
     private var autoLoadTask: Task<Void, Never>?
+    /// The spawn-free load behind the button's summary (``refreshSummary``).
+    private var summaryTask: Task<Void, Never>?
     /// Memoized chat-connection resolution, shared across concurrent applies.
     private var connectionTask: Task<String, Error>?
 
@@ -116,6 +121,9 @@ final class AgentOptionsModel {
         connectionTask = nil
         if case .failed = phase { phase = .idle }
 
+        // The sheet's own load supersedes a summary refresh still in flight.
+        summaryTask?.cancel()
+        summaryTask = nil
         autoLoadTask?.cancel()
         autoLoadTask = Task { [weak self] in
             guard let self else { return }
@@ -138,6 +146,67 @@ final class AgentOptionsModel {
             self.load()
         }
     }
+
+    /// The settings as the button summarizes and the sheet edits them: the
+    /// catalog on screen with the current selection laid over it. Empty until a
+    /// catalog has loaded.
+    func sessionSettings(modeTitle: String) -> [SessionSetting] {
+        guard let snapshot else { return [] }
+        return SessionSettings.build(
+            snapshot: snapshot,
+            selectedModeId: selectedModeId,
+            selectedConfig: selectedConfig,
+            modeTitle: modeTitle
+        )
+    }
+
+    /// Keep the options button's summary current without opening the sheet.
+    ///
+    /// Strictly the cheap half of ``prepare(agentType:workingDir:)``: the live
+    /// snapshot (polled briefly, since a reattaching session publishes its
+    /// selectors a moment after the screen opens), else a catalog this model
+    /// already fetched. It NEVER starts a probe agent — the button just shows its
+    /// icon until a catalog exists — and never touches the error notice or the
+    /// memoized connection, which belong to the sheet.
+    ///
+    /// The same adopt paths as the sheet, so the selector-preference rules hold
+    /// unchanged. Skipped while any apply for this agent is in flight: that
+    /// operation owns its selector until it reconciles, and an authoritative
+    /// adopt mid-flight would flash the old value back.
+    func refreshSummary(agentType: AgentType, workingDir: String?) {
+        if let current = self.agentType, current != agentType {
+            snapshot = nil
+            selectedModeId = nil
+            selectedConfig = [:]
+            phase = .idle
+        }
+        self.agentType = agentType
+        self.workingDir = workingDir
+
+        summaryTask?.cancel()
+        summaryTask = Task { [weak self] in
+            for delay in Self.summaryPollDelays {
+                if delay > .zero { try? await Task.sleep(for: delay) }
+                guard let self, !Task.isCancelled, self.agentType == agentType else { return }
+                if let snap = try? await self.fetchSnapshot(), snap.hasSelectors {
+                    guard !Task.isCancelled, self.agentType == agentType,
+                          self.applying.isEmpty else { return }
+                    self.cache[agentType] = snap.asOptionsSnapshot
+                    self.applyAuthoritative(snap)
+                    return
+                }
+                guard !Task.isCancelled, self.agentType == agentType else { return }
+                if let cached = self.cache[agentType] {
+                    // The catalog shown before is what the sheet would show too.
+                    if self.snapshot == nil, self.applying.isEmpty { self.applyCatalog(cached) }
+                    return
+                }
+            }
+        }
+    }
+
+    /// When the summary refresh re-reads the live snapshot (~3.5s in all).
+    private static let summaryPollDelays: [Duration] = [.zero, .milliseconds(1000), .milliseconds(2500)]
 
     /// Load the catalog (auto-run by `prepare()`, and by the failure "Try Again").
     /// Prefers the authoritative snapshot (no spawn); only when there's no live
@@ -289,6 +358,14 @@ final class AgentOptionsModel {
     }
 
     // MARK: - Apply
+
+    /// Apply `value` to whichever selector a ``SessionSetting`` targets.
+    func apply(_ selector: Selector, value: String) {
+        switch selector {
+        case .mode: selectMode(value)
+        case .config(let id): selectConfig(optionId: id, valueId: value)
+        }
+    }
 
     func selectMode(_ modeId: String) {
         guard modeId != selectedModeId, let agent = agentType, canApply(.mode, agent: agent) else { return }
@@ -534,6 +611,8 @@ final class AgentOptionsModel {
     func teardown() {
         loadTask?.cancel()
         loadTask = nil
+        summaryTask?.cancel()
+        summaryTask = nil
         autoLoadTask?.cancel()
         autoLoadTask = nil
         connectionTask?.cancel()

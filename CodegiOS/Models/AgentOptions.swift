@@ -191,6 +191,13 @@ struct SessionConfigOption: Hashable, Sendable, Decodable, Identifiable {
     let description: String?
     let category: String?
     let kind: SessionConfigKind
+    /// The value the AGENT recommends (`recommended_value`, JetBrains AIR's
+    /// `recommendedValue` — codex-acp 1.11.0+ and claude-agent-acp 0.76.0+ name
+    /// their default model and that model's default effort). A hint only:
+    /// `kind`'s current value still says what is selected, and a recommendation
+    /// that names no option marks nothing. Absent for agents that publish none
+    /// and on servers predating the field (a synthesized optional decodes to nil).
+    var recommendedValue: String? = nil
 }
 
 /// The control behind a `SessionConfigOption` (Rust `SessionConfigKindInfo`,
