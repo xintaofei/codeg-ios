@@ -31,6 +31,9 @@ final class ComposerCatalog {
     var skills: [String: SkillsEntry] = [:]
     /// `acp_list_agents` per server.
     var agents: [String: [AcpAgentInfo]] = [:]
+    /// Bumped per key whenever a connection pushes a command list, so a
+    /// snapshot or probe read already on its way cannot land over it.
+    @ObservationIgnored var commandRevisions: [String: Int] = [:]
 }
 
 /// An agent the `@` panel offers (web `agentToSuggestion`).
@@ -204,14 +207,21 @@ final class ComposerSuggestionModel {
     /// A live `available_commands` event: the agent re-advertised, and the
     /// new list replaces the old one whole.
     func adoptLiveCommands(_ list: [AvailableCommandInfo]) {
-        catalog.commands[catalogKey(context())] = list
+        adopt(list, key: catalogKey(context()))
     }
 
     /// Commands carried by a snapshot. An empty list is not taken as "none":
     /// a fresh connection reports nothing until its agent has advertised.
     func adoptSnapshotCommands(_ list: [AvailableCommandInfo]?) {
         guard let list, !list.isEmpty else { return }
-        catalog.commands[catalogKey(context())] = list
+        adopt(list, key: catalogKey(context()))
+    }
+
+    /// A list the connection itself pushed. Bumps the key's revision, so a
+    /// fetch that was already on its way cannot land over it afterwards.
+    private func adopt(_ list: [AvailableCommandInfo], key: String) {
+        catalog.commands[key] = list
+        catalog.commandRevisions[key, default: 0] += 1
     }
 
     /// The screen has its agent and folder: read what a live session already
@@ -228,7 +238,7 @@ final class ComposerSuggestionModel {
         guard fetchCommands != nil else { return commands }
         let key = catalogKey(context())
         commandFetches[key, default: 0] += 1
-        await runCommandFetch(key: key, allowProbe: commands.isEmpty)
+        await runCommandFetch(key: key, allowProbe: commands.isEmpty, revision: catalog.commandRevisions[key] ?? 0)
         return commands
     }
 
@@ -236,17 +246,24 @@ final class ComposerSuggestionModel {
         guard !(commandsAsked[allowProbe]?.contains(key) ?? false), fetchCommands != nil else { return }
         commandsAsked[allowProbe, default: []].insert(key)
         // Counted now, not when the task starts: the `/` that asked must see
-        // the loading row on this very update, or it closes for a frame.
+        // the loading row on this very update, or it closes for a frame. The
+        // revision is read now too — a push before the task runs is newer.
         commandFetches[key, default: 0] += 1
-        Task { [weak self] in await self?.runCommandFetch(key: key, allowProbe: allowProbe) }
+        let revision = catalog.commandRevisions[key] ?? 0
+        Task { [weak self] in await self?.runCommandFetch(key: key, allowProbe: allowProbe, revision: revision) }
     }
 
-    /// The fetch itself; its caller has already counted it in `commandFetches`.
-    private func runCommandFetch(key: String, allowProbe: Bool) async {
+    /// The fetch itself; its caller has already counted it in `commandFetches`
+    /// and read the key's push `revision` when it asked.
+    private func runCommandFetch(key: String, allowProbe: Bool, revision: Int) async {
         let list = await fetchCommands?(allowProbe) ?? nil
         commandFetches[key, default: 1] -= 1
         if commandFetches[key] == 0 { commandFetches[key] = nil }
-        if let list, !list.isEmpty { catalog.commands[key] = list }
+        // A live update (even an empty one) arrived while this was out: it is
+        // newer than whatever the snapshot or probe read.
+        if let list, !list.isEmpty, (catalog.commandRevisions[key] ?? 0) == revision {
+            catalog.commands[key] = list
+        }
         // The cheap read found nothing while a `/` is waiting on it: go on to
         // the probe instead of closing the menu under the user.
         if !allowProbe, case .command(.slash, _, _)? = trigger,
@@ -604,10 +621,13 @@ final class ComposerSuggestionModel {
 
     private func scheduleFileSearch(_ query: String) {
         guard let root = context().workspaceRoot, !root.isEmpty else { return }
-        if let result = fileResult, result.root == root, result.query == query { return }
         if let requested = fileQueryRequested, requested.root == root, requested.query == query { return }
         fileQueryRequested = (root, query)
+        // Whatever was pending answers another query now — `@ab` backspaced
+        // to `@a` must not let the `ab` search land over `a`'s results.
         fileSearchTask?.cancel()
+        fileSearchTask = nil
+        if let result = fileResult, result.root == root, result.query == query { return }
         guard query.utf8.count <= Self.maxQueryBytes else {
             fileResult = FileResult(root: root, query: query, entries: [])
             return
@@ -621,8 +641,13 @@ final class ComposerSuggestionModel {
             // A failed search reads as no matches (web: `.catch(() => [])`).
             let entries = (try? await self.client.searchWorkspaceFiles(
                 path: root, query: query, limit: ComposerSuggestionModel.maxPerGroup + 1, request: request)) ?? []
+            // Cancelled here is only the local wait: the server may still be
+            // running it, so it stays outstanding for `closeFileSearch`.
+            guard !Task.isCancelled else { return }
             if self.fileSearchOutstanding == request { self.fileSearchOutstanding = nil }
-            guard !Task.isCancelled, request.generation == self.fileGeneration else { return }
+            guard request.generation == self.fileGeneration,
+                  let requested = self.fileQueryRequested, requested.root == root, requested.query == query
+            else { return }
             self.fileResult = FileResult(root: root, query: query, entries: entries)
         }
     }

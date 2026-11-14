@@ -92,6 +92,23 @@ import Testing
         }
     }
 
+    @Test func aLiveListBeatsAFetchThatWasAlreadyOut() async throws {
+        let (model, _) = makeModel()
+        let stale = cmd("stale")
+        model.fetchCommands = { _ in
+            try? await Task.sleep(for: .milliseconds(50))
+            return [stale]
+        }
+        type(model, "/")
+        #expect(model.commandsLoading)
+        model.adoptLiveCommands([cmd("fresh")])
+        for _ in 0..<200 where model.commandsLoading {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.commandsLoading)
+        #expect(model.commands.map(\.name) == ["fresh"])
+    }
+
     @Test func arrowsMoveTheHighlightAndReturnPicksIt() throws {
         let (model, _) = makeModel()
         model.adoptLiveCommands([cmd("review"), cmd("rebase"), cmd("reset")])
