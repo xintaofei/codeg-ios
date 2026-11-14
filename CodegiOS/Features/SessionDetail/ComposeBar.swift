@@ -234,7 +234,8 @@ struct ComposeBar: View {
 
     private func handleSuggestionKey(_ press: KeyPress) -> KeyPress.Result {
         guard let suggestions else { return .ignored }
-        switch suggestions.handleKey(press.key, shift: press.modifiers.contains(.shift), text: text) {
+        switch suggestions.handleKey(press.key, shift: press.modifiers.contains(.shift),
+                                     composing: TextInputComposition.isActive, text: text) {
         case .ignored:
             return .ignored
         case .handled:
@@ -465,5 +466,38 @@ private struct NoticeBanner: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         .hairlineBorder(Theme.Radius.md, color: Theme.accent.opacity(0.35))
         .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+}
+
+
+/// Whether the focused field holds an input method's marked text: pinyin,
+/// kana or hangul still being composed. SwiftUI does not expose it, so this
+/// asks the first responder, which is the field whenever a key reaches it.
+@MainActor
+enum TextInputComposition {
+    static var isActive: Bool {
+        (FirstResponder.current as? UITextInput)?.markedTextRange != nil
+    }
+}
+
+@MainActor
+private enum FirstResponder {
+    static weak var found: UIResponder?
+
+    /// An action sent to a nil target goes to the first responder, which
+    /// reports itself.
+    static var current: UIResponder? {
+        found = nil
+        UIApplication.shared.sendAction(#selector(UIResponder.codegReportFirstResponder(_:)),
+                                        to: nil, from: nil, for: nil)
+        let responder = found
+        found = nil
+        return responder
+    }
+}
+
+extension UIResponder {
+    @objc fileprivate func codegReportFirstResponder(_ sender: Any?) {
+        FirstResponder.found = self
     }
 }

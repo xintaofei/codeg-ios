@@ -128,6 +128,21 @@ import Testing
         #expect(caret == 8)
     }
 
+    @Test func keysMidCompositionAreTheInputMethods() {
+        let (model, _) = makeModel()
+        model.adoptLiveCommands([cmd("review"), cmd("rebase"), cmd("reset")])
+        // "re" is still pinyin being composed, and already in the text.
+        type(model, "/re")
+        for key: KeyEquivalent in [.downArrow, .upArrow, .tab, .return, .escape] {
+            guard case .ignored = model.handleKey(key, shift: false, composing: true, text: "/re") else {
+                Issue.record("\(key.character) taken mid-composition")
+                return
+            }
+        }
+        #expect(model.panel?.highlighted == 0)
+        #expect(model.panel != nil, "Escape mid-composition leaves the menu open")
+    }
+
     @Test func escapeClosesUntilTheTextChanges() {
         let (model, _) = makeModel()
         model.adoptLiveCommands([cmd("review")])

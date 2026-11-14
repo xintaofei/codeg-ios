@@ -499,9 +499,13 @@ final class ComposerSuggestionModel {
     // MARK: - Hardware keys
 
     /// A hardware key while the field has focus. `text` is the field's text
-    /// right now.
-    func handleKey(_ key: KeyEquivalent, shift: Bool, text: String) -> ComposerKeyOutcome {
-        guard let panel else { return .ignored }
+    /// right now; `composing` is whether an input method still holds marked
+    /// text in it.
+    func handleKey(_ key: KeyEquivalent, shift: Bool, composing: Bool = false, text: String) -> ComposerKeyOutcome {
+        // Mid-composition every key is the input method's: the arrows move
+        // through its candidates, Tab and Return confirm, Escape cancels (web
+        // `isImeCompositionKey`). Taking one here drops the marked text.
+        guard let panel, !composing else { return .ignored }
         if key == .escape {
             dismiss()
             return .handled
