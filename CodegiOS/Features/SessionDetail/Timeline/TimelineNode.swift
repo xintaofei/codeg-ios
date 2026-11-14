@@ -24,6 +24,30 @@ struct TimelineNode: Identifiable {
     /// A reply boundary begins here (user / system nodes) — used for slightly
     /// larger breathing room before a new turn.
     var startsGroup: Bool = false
+    /// The reply this node belongs to and what folding the reply does to it;
+    /// nil for nodes outside any reply (user prompts, system lines).
+    var reply: ReplyMembership?
+    /// For a reply's header: whether the reply is unfolded. Applied after the
+    /// memoized build (`ReplyFolding.apply`), so folding never rebuilds it.
+    var foldOpen: Bool = true
+    /// For a reply's header: this reply is the current round (positional).
+    var currentRound: Bool = false
+
+    struct ReplyMembership {
+        enum Role {
+            /// The reply's header capsule.
+            case header
+            /// A process row: hidden while the reply is folded.
+            case body
+            /// A process row that can outlive the reply (a delegation or a
+            /// sub-agent still running): kept in view while it is folded.
+            case pinned
+            /// The fold-back control under the rows: shown only while unfolded.
+            case foot
+        }
+        let key: String
+        let role: Role
+    }
 
     enum Content {
         case user(MessageTurn)
@@ -45,6 +69,27 @@ struct TimelineNode: Identifiable {
         case thinking
         case error(String, details: String?)
         case unsupported(String)
+        // The activity timeline (codeg 0.44).
+        /// A reply's header capsule: `Activity 14 steps · 1 failed · 3m 34s ›`.
+        case replyHeader(ReplyHeader)
+        /// The fold-back control at the foot of an unfolded reply.
+        case replyFoot(ReplyHeader)
+        /// The agent's reasoning between its calls, titled and folded.
+        case thought(ActivityText, streaming: Bool)
+        /// A folded run of explore / command calls.
+        case activityGroup(kind: ActivityGroupKind, steps: [ActivityToolStep], status: StepStatus)
+    }
+
+    /// What a reply's header (and foot) say.
+    struct ReplyHeader {
+        let replyKey: String
+        let summary: ActivitySummary
+        let completed: Bool
+        /// The reply can fold: it has process to hide and, once complete, an
+        /// answer left to keep in view.
+        let foldable: Bool
+        let hasSteps: Bool
+        let durationMs: Int?
     }
 
     /// The gutter marker for this node — drives the icon and the state tint.
@@ -72,6 +117,12 @@ struct TimelineNode: Identifiable {
         case .thinking: return .thinking
         case .error: return .error
         case .unsupported: return .system
+        case .replyHeader: return .assistant(agent)
+        case .replyFoot: return .footer
+        case .thought: return .reasoning
+        case .activityGroup(_, let steps, let status):
+            return .toolGroup(error: status.isFailure || steps.contains { $0.tool.status.isFailure },
+                              streaming: status.isLive)
         }
     }
 }
@@ -170,10 +221,15 @@ enum TranscriptTimeline {
                 while j < turns.count, turns[j].role == .assistant { j += 1 }
                 let merged = merge(Array(turns[i..<j]))
                 let inRound = inFlightIdx.map { i > $0 } ?? false
-                nodes.append(contentsOf: assistantNodes(
-                    merged: merged, questionID: lastUserID, agent: agent,
-                    liveness: inRound ? .round : liveness
-                ))
+                let replyLiveness: ToolLiveness = inRound ? .round : liveness
+                // A reply in the running round is still being written (a reader
+                // with no stream of its own); every other one is a record.
+                nodes.append(contentsOf: replyNodes(
+                    parts: MessageRender.adaptTurn(merged, liveness: replyLiveness, groupTools: false),
+                    ownerID: merged.id, completed: replyLiveness != .round,
+                    durationMs: merged.durationMs, agent: agent))
+                nodes.append(TimelineNode(id: "\(merged.id)#footer",
+                                          content: .footer(merged, questionID: lastUserID), agent: agent))
                 i = j
             }
         }
@@ -197,19 +253,7 @@ enum TranscriptTimeline {
         liveNodes(live, agent: agent)
     }
 
-    // MARK: Assistant reply → nodes
-
-    private static func assistantNodes(merged: MessageTurn, questionID: String?, agent: AgentType,
-                                       liveness: ToolLiveness) -> [TimelineNode] {
-        var out = MessageRender.adaptTurn(merged, liveness: liveness).enumerated().map { idx, part in
-            node(for: part, ownerID: merged.id, index: idx, agent: agent)
-        }
-        // The footer (reply time / model / tokens / copy / jump) is always emitted
-        // — even when the reply has no renderable parts — so an empty or tool-only
-        // turn still shows its metadata instead of vanishing.
-        out.append(TimelineNode(id: "\(merged.id)#footer", content: .footer(merged, questionID: questionID), agent: agent))
-        return out
-    }
+    // MARK: Live reply → nodes
 
     private static func liveNodes(_ live: LiveTurn, agent: AgentType) -> [TimelineNode] {
         var out: [TimelineNode] = []
@@ -219,14 +263,123 @@ enum TranscriptTimeline {
         if live.isEmpty && live.isStreaming {
             out.append(TimelineNode(id: "\(live.id)#thinking", content: .thinking, agent: agent))
         }
-        out.append(contentsOf: MessageRender.adaptLive(live).enumerated().map { idx, part in
-            node(for: part, ownerID: live.id, index: idx, agent: agent)
-        })
+        out.append(contentsOf: replyNodes(
+            parts: MessageRender.adaptLive(live, groupTools: false),
+            ownerID: live.id, completed: !live.isStreaming, durationMs: nil, agent: agent))
         if let error = live.errorMessage {
             out.append(TimelineNode(id: "\(live.id)#error",
                                     content: .error(error, details: live.errorDetails), agent: agent))
         }
         return out
+    }
+
+    // MARK: Reply → activity nodes
+
+    /// One reply as the activity timeline draws it (web `CompletedTurnContent`):
+    /// its header capsule, its process rows, the fold-back foot, then the
+    /// trailing answer, which stays in view when the reply folds. Every node is
+    /// tagged with the reply and its role; WHICH of them show is decided after
+    /// the memoized build, by `ReplyFolding.apply`.
+    private static func replyNodes(parts: [RenderPart], ownerID: String, completed: Bool,
+                                   durationMs: Int?, agent: AgentType) -> [TimelineNode] {
+        // A reply still being written keeps its closing prose on the rail: what
+        // will turn out to be the answer is not known yet.
+        let model = BuildActivity.build(parts, isStreaming: !completed, keepAnswer: !completed)
+        let bodyCount = parts.count - model.answer.count
+        // Nothing but an empty answer: no header, just what there is.
+        if completed, bodyCount == 0, !BuildActivity.hasVisibleAnswer(model.answer) {
+            return parts.enumerated().map { idx, part in node(for: part, ownerID: ownerID, index: idx, agent: agent) }
+        }
+        // Folding trades the process away to keep the answer, so a reply with no
+        // answer left (stopped mid-call, or whose last card IS the answer)
+        // settles un-foldable. A live reply is exempt from the answer half: its
+        // closing prose has not been written yet.
+        let foldable = bodyCount > 0 && (!completed || BuildActivity.hasVisibleAnswer(model.answer))
+        let header = TimelineNode.ReplyHeader(
+            replyKey: ownerID, summary: model.summary, completed: completed,
+            foldable: foldable, hasSteps: !model.items.isEmpty, durationMs: durationMs)
+        func member(_ node: TimelineNode, _ role: TimelineNode.ReplyMembership.Role) -> TimelineNode {
+            var tagged = node
+            tagged.reply = .init(key: ownerID, role: role)
+            return tagged
+        }
+
+        var out: [TimelineNode] = [member(
+            TimelineNode(id: "\(ownerID)#header", content: .replyHeader(header), agent: agent), .header)]
+        for item in model.items {
+            out.append(member(node(for: item, ownerID: ownerID, agent: agent),
+                              canOutliveReply(item) ? .pinned : .body))
+        }
+        if foldable {
+            out.append(member(TimelineNode(id: "\(ownerID)#foot", content: .replyFoot(header), agent: agent), .foot))
+        }
+        for (offset, part) in model.answer.enumerated() {
+            out.append(node(for: part, ownerID: ownerID, index: bodyCount + offset, agent: agent))
+        }
+        return out
+    }
+
+    /// Rows that can outlive their reply — kept in view when it folds, while
+    /// they are still live.
+    private static func canOutliveReply(_ item: ActivityItem) -> Bool {
+        guard case .step(let step) = item else { return false }
+        switch step {
+        case .delegationPolls(_, _, let status):
+            return status.isLive
+        case .tool(let tool):
+            switch tool.tool.kind {
+            case .delegation, .delegationResume, .delegationStatus, .agent: return tool.tool.status.isLive
+            default: return false
+            }
+        default:
+            return false
+        }
+    }
+
+    private static func node(for item: ActivityItem, ownerID: String, agent: AgentType) -> TimelineNode {
+        switch item {
+        case .group(_, let kind, let steps, let status):
+            // Keyed like the older tool group (its first call), so the row keeps
+            // its identity while the run grows and across the live → history
+            // hand-over.
+            let gid = steps.first.map { "toolgroup-\($0.call.id)" } ?? "\(ownerID)#group"
+            return TimelineNode(id: gid, content: .activityGroup(kind: kind, steps: steps, status: status), agent: agent)
+        case .step(let step):
+            return node(for: step, ownerID: ownerID, agent: agent)
+        }
+    }
+
+    private static func node(for step: ActivityStep, ownerID: String, agent: AgentType) -> TimelineNode {
+        let base = "\(ownerID)#\(BuildActivity.rowIdentity(step.key))"
+        switch step {
+        case .tool(let tool):
+            return TimelineNode(id: "tool-\(tool.call.id)", content: .tool(tool.call), agent: agent)
+        case .thought(_, let text, let streaming):
+            if case .live(let run, _) = text {
+                return TimelineNode(id: "k-\(run.id)", content: .thought(text, streaming: streaming), agent: agent)
+            }
+            return TimelineNode(id: base, content: .thought(text, streaming: streaming), agent: agent)
+        case .note(_, .text(.settled(let s))):
+            return TimelineNode(id: base, content: .assistantText(s), agent: agent)
+        case .note(_, .text(.live(let run, let streaming))):
+            return TimelineNode(id: "t-\(run.id)", content: .liveText(run, streaming: streaming), agent: agent)
+        case .note(_, .turnError(let message)):
+            return TimelineNode(id: base, content: .error(message, details: nil), agent: agent)
+        case .image(_, let image, let caption):
+            return TimelineNode(id: base, content: .image(image, caption: caption), agent: agent)
+        case .plan(_, let entries, let streaming):
+            return TimelineNode(id: base, content: .plan(entries, streaming: streaming), agent: agent)
+        case .delegationPolls(_, let polls, _):
+            let gid = polls.first.map { "delegstatus-\($0.id)" } ?? base
+            return TimelineNode(id: gid, content: .delegationStatusGroup(polls), agent: agent)
+        case .taskList(_, let ops):
+            let gid = ops.first.map { "taskgroup-\($0.id)" } ?? base
+            return TimelineNode(id: gid, content: .taskGroup(ops), agent: agent)
+        case .compaction(_, let before, let after, let running):
+            return TimelineNode(id: base, content: .compaction(before: before, after: after, running: running), agent: agent)
+        case .unsupported(_, let type):
+            return TimelineNode(id: base, content: .unsupported(type), agent: agent)
+        }
     }
 
     // MARK: Part → node

@@ -55,6 +55,9 @@ struct TranscriptView<Header: View>: View {
     var inFlightUserTurnId: String?
     /// The session's agent, for the agent-branded marker on assistant nodes.
     let agent: AgentType
+    /// Which replies are folded (the activity timeline). Applied after the
+    /// memoized build, so folding never rebuilds the persisted tier.
+    let replyFolds: ReplyFoldStore
     /// A cheap, monotonic version of the view model's `turns`, bumped on every
     /// mutation. The persisted node tier is memoized on it (plus the window /
     /// pending / suppression signals), so a streamed token — which re-runs this
@@ -214,6 +217,7 @@ struct TranscriptView<Header: View>: View {
         if let liveTurn {
             all.append(contentsOf: TranscriptTimeline.buildLive(liveTurn, agent: agent))
         }
+        all = ReplyFolding.apply(all, store: replyFolds)
         // Terminate the rail at its endpoints, on the *combined* list. The top
         // terminates only when the window starts at the true beginning of the
         // conversation; otherwise the spine continues up into the not-yet-loaded
@@ -300,6 +304,7 @@ struct TranscriptView<Header: View>: View {
                     .id(bottomAnchor)
             }
             .listStyle(.plain)
+            .environment(\.replyFoldStore, replyFolds)
             .scrollContentBackground(.hidden)
             // Let the 1pt anchor row actually be 1pt (List's default min row
             // height would otherwise pad it to ~44).

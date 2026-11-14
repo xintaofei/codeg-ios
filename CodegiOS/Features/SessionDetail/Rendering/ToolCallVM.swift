@@ -75,6 +75,12 @@ struct ToolCallVM: Identifiable {
     /// The process exit code the transcript kept as a field
     /// (`tool_result.exit_code`); nil when unknown. Persisted calls only.
     let exitCode: Int?
+    /// The tool's name as the web adapter stores it: a persisted call's own
+    /// name, or — for a live call, whose ACP update carries only a human title
+    /// — the name `ToolNameNormalizer.inferLiveToolName` reads off its title,
+    /// kind, input and `_meta`. What the activity timeline classifies on;
+    /// `rawName` stays as it was for the older cards.
+    let toolName: String
     /// This call is being rendered from a turn whose wire data is still
     /// arriving. Only a background sub-agent launch reads it (see
     /// ``SubAgentSection``): such a launcher settles at its ack while the child
@@ -104,7 +110,8 @@ struct ToolCallVM: Identifiable {
     init(id: String, rawName: String, kind: String, state: ToolCallState,
          input: String?, output: String?, content: String?, isError: Bool,
          meta: AnyJSON? = nil, transcript: [SubAgentRun] = [],
-         agentStats: AgentExecutionStats? = nil, isLive: Bool = false, exitCode: Int? = nil) {
+         agentStats: AgentExecutionStats? = nil, isLive: Bool = false, exitCode: Int? = nil,
+         toolName: String? = nil) {
         // A codex-acp command action (`createCommandActionEvent`) has no tool
         // name and NO input — only a human title, which arrives here as
         // `rawName`. Its identity, its query and its path all have to be read
@@ -144,6 +151,7 @@ struct ToolCallVM: Identifiable {
         self.transcript = transcript
         self.agentStats = agentStats
         self.exitCode = exitCode
+        self.toolName = toolName ?? rawName
         self.isLive = isLive
         self.commandAction = action
 
@@ -260,8 +268,12 @@ enum MessageRender {
 
     /// - Parameter liveness: what may put a spinner on one of this turn's tool
     ///   calls. `.settled` (a record) for all but two cases — see `toolState`.
-    static func adaptTurn(_ turn: MessageTurn, liveness: ToolLiveness = .settled) -> [RenderPart] {
-        let cacheKey = TurnKey(turn: turn, liveness: liveness)
+    /// - Parameter groupTools: fold runs of generic tool calls into
+    ///   `toolGroup`s (the older cards). The activity timeline passes false: it
+    ///   groups by kind itself, and takes only the delegation-poll and
+    ///   task-checklist lanes from here.
+    static func adaptTurn(_ turn: MessageTurn, liveness: ToolLiveness = .settled, groupTools: Bool = true) -> [RenderPart] {
+        let cacheKey = TurnKey(turn: turn, liveness: liveness, groupTools: groupTools)
         if let cached = turnCache[cacheKey] { return cached }
 
         let blocks = turn.blocks
@@ -318,7 +330,7 @@ enum MessageRender {
             }
         }
 
-        let grouped = group(parts)
+        let grouped = groupTools ? group(parts) : groupLanes(parts)
         cacheTurn(cacheKey, grouped)
         return grouped
     }
@@ -363,7 +375,7 @@ enum MessageRender {
         return liveness == .round ? .running : .done
     }
 
-    static func adaptLive(_ turn: LiveTurn) -> [RenderPart] {
+    static func adaptLive(_ turn: LiveTurn, groupTools: Bool = true) -> [RenderPart] {
         var parts: [RenderPart] = []
         let segments = turn.segments
         // Only the *final* segment is still growing — it alone carries the
@@ -393,10 +405,18 @@ enum MessageRender {
                 parts.append(.tool(ToolCallVM(
                     id: call.id, rawName: call.title, kind: call.kind, state: state,
                     input: call.rawInput, output: call.rawOutput, content: call.content, isError: call.isError,
-                    meta: call.meta, transcript: call.transcript, isLive: turn.isStreaming)))
+                    meta: call.meta, transcript: call.transcript, isLive: turn.isStreaming,
+                    toolName: ToolNameNormalizer.inferLiveToolName(
+                        title: call.title, kind: call.kind, rawInput: call.rawInput, meta: call.meta))))
             }
         }
-        return group(parts)
+        return groupTools ? group(parts) : groupLanes(parts)
+    }
+
+    /// Only the lanes that are rows of their own — delegation polls and the
+    /// task checklist — for a caller that groups plain calls itself.
+    static func groupLanes(_ parts: [RenderPart]) -> [RenderPart] {
+        groupConsecutiveTaskOps(groupConsecutiveDelegationStatus(parts))
     }
 
     /// The full grouping pipeline (mirroring the web): first collapse generic tool
@@ -538,6 +558,7 @@ enum MessageRender {
     private struct TurnKey: Hashable {
         let turn: MessageTurn
         let liveness: ToolLiveness
+        let groupTools: Bool
     }
     private static var turnCache: [TurnKey: [RenderPart]] = [:]
     private static var turnOrder: [TurnKey] = []

@@ -234,6 +234,7 @@ struct SessionDetailView: View {
             liveOwnsInFlightReply: model.liveTurnFromReattach,
             inFlightUserTurnId: model.inFlightUserTurnId,
             agent: model.agentTypeForUI,
+            replyFolds: model.replyFolds,
             turnsVersion: model.turnsVersion,
             scrollTick: model.scrollTick,
             stickTick: model.stickTick,

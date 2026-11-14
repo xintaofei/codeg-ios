@@ -17,7 +17,7 @@ enum DescribeToolCall {
     /// Which row a tool call gets, before any of its payload is read.
     static func kind(_ call: ToolCallVM) -> ToolStepKind {
         if ContextCompaction.matches(call.meta) { return .compaction }
-        let name = ToolNameNormalizer.normalizeToolName(call.rawName).lowercased()
+        let name = ToolNameNormalizer.normalizeToolName(call.toolName).lowercased()
         // (opencode code-mode delegation detection is not ported — see
         // `ActivityToolFacts`.)
         // Any code-mode script — an MCP call, or several — is a script, not a
@@ -67,8 +67,8 @@ enum DescribeToolCall {
     }
 
     private static func mcpIdentity(_ call: ToolCallVM) -> McpIdentity? {
-        if ToolNameNormalizer.normalizeToolName(call.rawName) == "tool" { return clineMcpIdentity(call.input) }
-        return ActivityMcp.parseMcpToolName(call.rawName)
+        if ToolNameNormalizer.normalizeToolName(call.toolName) == "tool" { return clineMcpIdentity(call.input) }
+        return ActivityMcp.parseMcpToolName(call.toolName)
     }
 
     // MARK: - Field access
@@ -132,7 +132,7 @@ enum DescribeToolCall {
     /// Describe one tool call. `awaiting`: a permission request for it is open.
     static func describe(_ call: ToolCallVM, awaiting: Bool = false) -> ToolDescriptor {
         let kind = kind(call)
-        let toolName = ToolNameNormalizer.normalizeToolName(call.rawName)
+        let toolName = ToolNameNormalizer.normalizeToolName(call.toolName)
         let status = ActivityStatus.of(call, awaiting: awaiting)
         var base = ToolDescriptor(kind: kind, toolName: toolName, status: status)
         base.approval = ActivityApproval.approvalFromMeta(call.meta)
@@ -417,7 +417,7 @@ enum DescribeToolCall {
         var d = base
         let identity = mcpIdentity(call)
         var argsSource = call.input
-        if ToolNameNormalizer.normalizeToolName(call.rawName) == "tool", let parsed = payload.parsed,
+        if ToolNameNormalizer.normalizeToolName(call.toolName) == "tool", let parsed = payload.parsed,
            let args = parsed["arguments"], !(args is NSNull) {
             if let s = args as? String {
                 argsSource = s
@@ -440,7 +440,7 @@ enum DescribeToolCall {
         let lower = normalized.lowercased()
         // `tool` / `task` are catch-all normalizations; the raw name says more.
         if lower == "tool" || lower == "task" || lower == "lsp" {
-            let raw = call.rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let raw = call.toolName.trimmingCharacters(in: .whitespacesAndNewlines)
             return raw.isEmpty ? normalized : raw
         }
         return normalized

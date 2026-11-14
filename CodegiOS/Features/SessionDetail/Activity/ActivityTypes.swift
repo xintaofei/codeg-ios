@@ -149,7 +149,8 @@ struct ToolDescriptor: Equatable, Sendable {
 /// Prose a thought or note carries: settled text, or the run still streaming.
 enum ActivityText {
     case settled(String)
-    case live(LiveTextRun)
+    /// `streaming`: this run is the one still growing (it draws the caret).
+    case live(LiveTextRun, streaming: Bool)
 }
 
 /// Answer-shaped parts that landed between steps — prose, a turn error. They

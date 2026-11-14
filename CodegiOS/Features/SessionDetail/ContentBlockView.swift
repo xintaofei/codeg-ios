@@ -54,6 +54,9 @@ struct ContentBlockView: View {
 struct ReasoningBlock: View {
     let text: String
     var streaming: Bool = false
+    /// Name the thought by what it is about (`ThoughtTitle`) — the activity
+    /// timeline's thought row. Off for the older callers.
+    var titled: Bool = false
 
     @State private var expanded = false
     @State private var didAutoCollapse = false
@@ -66,8 +69,20 @@ struct ReasoningBlock: View {
                 HStack(spacing: 6) {
                     Image(systemName: "brain")
                         .font(.system(size: 11, weight: .semibold))
-                    (streaming ? Text("Thinking…") : Text("Reasoning"))
-                        .font(.caption.weight(.semibold))
+                    if titled {
+                        (streaming ? Text("Thinking") : Text("Thought"))
+                            .font(.caption.weight(.semibold))
+                        if let title = ThoughtTitle.thoughtTitle(text, streaming: streaming) {
+                            Text(verbatim: title)
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    } else {
+                        (streaming ? Text("Thinking…") : Text("Reasoning"))
+                            .font(.caption.weight(.semibold))
+                    }
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10, weight: .bold))

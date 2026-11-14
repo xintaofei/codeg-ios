@@ -126,8 +126,8 @@ enum BuildActivity {
                 if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     steps.append(.note(key: key("note"), .text(.settled(t))))
                 }
-            case .liveText(let run, _):
-                steps.append(.note(key: key("note"), .text(.live(run))))
+            case .liveText(let run, let streaming):
+                steps.append(.note(key: key("note"), .text(.live(run, streaming: streaming))))
             case .turnError(let message):
                 steps.append(.note(key: key("note"), .turnError(message)))
             case .reasoning(let t):
@@ -135,7 +135,8 @@ enum BuildActivity {
                     steps.append(.thought(key: key("thought"), text: .settled(t), streaming: false))
                 }
             case .liveReasoning(let run, let streaming):
-                steps.append(.thought(key: key("thought"), text: .live(run), streaming: isStreaming && streaming))
+                steps.append(.thought(key: key("thought"), text: .live(run, streaming: streaming),
+                                      streaming: isStreaming && streaming))
             case .tool(let vm):
                 steps.append(.tool(toolStep(vm, awaiting: awaiting.contains(vm.id))))
             case .toolGroup(let items, _):

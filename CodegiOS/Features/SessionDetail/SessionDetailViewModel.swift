@@ -46,6 +46,9 @@ final class SessionDetailViewModel {
     /// Backs the compose "+" menu's insert pickers (quick messages / experts /
     /// slash commands). Pure-text inserts — no live connection required.
     let insertModel: ComposeInsertModel
+    /// Which replies are folded in the activity timeline. A send folds every
+    /// reply above it; see ``ReplyFoldStore``.
+    let replyFolds = ReplyFoldStore()
 
     // MARK: - Observable state
 
@@ -1279,6 +1282,9 @@ final class SessionDetailViewModel {
             attachments = []
         }
 
+        // A new round: every reply above this message folds.
+        replyFolds.beginRound()
+
         // 2) Live assistant placeholder.
         let live = LiveTurn()
         liveTurn = live
@@ -1942,6 +1948,7 @@ final class SessionDetailViewModel {
                     // the transcript must hide any partial copy the agent has
                     // begun persisting into `turns` so the reply isn't doubled.
                     liveTurnFromReattach = true
+                    replyFolds.arm()
                     isTurnActive = true
                     restorePending(from: snap)
                     sendState = .thinking

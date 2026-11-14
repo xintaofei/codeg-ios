@@ -60,6 +60,14 @@ struct NodeBody: View {
             InlineTurnError(message: message, details: details)
         case .unsupported(let type):
             UnsupportedBlock(type: type)
+        case .replyHeader(let header):
+            ReplyHeaderView(header: header, open: node.foldOpen, currentRound: node.currentRound)
+        case .replyFoot(let header):
+            ReplyFootView(header: header, currentRound: node.currentRound)
+        case .thought(let text, let streaming):
+            ThoughtNodeBody(text: text, streaming: streaming)
+        case .activityGroup(let kind, let steps, let status):
+            ActivityGroupBody(kind: kind, steps: steps, status: status)
         }
     }
 }
