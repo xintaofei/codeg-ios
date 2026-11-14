@@ -44,6 +44,9 @@ struct TimelineNode: Identifiable {
             case pinned
             /// The fold-back control under the rows: shown only while unfolded.
             case foot
+            /// The answer (or a reply with no header at all): always shown.
+            /// Tagged so the newest reply is found even when it has no header.
+            case always
         }
         let key: String
         let role: Role
@@ -255,13 +258,17 @@ enum TranscriptTimeline {
     /// gutter markers, and plan statuses mutate their `LiveToolCall`/`LiveTurn` in
     /// place and render from a value snapshot with no observing leaf, so a stale
     /// live tier would freeze them at their first-rendered state.
-    static func buildLive(_ live: LiveTurn, agent: AgentType) -> [TimelineNode] {
-        liveNodes(live, agent: agent)
+    /// - Parameter replyOpen: whether the live reply is unfolded — while it
+    ///   is, its closing prose stays on the rail (what will turn out to be the
+    ///   answer is not known yet); folded, the trailing prose is the answer and
+    ///   stays in view.
+    static func buildLive(_ live: LiveTurn, agent: AgentType, replyOpen: Bool = true) -> [TimelineNode] {
+        liveNodes(live, agent: agent, replyOpen: replyOpen)
     }
 
     // MARK: Live reply → nodes
 
-    private static func liveNodes(_ live: LiveTurn, agent: AgentType) -> [TimelineNode] {
+    private static func liveNodes(_ live: LiveTurn, agent: AgentType, replyOpen: Bool) -> [TimelineNode] {
         var out: [TimelineNode] = []
         if !live.livePlan.isEmpty {
             out.append(TimelineNode(id: "\(live.id)#plan", content: .plan(live.livePlan, streaming: live.isStreaming), agent: agent))
@@ -271,7 +278,8 @@ enum TranscriptTimeline {
         }
         out.append(contentsOf: replyNodes(
             parts: MessageRender.adaptLive(live, groupTools: false),
-            ownerID: live.id, completed: !live.isStreaming, durationMs: nil, agent: agent))
+            ownerID: live.id, completed: !live.isStreaming, durationMs: nil, agent: agent,
+            keepAnswer: live.isStreaming && replyOpen))
         if let error = live.errorMessage {
             out.append(TimelineNode(id: "\(live.id)#error",
                                     content: .error(error, details: live.errorDetails), agent: agent))
@@ -287,25 +295,34 @@ enum TranscriptTimeline {
     /// tagged with the reply and its role; WHICH of them show is decided after
     /// the memoized build, by `ReplyFolding.apply`.
     private static func replyNodes(parts: [RenderPart], ownerID: String, completed: Bool,
-                                   durationMs: Int?, agent: AgentType) -> [TimelineNode] {
-        // A reply still being written keeps its closing prose on the rail: what
-        // will turn out to be the answer is not known yet.
-        let model = BuildActivity.build(parts, isStreaming: !completed, keepAnswer: !completed)
-        let bodyCount = parts.count - model.answer.count
+                                   durationMs: Int?, agent: AgentType,
+                                   keepAnswer: Bool = false) -> [TimelineNode] {
+        // `keepAnswer`: an unfolded reply still being written keeps its closing
+        // prose on the rail (web `proseOnRail`). Whether the reply can FOLD is
+        // decided on the real split either way — a text-only live reply has no
+        // process to fold.
+        let model = BuildActivity.build(parts, isStreaming: !completed, keepAnswer: keepAnswer)
+        let split = BuildActivity.splitTrailingAnswer(parts)
+        let bodyCount = split.body.count
+        let answerStart = parts.count - model.answer.count
         // Nothing but an empty answer — or a settled reply that did no steps
         // and has no time to report — gets no header, just what there is. (The
         // web keeps a bare `Reply` capsule there so the slot never blinks while
         // a reply settles; on a phone a capsule saying nothing is a wasted row.
         // A live reply keeps its `Working` header for that continuity.)
         if completed, bodyCount == 0,
-           !BuildActivity.hasVisibleAnswer(model.answer) || (durationMs ?? 0) <= 0 {
-            return parts.enumerated().map { idx, part in node(for: part, ownerID: ownerID, index: idx, agent: agent) }
+           !BuildActivity.hasVisibleAnswer(split.trailing) || (durationMs ?? 0) <= 0 {
+            return parts.enumerated().map { idx, part in
+                var n = node(for: part, ownerID: ownerID, index: idx, agent: agent)
+                n.reply = .init(key: ownerID, role: .always)
+                return n
+            }
         }
         // Folding trades the process away to keep the answer, so a reply with no
         // answer left (stopped mid-call, or whose last card IS the answer)
         // settles un-foldable. A live reply is exempt from the answer half: its
         // closing prose has not been written yet.
-        let foldable = bodyCount > 0 && (!completed || BuildActivity.hasVisibleAnswer(model.answer))
+        let foldable = bodyCount > 0 && (!completed || BuildActivity.hasVisibleAnswer(split.trailing))
         let header = TimelineNode.ReplyHeader(
             replyKey: ownerID, summary: model.summary, completed: completed,
             foldable: foldable, hasSteps: !model.items.isEmpty, durationMs: durationMs)
@@ -326,22 +343,43 @@ enum TranscriptTimeline {
             out.append(member(TimelineNode(id: "\(ownerID)#foot", content: .replyFoot(header), agent: agent), .foot))
         }
         for (offset, part) in model.answer.enumerated() {
-            out.append(node(for: part, ownerID: ownerID, index: bodyCount + offset, agent: agent))
+            out.append(member(node(for: part, ownerID: ownerID, index: answerStart + offset, agent: agent), .always))
         }
         return out
     }
 
     /// Rows that can outlive their reply — kept in view when it folds, while
-    /// they are still live.
+    /// what they stand for is still running. That is the CHILD's lifecycle,
+    /// not the launching call's: an async delegation settles its call with a
+    /// "running" acknowledgement the moment the child starts, and so does a
+    /// Grok background spawn — the same reading their cards use.
     private static func canOutliveReply(_ item: ActivityItem) -> Bool {
         guard case .step(let step) = item else { return false }
         switch step {
         case .delegationPolls(_, _, let status):
             return status.isLive
         case .tool(let tool):
+            let vm = tool.call
             switch tool.tool.kind {
-            case .delegation, .delegationResume, .delegationStatus, .agent: return tool.tool.status.isLive
-            default: return false
+            case .delegation, .delegationResume:
+                if tool.tool.status.isLive { return true }
+                if let later = tool.laterPolls,
+                   let task = DelegationModel.buildTaskRows(later)
+                       .first(where: { $0.taskId == ActivitySummarize.delegationTaskId(tool) }) {
+                    return task.badge.status == .running || task.badge.status == .starting
+                }
+                let hasError = vm.isError || vm.state == .error
+                let status = DelegationModel.resolveStatus(
+                    parsedMeta: DelegationModel.parseDelegationMeta(vm.meta),
+                    toolOutput: DelegationModel.parseToolOutput(vm.output, forceError: vm.isError),
+                    state: vm.state, hasError: hasError)
+                return status == .starting || status == .running || status == .waiting
+            case .agent:
+                return tool.tool.status.isLive || (vm.isLive && GrokSubagent.isBackgroundLaunchAck(vm.output))
+            case .delegationStatus:
+                return tool.tool.status.isLive
+            default:
+                return false
             }
         default:
             return false

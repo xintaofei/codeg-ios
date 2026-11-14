@@ -124,6 +124,9 @@ struct SubAgentSessionSheet: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        // A sub-agent's timeline does not fold; its headers must not reach
+        // for the parent session's fold state.
+        .environment(\.replyFoldStore, nil)
         .environment(\.defaultMinListRowHeight, 1)
     }
 

@@ -215,7 +215,9 @@ struct TranscriptView<Header: View>: View {
 
         var all = persisted
         if let liveTurn {
-            all.append(contentsOf: TranscriptTimeline.buildLive(liveTurn, agent: agent))
+            // The live reply is the newest, so the current round.
+            let open = replyFolds.isOpen(liveTurn.id, isCurrent: true, completed: !liveTurn.isStreaming)
+            all.append(contentsOf: TranscriptTimeline.buildLive(liveTurn, agent: agent, replyOpen: open))
         }
         all = ReplyFolding.apply(all, store: replyFolds)
         // Terminate the rail at its endpoints, on the *combined* list. The top

@@ -234,6 +234,8 @@ enum DescribeCache {
     private struct Key: Hashable {
         let id: String
         let rawName: String
+        /// The inferred name too: a live call's depends on its kind as well.
+        let toolName: String
         let state: ToolCallState
         let input: String?
         let output: String?
@@ -248,7 +250,7 @@ enum DescribeCache {
     private static let limit = 2_000
 
     static func describe(_ vm: ToolCallVM, awaiting: Bool) -> ToolDescriptor {
-        let key = Key(id: vm.id, rawName: vm.rawName, state: vm.state, input: vm.input, output: vm.output,
+        let key = Key(id: vm.id, rawName: vm.rawName, toolName: vm.toolName, state: vm.state, input: vm.input, output: vm.output,
                       isError: vm.isError, exitCode: vm.exitCode, meta: vm.meta, awaiting: awaiting)
         if let hit = entries[key] { return hit }
         let descriptor = DescribeToolCall.describe(vm, awaiting: awaiting)

@@ -6,8 +6,9 @@ import Foundation
 @MainActor
 enum ReplyFolding {
     static func apply(_ nodes: [TimelineNode], store: ReplyFoldStore) -> [TimelineNode] {
-        // The current round is positional: the newest reply on screen.
-        let currentKey = nodes.last { $0.reply?.role == .header }?.reply?.key
+        // The current round is positional: the newest reply on screen —
+        // headerless or not.
+        let currentKey = nodes.last { $0.reply != nil }?.reply?.key
         var open: [String: Bool] = [:]
         var out: [TimelineNode] = []
         out.reserveCapacity(nodes.count)
@@ -27,7 +28,7 @@ enum ReplyFolding {
                 out.append(node)
             case .body, .foot:
                 if open[reply.key] ?? true { out.append(node) }
-            case .pinned:
+            case .pinned, .always:
                 out.append(node)
             }
         }
