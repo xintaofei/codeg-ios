@@ -92,3 +92,37 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+
+  # Pure-logic unit tests (Swift Testing). Hosted by the app so `@testable
+  # import Codeg` reaches internal types; most suites port the web's own
+  # `*.test.ts` cases so the two clients are held to the same expectations.
+  CodegiOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: CodegiOSTests
+    dependencies:
+      - target: CodegiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.codeg.ios.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Codeg.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Codeg"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  CodegiOS:
+    build:
+      targets:
+        CodegiOS: all
+        CodegiOSTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - CodegiOSTests
+    archive:
+      config: Release
+
