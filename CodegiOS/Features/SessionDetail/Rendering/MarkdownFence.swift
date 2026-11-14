@@ -8,12 +8,18 @@ import Foundation
 ///   the web re-renders a diagram on every streamed delta, this client renders
 ///   it once, when the fence has closed or the text stopped streaming.
 /// - ```` ```spec ```` — a json-render card, in an assistant reply only.
+/// - ```` ```html ```` / ```` ```htm ```` — an HTML preview, in an assistant
+///   reply only, when the "Render HTML in chat" setting is on, and only once
+///   the fence has closed (a fence the reply was cut off in stays code; the web
+///   previews one of those when it holds a whole root element). Raw HTML
+///   blocks outside a fence stay text.
 ///
 /// PlantUML (```` ```plantuml ```` / ```` ```puml ````) is not drawn: it stays
 /// code.
 enum MarkdownFenceKind: Equatable {
     /// `ready` once the source can no longer change.
     case mermaid(ready: Bool)
+    case htmlPreview
     case spec
     case code
 }
@@ -33,6 +39,12 @@ enum MarkdownFence {
         language(info) == "mermaid"
     }
 
+    /// `/^html?$/i` on the fence's language (`chat-html-markdown.ts`).
+    static func isHtml(language info: String?) -> Bool {
+        guard let word = language(info)?.lowercased() else { return false }
+        return word == "html" || word == "htm"
+    }
+
     /// Whether a fence's source is final. Once the text has stopped streaming
     /// it is, closed or not. While it streams, the fence has to be closed and
     /// its closing line finished: a closing fence that is still the last thing
@@ -45,12 +57,17 @@ enum MarkdownFence {
         return !isLastBlock || sourceEndsWithNewline
     }
 
-    /// The renderer for a fence. `settled` is `isSettled(...)`.
+    /// The renderer for a fence. `settled` is `isSettled(...)`; `htmlEnabled`
+    /// the per-device "Render HTML in chat" setting.
     static func kind(language info: String?, code: String, closed: Bool, settled: Bool,
-                     assistantReply: Bool) -> MarkdownFenceKind {
+                     assistantReply: Bool, htmlEnabled: Bool = false) -> MarkdownFenceKind {
         if isMermaid(language: info) { return .mermaid(ready: settled) }
         guard assistantReply else { return .code }
         if MarkdownSpec.isSpecFence(language: info, code: code) { return .spec }
+        if htmlEnabled, closed, settled, isHtml(language: info),
+           code.contains(where: { !$0.isWhitespace }) {
+            return .htmlPreview
+        }
         return .code
     }
 }

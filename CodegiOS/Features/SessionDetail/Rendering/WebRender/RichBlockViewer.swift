@@ -4,6 +4,7 @@ import SwiftUI
 struct RichBlockViewerInput: Identifiable {
     enum Content {
         case mermaid(MermaidViewerContent)
+        case html(HtmlViewerContent)
     }
 
     let id = UUID()
@@ -66,6 +67,8 @@ struct RichBlockViewer: View {
         switch input.content {
         case .mermaid(let content):
             MermaidViewer(content: content)
+        case .html(let content):
+            HtmlPreviewViewer(content: content)
         }
     }
 }

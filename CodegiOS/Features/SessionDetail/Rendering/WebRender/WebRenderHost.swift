@@ -55,23 +55,36 @@ final class WebRenderHost {
     /// Inline pictures per source + theme + size. Bitmaps are far larger than
     /// the web's documents, so they get their own, cost-bounded cache (which
     /// the system also empties under memory pressure).
-    private let images: NSCache<NSString, RenderingBox> = {
-        let cache = NSCache<NSString, RenderingBox>()
-        cache.countLimit = 32
-        cache.totalCostLimit = 48 * 1024 * 1024
-        return cache
-    }()
+    private let images: NSCache<NSString, CacheBox<MermaidRendering>> = WebRenderHost.pictureCache()
     /// The last picture key drawn per SVG key, so a re-created block can show
     /// its diagram at once while it is redrawn for a new width.
     private var latestImageKey: [String: String] = [:]
+    /// HTML previews per source + theme + width + covered height.
+    private let htmlImages: NSCache<NSString, CacheBox<HtmlRendering>> = WebRenderHost.pictureCache()
 
     private var inFlight: [String: Task<MermaidRendering, Error>] = [:]
+    private var htmlInFlight: [String: Task<HtmlRendering, Error>] = [:]
     private let gate = SerialGate()
     private let parking = OffscreenParking()
     private var mermaidPage: RenderPage?
+    /// The HTML preview's page: content JavaScript off, one document a job.
+    private var htmlPage: RenderPage?
 
     /// Bitmap budget of an inline picture.
     private static let inlineMaxPixels: CGFloat = 8_000_000
+    /// Bitmap budget of an HTML preview (up to 12,000 points tall).
+    private static let htmlMaxPixels: CGFloat = 12_000_000
+
+    private static func pictureCache<Value>() -> NSCache<NSString, CacheBox<Value>> {
+        let cache = NSCache<NSString, CacheBox<Value>>()
+        cache.countLimit = 32
+        cache.totalCostLimit = 48 * 1024 * 1024
+        return cache
+    }
+
+    private static func cost(of image: UIImage) -> Int {
+        image.cgImage.map { $0.bytesPerRow * $0.height } ?? 1
+    }
 
     private init() {
         // Lives as long as the process: the observer is never removed.
@@ -133,8 +146,10 @@ final class WebRenderHost {
     func mermaidPNG(_ diagram: MermaidDiagram) async throws -> Data {
         await gate.acquire()
         defer { gate.release() }
-        let page = try await withTimeout(Self.warmUpTimeout) { try await self.readyMermaidPage() }
-        return try await withTimeout(Self.stepTimeout) {
+        let page = try await withTimeout(Self.warmUpTimeout, onTimeout: discardMermaidPage) {
+            try await self.readyMermaidPage()
+        }
+        return try await withTimeout(Self.stepTimeout, onTimeout: discardMermaidPage) {
             let width = diagram.natural?.width ?? 800
             let box = try await page.stage(svg: diagram.svg, width: width, height: diagram.natural?.height ?? 0,
                                            background: "transparent")
@@ -149,23 +164,25 @@ final class WebRenderHost {
 
     private func drawMermaid(_ request: MermaidRequest) async throws -> MermaidRendering {
         guard request.width > 0, request.maxHeight > 0 else { throw WebRenderError.unavailable }
-        let page = try await withTimeout(Self.warmUpTimeout) { try await self.readyMermaidPage() }
+        let page = try await withTimeout(Self.warmUpTimeout, onTimeout: discardMermaidPage) {
+            try await self.readyMermaidPage()
+        }
         let diagram: MermaidDiagram
         if let cached = diagrams[request.diagramKey] {
             diagram = cached
         } else {
-            let svg = try await withTimeout(Self.stepTimeout) {
+            let svg = try await withTimeout(Self.stepTimeout, onTimeout: discardMermaidPage) {
                 try await page.renderMermaid(source: request.source, theme: request.theme)
             }
             diagram = MermaidDiagram(svg: MermaidGeometry.stripSvgMaxWidth(svg),
                                      natural: MermaidGeometry.parseSvgSize(svg))
             diagrams.insert(diagram, for: request.diagramKey)
         }
-        let rendering = try await withTimeout(Self.stepTimeout) {
+        let rendering = try await withTimeout(Self.stepTimeout, onTimeout: discardMermaidPage) {
             try await self.picture(of: diagram, request: request, page: page)
         }
-        let cost = rendering.image.cgImage.map { $0.bytesPerRow * $0.height } ?? 1
-        images.setObject(RenderingBox(rendering), forKey: request.imageKey as NSString, cost: cost)
+        images.setObject(CacheBox(rendering), forKey: request.imageKey as NSString,
+                         cost: Self.cost(of: rendering.image))
         latestImageKey[request.diagramKey] = request.imageKey
         if latestImageKey.count > 128 { latestImageKey.removeAll() }
         return rendering
@@ -215,36 +232,134 @@ final class WebRenderHost {
         return page
     }
 
+    /// The HTML page: no warm-up, each job loads its own document.
+    private func readyHtmlPage() async throws -> RenderPage {
+        if let page = htmlPage, page.isUsable {
+            parking.attachIfNeeded()
+            return page
+        }
+        htmlPage?.discard()
+        htmlPage = nil
+        let rules = try await WebSandbox.blockingRules()
+        let page = RenderPage(rules: rules, allowsJavaScript: false,
+                              frame: CGRect(x: 0, y: 0, width: 400, height: HtmlPreviewMetrics.placeholderHeight),
+                              parking: parking)
+        page.isWarm = true
+        htmlPage = page
+        return page
+    }
+
     /// Run `operation`, giving up after `seconds`. A step that times out leaves
-    /// its page in an unknown state, so the page is thrown away.
-    private func withTimeout<T>(_ seconds: Double,
+    /// its page in an unknown state: `onTimeout` throws that page away.
+    private func withTimeout<T>(_ seconds: Double, onTimeout: @MainActor () -> Void,
                                 _ operation: @escaping @MainActor () async throws -> T) async throws -> T {
         do {
             return try await TimeoutRace<T>.run(seconds: seconds, operation)
         } catch WebRenderError.timedOut {
-            discardPages()
+            onTimeout()
             throw WebRenderError.timedOut
         }
     }
 
-    /// Throw the pages away; the next job builds them again.
-    func discardPages() {
+    /// Throw a page away; the next job builds it again.
+    private func discardMermaidPage() {
         mermaidPage?.discard()
         mermaidPage = nil
+    }
+
+    private func discardHtmlPage() {
+        htmlPage?.discard()
+        htmlPage = nil
     }
 
     private func trimForMemoryWarning() {
         diagrams.removeAll()
         images.removeAllObjects()
+        htmlImages.removeAllObjects()
         latestImageKey.removeAll()
         // A page in use is left alone; an idle one is rebuilt on demand.
-        if !gate.isBusy { discardPages() }
+        if !gate.isBusy {
+            discardMermaidPage()
+            discardHtmlPage()
+        }
+    }
+
+    // MARK: HTML preview
+
+    struct HtmlRequest: Hashable, Sendable {
+        let source: String
+        let theme: ChatHtmlTheme
+        /// The column the document is laid out in, in points.
+        let width: CGFloat
+        /// How much of the document, from the top, the picture covers.
+        let clip: CGFloat
+
+        var key: String { WebRenderKey.html(source: source, theme: theme, width: width, clip: clip) }
+    }
+
+    func cachedHtml(_ request: HtmlRequest) -> HtmlRendering? {
+        htmlImages.object(forKey: request.key as NSString)?.value
+    }
+
+    /// Lay the fence's document out at the column's width and draw (the top
+    /// `clip` points of) it. Not cached on failure.
+    func html(_ request: HtmlRequest) async throws -> HtmlRendering {
+        if let hit = cachedHtml(request) { return hit }
+        let key = request.key
+        if let running = htmlInFlight[key] { return try await running.value }
+        let job = Task { @MainActor () async throws -> HtmlRendering in
+            defer { self.htmlInFlight[key] = nil }
+            await self.gate.acquire()
+            defer { self.gate.release() }
+            if let hit = self.cachedHtml(request) { return hit }
+            guard request.width > 0, request.clip > 0 else { throw WebRenderError.unavailable }
+            let document = await Task.detached(priority: .userInitiated) {
+                ChatHtmlDocument.build(source: request.source, theme: request.theme)
+            }.value
+            let rendering = try await self.withTimeout(Self.stepTimeout, onTimeout: self.discardHtmlPage) {
+                try await self.drawHtml(document, request: request)
+            }
+            self.htmlImages.setObject(CacheBox(rendering), forKey: key as NSString,
+                                      cost: Self.cost(of: rendering.image))
+            return rendering
+        }
+        htmlInFlight[key] = job
+        return try await job.value
+    }
+
+    private func drawHtml(_ document: String, request: HtmlRequest) async throws -> HtmlRendering {
+        let page = try await readyHtmlPage()
+        // The layout viewport: the column's width, the default preview height
+        // (so `100vh` content measures as it would in the web's first frame).
+        page.webView.frame = CGRect(x: 0, y: 0, width: request.width, height: HtmlPreviewMetrics.placeholderHeight)
+        try await page.load(document)
+        let measured = try await page.documentHeight()
+        let height = HtmlPreviewMetrics.clamp(measured)
+        let covered = min(height, request.clip)
+        let size = CGSize(width: request.width, height: covered)
+        let scale = PixelBudget.scale(for: size, preferred: parking.displayScale, maxPixels: Self.htmlMaxPixels)
+        let image = try await page.capture(CGRect(origin: .zero, size: size), scale: scale,
+                                           background: RichBlockPalette(dark: request.theme.dark).rgb)
+        return HtmlRendering(image: image, width: request.width, height: height, covered: covered,
+                             theme: request.theme)
     }
 }
 
-private final class RenderingBox {
-    let value: MermaidRendering
-    init(_ value: MermaidRendering) { self.value = value }
+/// A chat HTML preview drawn for one column width.
+struct HtmlRendering {
+    let image: UIImage
+    /// The column it was laid out in.
+    let width: CGFloat
+    /// The document's height, clamped 96–12,000.
+    let height: CGFloat
+    /// How much of it, from the top, the picture covers.
+    let covered: CGFloat
+    let theme: ChatHtmlTheme
+}
+
+private final class CacheBox<Value> {
+    let value: Value
+    init(_ value: Value) { self.value = value }
 }
 
 // MARK: - Palette
@@ -356,6 +471,32 @@ final class RenderPage {
         _ = try? await webView.callAsyncJavaScript(MermaidHost.clearCall, arguments: [:], in: nil,
                                                     contentWorld: .page)
     }
+
+    /// The loaded document's height in points, measured as the web's size
+    /// reporter measures it: the root's box, or the body's overflow plus its
+    /// margins, whichever is taller. The script is the app's own, run in the
+    /// app's world — content JavaScript stays off. Falls back to the scroll
+    /// view's content size should script be unavailable.
+    func documentHeight() async throws -> Double {
+        guard !isDead else { throw WebRenderError.unavailable }
+        if let value = try? await webView.evaluateJavaScript(Self.measureScript, in: nil, contentWorld: .defaultClient),
+           let height = (value as? NSNumber)?.doubleValue {
+            return height
+        }
+        try? await Task.sleep(for: .milliseconds(120))
+        return Double(webView.scrollView.contentSize.height)
+    }
+
+    private static let measureScript = """
+    (() => {
+      const d = document.documentElement, b = document.body;
+      if (!b) return 0;
+      const root = d.getBoundingClientRect().height, box = b.getBoundingClientRect().height;
+      if (root === 0 && box === 0) return 0;
+      const s = getComputedStyle(b);
+      return Math.ceil(Math.max(root, Math.max(b.scrollHeight, box) + (parseFloat(s.marginTop) || 0) + (parseFloat(s.marginBottom) || 0)));
+    })()
+    """
 
     /// The page's `rect` (page coordinates) as a bitmap of `scale` pixels per
     /// point. With a `background`, the bitmap is opaque on it; without, the

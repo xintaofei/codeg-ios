@@ -28,6 +28,17 @@ enum WebRenderKey {
     static func mermaidImage(source: String, theme: MermaidTheme, width: CGFloat, clip: CGFloat) -> String {
         "\(mermaid(source: source, theme: theme))\u{1F}w\(points(width))\u{1F}c\(points(clip))"
     }
+
+    /// An HTML fence's document in one theme (its scheme and accent).
+    static func htmlDocument(source: String, theme: ChatHtmlTheme) -> String {
+        "html\u{1F}\(theme.key)\u{1F}\(digest(source))"
+    }
+
+    /// The preview of that document laid out at a column width, covering its
+    /// first `clip` points.
+    static func html(source: String, theme: ChatHtmlTheme, width: CGFloat, clip: CGFloat) -> String {
+        "\(htmlDocument(source: source, theme: theme))\u{1F}w\(points(width))\u{1F}c\(points(clip))"
+    }
 }
 
 /// A small LRU for text results, bounded by entry count and by the bytes the

@@ -286,6 +286,16 @@ enum AccentPalette: Int, CaseIterable, Identifiable {
         return luminance > 0.6 ? Color(white: 0.06) : .white
     }
 
+    /// `fill(dark:)` and `onColor(dark:)` as sRGB components, for content drawn
+    /// outside SwiftUI (the chat HTML preview's theme variables).
+    func components(dark: Bool) -> (fill: (red: Double, green: Double, blue: Double),
+                                    on: (red: Double, green: Double, blue: Double)) {
+        let c = dark ? rgb.dark : rgb.light
+        let luminance = 0.2126 * c.0 + 0.7152 * c.1 + 0.0722 * c.2
+        let on: Double = luminance > 0.6 ? 0.06 : 1
+        return ((c.0, c.1, c.2), (on, on, on))
+    }
+
     /// A self-contained dynamic swatch (this palette's own color, resolved for
     /// the current scheme) for the picker — independent of which accent is
     /// currently selected.

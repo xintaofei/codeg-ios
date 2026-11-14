@@ -13,6 +13,8 @@ struct AppearanceSettingsView: View {
     @Environment(AppearanceStore.self) private var appearance
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.colorScheme) private var colorScheme
+    /// Per device, off by default — the web's `workspace:chat-html-rendering`.
+    @AppStorage(ChatHtmlPreference.key) private var chatHtmlRendering = false
 
     // The accent resolved straight from the store + the standard color-scheme
     // trait — NOT via `Theme.accent`, which reads the bridged `\.codegAccent`
@@ -33,6 +35,7 @@ struct AppearanceSettingsView: View {
                     themeSection
                     accentSection
                     previewSection
+                    chatHtmlSection
                 }
                 .padding(.horizontal, Theme.Layout.screenHMargin)
                 .padding(.top, 8)
@@ -109,6 +112,29 @@ struct AppearanceSettingsView: View {
         }
         .buttonStyle(.plain)
         .animation(.snappy(duration: 0.2), value: isSelected)
+    }
+
+    // MARK: - Chat HTML
+
+    /// The web's "Chat HTML rendering" section (`ChatHtmlSettingsSection`).
+    private var chatHtmlSection: some View {
+        EditorSection(
+            title: "Chat HTML rendering",
+            footer: "Display self-contained HTML/CSS cards and diagrams directly in AI replies. Model scripts and external resources are blocked."
+        ) {
+            HStack(spacing: 12) {
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(resolvedAccent)
+                    .frame(width: 26)
+                    .accessibilityHidden(true)
+                Toggle("Render HTML in chat", isOn: $chatHtmlRendering)
+                    .tint(resolvedAccent)
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+        }
     }
 
     // MARK: - Live preview

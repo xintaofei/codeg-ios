@@ -173,6 +173,28 @@
         }
       }
     },
+    "Chat HTML rendering" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天 HTML 渲染"
+          }
+        }
+      }
+    },
+    "Code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代码"
+          }
+        }
+      }
+    },
     "Connection issue" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -191,6 +213,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "复制图片"
+          }
+        }
+      }
+    },
+    "Copy source" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制源码"
           }
         }
       }
@@ -261,6 +294,28 @@
         }
       }
     },
+    "Diagram" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图表"
+          }
+        }
+      }
+    },
+    "Display self-contained HTML/CSS cards and diagrams directly in AI replies. Model scripts and external resources are blocked." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 AI 回复正文中直接展示自包含的 HTML/CSS 卡片和图表，不运行模型脚本或加载外部资源。"
+          }
+        }
+      }
+    },
     "Earlier messages aren't listed." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -279,6 +334,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "耗时"
+          }
+        }
+      }
+    },
+    "Failed to render diagram" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图表渲染失败"
           }
         }
       }
@@ -371,6 +437,17 @@
         }
       }
     },
+    "HTML preview" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "HTML 预览"
+          }
+        }
+      }
+    },
     "Image" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -455,6 +532,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在加载更早的消息…"
+          }
+        }
+      }
+    },
+    "Mermaid error: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mermaid 错误：%@"
           }
         }
       }
@@ -580,6 +668,17 @@
         }
       }
     },
+    "Render HTML in chat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在聊天中渲染 HTML"
+          }
+        }
+      }
+    },
     "Rendered on desktop and web" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -587,6 +686,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在桌面端和网页端渲染"
+          }
+        }
+      }
+    },
+    "Rendering diagram…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在渲染图表…"
           }
         }
       }
@@ -741,6 +851,61 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "分享"
+          }
+        }
+      }
+    },
+    "Share as PNG" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分享为 PNG"
+          }
+        }
+      }
+    },
+    "Share as SVG" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分享为 SVG"
+          }
+        }
+      }
+    },
+    "Share source (.mmd)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分享源码（.mmd）"
+          }
+        }
+      }
+    },
+    "Show all" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "展开全部"
+          }
+        }
+      }
+    },
+    "Show source" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看源码"
           }
         }
       }
@@ -950,6 +1115,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "用户消息"
+          }
+        }
+      }
+    },
+    "View fullscreen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全屏查看"
           }
         }
       }

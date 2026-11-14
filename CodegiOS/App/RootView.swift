@@ -16,6 +16,9 @@ struct RootView: View {
     @State private var appearance = AppearanceStore()
     @State private var language = LanguageStore()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// "Render HTML in chat" (Settings → Appearance), handed to every
+    /// transcript's Markdown below.
+    @AppStorage(ChatHtmlPreference.key) private var chatHtmlRendering = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
 
@@ -40,6 +43,7 @@ struct RootView: View {
         // live SessionDetail streams.
         .environment(\.codegAccent, appearance.accent)
         .environment(appearance)
+        .environment(\.chatHtmlRendering, chatHtmlRendering)
         // App display language: overriding `\.locale` re-resolves every
         // `LocalizedStringKey` live (no `.id(...)` teardown, so live streams
         // survive). `.system` hands back the device locale (a no-op override).

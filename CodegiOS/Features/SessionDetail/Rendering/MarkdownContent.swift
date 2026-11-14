@@ -55,7 +55,8 @@ struct MarkdownListItem {
 /// Images render as blocks of their own (`MarkdownImageBlock`), loaded through
 /// the transcript's `MarkdownImageLoader` when there is one in the environment;
 /// GFM task items draw a checkbox in place of their bullet. Fences that claim a
-/// renderer of their own (Mermaid, json-render) are routed by `MarkdownFence`.
+/// renderer of their own (Mermaid, json-render, HTML previews) are routed by
+/// `MarkdownFence`.
 struct MarkdownContent: View {
     let raw: String
     /// While a reply is streaming, parse directly (skip the block LRU): the text
@@ -68,6 +69,10 @@ struct MarkdownContent: View {
     /// `JsonRenderScope` wraps only reply text: not user messages, tool output
     /// or reasoning).
     var assistantReply: Bool = false
+
+    /// "Render HTML in chat": an assistant reply's closed ```` ```html ````
+    /// fences draw as previews.
+    @Environment(\.chatHtmlRendering) private var htmlRendering
 
     /// Deepest list nesting drawn; deeper items draw at this depth.
     static let maxListLevel = 4
@@ -156,9 +161,11 @@ struct MarkdownContent: View {
             let settled = MarkdownFence.isSettled(closed: closed, streaming: streaming, isLastBlock: isLast,
                                                   sourceEndsWithNewline: raw.hasSuffix("\n"))
             switch MarkdownFence.kind(language: lang, code: code, closed: closed, settled: settled,
-                                      assistantReply: assistantReply) {
+                                      assistantReply: assistantReply, htmlEnabled: htmlRendering) {
             case .mermaid(let ready):
                 MermaidBlock(source: code, ready: ready)
+            case .htmlPreview:
+                HtmlPreviewBlock(source: code)
             case .spec:
                 SpecFenceCard(source: code)
             case .code:
