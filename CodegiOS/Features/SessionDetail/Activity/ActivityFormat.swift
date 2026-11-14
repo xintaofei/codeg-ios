@@ -46,7 +46,9 @@ enum ActivityFormat {
         if text.isEmpty { return 0 }
         var count = 1
         for scalar in text.unicodeScalars where scalar == "\n" { count += 1 }
-        return text.hasSuffix("\n") ? count - 1 : count
+        // By scalar, not `hasSuffix`: "\r\n" is ONE Character, so a CRLF text
+        // would never read as ending in a newline.
+        return text.unicodeScalars.last == "\n" ? count - 1 : count
     }
 
     /// The first non-blank line of a Markdown text with the inline syntax a

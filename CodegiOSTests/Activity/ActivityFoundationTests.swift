@@ -24,6 +24,8 @@ struct ActivityFormatTests {
         #expect(ActivityFormat.countLines("a") == 1)
         #expect(ActivityFormat.countLines("a\n") == 1)
         #expect(ActivityFormat.countLines("a\nb\n\n") == 3)
+        #expect(ActivityFormat.countLines("a\r\n") == 1)
+        #expect(ActivityFormat.countLines("a\r\nb\r\n") == 2)
     }
 
     @Test func splitPathForDisplay() {
