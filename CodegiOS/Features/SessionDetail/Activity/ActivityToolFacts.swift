@@ -7,10 +7,9 @@ import Foundation
 /// tool's host spellings (`delegation-card.ts`) and a command's announced
 /// shell session (`shell-session-tool.ts`).
 ///
-/// Not ported: opencode code-mode delegation detection
-/// (`isCodeModeDelegationCall`), which parses the `delegate_to_agent` call out
-/// of the JavaScript `code` an `execute` call carries. iOS has never recognised
-/// that shape; such a call stays a script/command row.
+/// opencode code-mode delegation (`isCodeModeDelegationCall`, an `execute`
+/// call whose JavaScript `code` calls `delegate_to_agent`) has its own port,
+/// ``CodeModeDelegation``: it is a whole JS scanner, not a small fact.
 enum ActivityToolFacts {
     // MARK: background launches
 

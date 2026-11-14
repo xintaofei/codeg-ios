@@ -63,9 +63,11 @@ struct DescribeToolCallTests {
         .init("mcp__linear__get_issue", #"{"id":"HVAC-1"}"#, "mcp"),
         // codeg's own MCP companions are never third-party MCP rows
         .init("mcp__codeg-mcp__delegate_to_agent", #"{"task":"t"}"#, "delegation"),
-        // (Skipped: opencode 2.x code-mode `execute` carrying a
-        // `delegate_to_agent` call → "delegation". iOS does not port code-mode
-        // delegation detection; such a call is a script row.)
+        // opencode 2.x code-mode: the delegation call rides inside the `execute`
+        // tool's `code` source string, so only the input shape can classify it.
+        .init("execute",
+              #"{"code":"await tools[\"codeg-mcp\"].delegate_to_agent({ agent_type: \"codex\", task: `t` })"}"#,
+              "delegation"),
         // Any other code-mode `execute` is a script row: `execute` normalizes to
         // `bash`, but its input is the script, which a command row would show as
         // an empty command line.

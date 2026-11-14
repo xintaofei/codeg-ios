@@ -51,6 +51,31 @@ enum CompanionDetect {
         return nameKind(name)
     }
 
+    /// A `delegate_to_agent` call known only by the tool name the activity
+    /// timeline classifies on (`ToolCallVM.toolName`), where neither the title
+    /// nor the argument shape says so — so it gets the delegation card the
+    /// timeline gives it a delegation step for:
+    /// - an opencode code-mode `execute`, whose arguments ride inside the JS
+    ///   `code` (``CodeModeDelegation``; `execute` normalizes to `bash`);
+    /// - a live call identified by its `_meta` — the broker's
+    ///   `codeg.delegation` stamp included, which turns a code-mode call's
+    ///   inferred name into `delegate_to_agent` once it is registered.
+    /// Mirrors the delegation arms of `DescribeToolCall.kind` — but the name
+    /// alone is not enough for a card: a live call's inferred name can come
+    /// from its title, which quotes anything (a Bash `rg 'delegate_to_agent'`
+    /// would lose its command and output to a sub-agent card). So it counts
+    /// only with a delegation's own evidence: the code-mode input, or a stamp
+    /// in `_meta` (``ToolNameNormalizer/metaNamesDelegation(_:)``).
+    static func delegateByToolName(_ toolName: String, input: String?, meta: AnyJSON?) -> CompanionKind? {
+        // Runs on every `ToolCallVM` built, live passes included: the name
+        // lookup is memoized, and the suffix test spares the regex.
+        let name = ToolNameNormalizer.normalizeToolName(toolName).lowercased()
+        if CodeModeDelegation.isCodeModeDelegationCall(normalizedToolName: name, input: input) { return .delegate }
+        guard name.hasSuffix("delegate_to_agent"), ActivityToolFacts.isDelegateToAgentToolName(name) else { return nil }
+        return CodeModeDelegation.isCodeModeDelegationInput(input) || ToolNameNormalizer.metaNamesDelegation(meta)
+            ? .delegate : nil
+    }
+
     /// Peel one or more wrapper objects (`arguments`/`input`/`params`/`payload`/
     /// `_meta`, incl. a double-encoded JSON string) to reach the object that
     /// actually carries the tool args. Mirrors web `findDelegationArgs` /

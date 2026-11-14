@@ -169,15 +169,17 @@ enum ActivitySummarize {
     }
 
     /// The broker task a delegation step is about: a `delegate_to_agent`
-    /// call's from its result, a `resume_delegation` call's from its `task_id`
-    /// argument. Nil for any other step. (Web `delegationStepTaskId`; the web
-    /// also drops a REFUSED resume, whose result iOS does not parse yet.)
+    /// call's from its result (else the meta the broker stamped on it), a
+    /// `resume_delegation` call's from its `task_id` argument — unless the
+    /// resume was refused. Nil for any other step. (Web `delegationStepTaskId`.)
     static func delegationTaskId(_ step: ActivityToolStep) -> String? {
         switch step.tool.kind {
         case .delegation:
-            let pair = DelegationModel.outputError(step.call)
-            return DelegationModel.parseDelegateTaskId(output: pair.output, errorText: pair.errorText)
+            return DelegationModel.delegateCallTaskId(step.call)
         case .delegationResume:
+            // A refused resume started no run: it is about no task's progress,
+            // so the checks after it stay with the call before it.
+            if DelegationModel.isRefusedResume(step.call) { return nil }
             // The arguments, possibly inside an `{input|arguments: …}` envelope.
             return ActivityJSON.findStringFieldDeep(step.call.input, key: "task_id")
         default:

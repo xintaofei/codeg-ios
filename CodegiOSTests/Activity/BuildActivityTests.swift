@@ -302,10 +302,49 @@ struct BuildActivityTests {
         #expect(laterPolls(model, "r1") == ["d3"])
     }
 
-    // Skipped: "leaves a refused resume out of the checks: the call before it
-    // still ends (completed / failed)" — iOS does not port the refused-
-    // `resume_delegation` check (`isRefusedResume`), so a refused resume still
-    // claims the checks after it.
+    @Test("leaves a refused resume out of the checks: the call before it still ends",
+          arguments: [("completed", 0), ("failed", 1)])
+    func leavesARefusedResumeOutOfTheChecks(_ ending: String, _ failed: Int) {
+        let task = "a1b2c3d4"
+        let turn = M.turn("turn-refused-resume", [
+            M.toolUse("d1", "mcp__codeg-mcp__delegate_to_agent", ["agent_type": "codex", "task": "Review the patch."]),
+            M.toolResult("d1", M.json(["task_id": task, "status": "started"])),
+            M.toolUse("r1", "mcp__codeg-mcp__resume_delegation", ["task_id": task]),
+            M.toolResult("r1", M.json([
+                "task_id": task, "status": "running", "error_code": "not_resumable", "agent_type": "codex",
+                "child_conversation_id": 9, "message": "Not resumed: the task is still running.",
+            ])),
+            M.toolUse("d2", "mcp__codeg-mcp__get_delegation_status", ["task_ids": [task]]),
+            M.toolResult("d2", M.json(["task_id": task, "status": ending, "text": "Done."])),
+        ])
+        let model = BuildActivity.build(M.parts(turn), isStreaming: false)
+        #expect(laterPolls(model, "d1") == ["d2"])
+        #expect(laterPolls(model, "r1") == nil)
+        #expect(model.summary.running == false)
+        // A failed task is the delegation's failure, counted once.
+        #expect(model.summary.failed == failed)
+    }
+
+    // iOS addition: an opencode code-mode delegation's script returns whatever
+    // it returns, so the task id it is checked by comes off the broker's meta
+    // (web `delegateCallTaskId`) — and the checks on that task are its own.
+    @Test("hands an opencode code-mode delegation the checks on the task its meta names")
+    func handsACodeModeDelegationTheChecksOnItsTask() {
+        let task = "a1b2c3d4"
+        let code = #"await tools["codeg-mcp"].delegate_to_agent({ agent_type: "codex", task: `Review the patch.` })"#
+        let turn = M.turn("turn-code-mode-delegation", [
+            M.toolUse("c1", "execute", ["code": code],
+                      meta: ["codeg.delegation": ["status": "running", "task_id": task]]),
+            M.toolResult("c1", "undefined"),
+            M.toolUse("d2", "mcp__codeg-mcp__get_delegation_status", ["task_ids": [task]]),
+            M.toolResult("d2", M.json(["task_id": task, "status": "completed", "text": "Done."])),
+        ])
+        let model = BuildActivity.build(M.parts(turn), isStreaming: false)
+        #expect(rows(model.items) == ["delegation:c1", "delegation-polls"])
+        #expect(laterPolls(model, "c1") == ["d2"])
+        #expect(model.summary.counts.agents == 1)
+        #expect(model.summary.counts.commands == 0)
+    }
 
     @Test("keeps the closing prose as the answer")
     func keepsTheClosingProseAsTheAnswer() {

@@ -676,6 +676,17 @@ enum ToolNameNormalizer {
 
     // MARK: - Meta readers
 
+    /// Whether `_meta` itself names the call a `delegate_to_agent` — the
+    /// broker's `codeg.delegation` stamp, or the host's own tool name
+    /// (`claudeCode.toolName` / `qoder.toolName`). The identity a live call's
+    /// title cannot give: a title quotes anything (`rg 'delegate_to_agent'`).
+    static func metaNamesDelegation(_ meta: AnyJSON?) -> Bool {
+        if meta?.object?["codeg.delegation"] != nil { return true }
+        return [extractClaudeCodeToolName(meta), extractQoderToolName(meta)].contains { name in
+            name.map { ActivityToolFacts.isDelegateToAgentToolName(normalizeToolName($0)) } ?? false
+        }
+    }
+
     /// `meta.<namespace>.<field>` as a trimmed, non-empty string.
     private static func metaString(_ meta: AnyJSON?, _ namespace: String, _ field: String) -> String? {
         guard let value = meta?.object?[namespace]?.object?[field]?.string else { return nil }
@@ -804,6 +815,14 @@ enum ToolNameNormalizer {
         while start < end, isJSWhitespace(scalars[start]) { start = scalars.index(after: start) }
         while end > start, isJSWhitespace(scalars[scalars.index(before: end)]) { end = scalars.index(before: end) }
         return String(scalars[start..<end])
+    }
+
+    /// `String.prototype.trimStart`.
+    static func jsTrimStart(_ s: String) -> String {
+        let scalars = s.unicodeScalars
+        var start = scalars.startIndex
+        while start < scalars.endIndex, isJSWhitespace(scalars[start]) { start = scalars.index(after: start) }
+        return String(scalars[start...])
     }
 
     /// `String.prototype.toLowerCase` — Foundation's mapping, which (unlike

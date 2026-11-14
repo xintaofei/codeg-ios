@@ -96,11 +96,13 @@ struct DelegatedSubThreadCard: View {
         // running ack, so without the meta the card would read "Running" forever
         // even after the child finished. It also carries the elapsed time.
         let meta = DelegationModel.parseDelegationMeta(vm.meta)
+        // An opencode code-mode `execute` carries its arguments inside its JS
+        // `code`; `parseInput` reads them from there too.
         let input = DelegationModel.parseInput(vm.input)
         let toolOutput = DelegationModel.parseToolOutput(vm.output, forceError: vm.isError)
         let hasError = vm.isError || vm.state == .error
         let status = DelegationModel.resolveStatus(parsedMeta: meta, toolOutput: toolOutput, state: vm.state, hasError: hasError)
-        let taskId = DelegationModel.parseDelegateTaskId(output: vm.output, errorText: nil)
+        let taskId = DelegationModel.parseDelegateTaskId(output: vm.output, errorText: nil) ?? meta?.taskId
         let duration = meta?.durationMs.map { DelegationModel.formatDuration($0) }
 
         HStack(alignment: .top, spacing: 10) {
@@ -159,6 +161,55 @@ struct DelegatedSubThreadCard: View {
         case .ok:       return .ok
         case .err:      return .err
         }
+    }
+}
+
+// MARK: - resume_delegation (refused)
+
+/// A `resume_delegation` the broker refused (`not_resumable`): the resume and
+/// the broker's reason, read in place. The refusal still names the task's
+/// agent, child and real status, but it revived nothing — so this card never
+/// shows a sub-agent or a run state (web: the workbench row `Resuming task …`
+/// that `DelegationResumeRow` falls back to; its reason, there one tap away,
+/// is the point of the card here).
+struct RefusedResumeCard: View {
+    let vm: ToolCallVM
+    let refusal: ResumeRefusal
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(Theme.Typography.cardTitle)
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                // A refusal delivered as an error is the call failing; an
+                // ordinary one is an answer, which carries no status of its own.
+                if vm.isError {
+                    CompanionStatusBadge(status: .err)
+                        .fixedSize()
+                }
+            }
+            if let message = refusal.message {
+                // The broker's own words (protocol English), verbatim.
+                Text(verbatim: message)
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .hairlineBorder(Theme.Radius.md)
+    }
+
+    private var title: LocalizedStringKey {
+        guard let taskId = refusal.taskId else { return "Resuming a delegated task" }
+        return "Resuming task #\(String(taskId.prefix(8)))"
     }
 }
 

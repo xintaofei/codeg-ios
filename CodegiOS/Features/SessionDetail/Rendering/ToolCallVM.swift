@@ -163,6 +163,7 @@ struct ToolCallVM: Identifiable {
         // addition, and it has to yield here.)
         let b = action != nil ? .search : ToolDerive.bucket(name: resolvedName, kind: kind)
         let comp = CompanionDetect.kind(name: resolvedName, input: resolvedInput, parsed: parsed)
+            ?? CompanionDetect.delegateByToolName(toolName ?? rawName, input: resolvedInput, meta: meta)
         self.bucket = b
         self.companion = comp
         self.displayTitle = ToolDerive.title(name: resolvedName, bucket: b, input: resolvedInput, parsed: parsed)

@@ -18,9 +18,14 @@ enum DescribeToolCall {
     static func kind(_ call: ToolCallVM) -> ToolStepKind {
         if ContextCompaction.matches(call.meta) { return .compaction }
         let name = ToolNameNormalizer.normalizeToolName(call.toolName).lowercased()
-        // (opencode code-mode delegation detection is not ported — see
-        // `ActivityToolFacts`.)
-        // Any code-mode script — an MCP call, or several — is a script, not a
+        // opencode 2.x code-mode routes MCP calls through the built-in `execute`
+        // tool, which normalizes to `bash` — so the name alone would call this a
+        // command. The delegation call lives inside the `code` source string,
+        // and on that tool the input shape outranks the name.
+        if CodeModeDelegation.isCodeModeDelegationCall(normalizedToolName: name, input: call.input) {
+            return call.id.isEmpty ? .generic : .delegation
+        }
+        // Any other code-mode script — an MCP call, or several — is a script, not a
         // command: its input is the script, which a command row would show as
         // an empty command line.
         if ActivityCodeMode.isCodeModeScriptCall(normalizedToolName: name, input: call.input) { return .script }

@@ -415,6 +415,10 @@ enum TranscriptTimeline {
             let vm = tool.call
             switch tool.tool.kind {
             case .delegation, .delegationResume:
+                // A refused resume revived nothing — no child of its own to
+                // outlive the reply, whatever status its report names (web:
+                // `DelegationResumeRow` pins nothing for one).
+                if tool.tool.kind == .delegationResume, DelegationModel.isRefusedResume(vm) { return false }
                 // The broker patches the call's meta with the child's terminal
                 // status once it finishes — authoritative over everything else.
                 let meta = DelegationModel.parseDelegationMeta(vm.meta)

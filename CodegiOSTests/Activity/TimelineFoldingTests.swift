@@ -143,6 +143,78 @@ struct TimelineFoldingTests {
         #expect(rows.map(\.id) == ["bg:p0:b0", "bg:p0:b1"])
     }
 
+    // A refusal reports the task's real status — here "running" — but revived
+    // nothing; and the check after it is still about the delegation before it,
+    // which that check says has ended. Neither stays in view once folded.
+    @Test func aRefusedResumeFoldsAwayAndLeavesTheDelegationItsCheck() {
+        let date = Date()
+        let turns = [
+            MessageTurn(id: "u", role: .user, blocks: [.text("go")], timestamp: date),
+            MessageTurn(id: "a", role: .assistant, blocks: [
+                .toolUse(id: "d1", name: "mcp__codeg-mcp__delegate_to_agent",
+                         inputPreview: #"{"agent_type":"codex","task":"Review"}"#, status: .unknown, meta: nil),
+                .toolResult(id: "d1", outputPreview: #"{"status":"started","task_id":"t1"}"#,
+                            isError: false, agentStats: nil),
+                .toolUse(id: "r1", name: "mcp__codeg-mcp__resume_delegation",
+                         inputPreview: #"{"task_id":"t1"}"#, status: .unknown, meta: nil),
+                .toolResult(id: "r1", outputPreview: #"{"agent_type":"codex","child_conversation_id":9,"error_code":"not_resumable","message":"Not resumed: the task is still running.","status":"running","task_id":"t1"}"#,
+                            isError: false, agentStats: nil),
+                .toolUse(id: "p1", name: "mcp__codeg-mcp__get_delegation_status",
+                         inputPreview: #"{"task_ids":["t1"]}"#, status: .unknown, meta: nil),
+                .toolResult(id: "p1", outputPreview: #"{"status":"completed","task_id":"t1","text":"Reviewed."}"#,
+                            isError: false, agentStats: nil),
+                .text("Reviewed."),
+            ], timestamp: date),
+        ]
+        let nodes = visible(TranscriptTimeline.buildPersisted(
+            turns: turns, pending: [], agent: .claudeCode, suppressInFlight: false), store: ReplyFoldStore())
+        #expect(!nodes.contains { $0.id == "tool-r1" }, "a refused resume is no running sub-agent")
+        #expect(!nodes.contains { $0.id == "tool-d1" }, "the delegation's own check says it ended")
+    }
+
+    @Test func aRefusedResumeOfARunningTaskIsNoRunningSubAgent() {
+        let date = Date()
+        let turns = [
+            MessageTurn(id: "u", role: .user, blocks: [.text("go")], timestamp: date),
+            MessageTurn(id: "a", role: .assistant, blocks: [
+                .toolUse(id: "r1", name: "mcp__codeg-mcp__resume_delegation",
+                         inputPreview: #"{"task_id":"t1"}"#, status: .unknown, meta: nil),
+                // The task's REAL status, which a resume that happened would
+                // report too: only the code says this one did not.
+                .toolResult(id: "r1", outputPreview: #"{"agent_type":"codex","child_conversation_id":9,"error_code":"not_resumable","message":"Not resumed: the task is still running.","status":"running","task_id":"t1"}"#,
+                            isError: false, agentStats: nil),
+                .text("It is still running; I'll check on it."),
+            ], timestamp: date),
+        ]
+        let nodes = visible(TranscriptTimeline.buildPersisted(
+            turns: turns, pending: [], agent: .claudeCode, suppressInFlight: false), store: ReplyFoldStore())
+        #expect(!nodes.contains { $0.id == "tool-r1" })
+    }
+
+    @Test func aRunningCodeModeDelegationIsADelegationCardKeptInView() {
+        let date = Date()
+        let code = #"await tools[\"codeg-mcp\"].delegate_to_agent({ agent_type: \"codex\", task: `do it` })"#
+        let turns = [
+            MessageTurn(id: "u", role: .user, blocks: [.text("go")], timestamp: date),
+            MessageTurn(id: "a", role: .assistant, blocks: [
+                .toolUse(id: "c1", name: "execute", inputPreview: #"{"code":""# + code + #""}"#,
+                         status: .unknown, meta: nil),
+                .toolResult(id: "c1", outputPreview: #"{"status":"running","task_id":"t1"}"#,
+                            isError: false, agentStats: nil),
+                .text("Delegated."),
+            ], timestamp: date),
+        ]
+        let nodes = visible(TranscriptTimeline.buildPersisted(
+            turns: turns, pending: [], agent: .claudeCode, suppressInFlight: false), store: ReplyFoldStore())
+        guard let node = nodes.first(where: { $0.id == "tool-c1" }) else {
+            Issue.record("the running delegation is pinned while folded"); return
+        }
+        guard case .tool(let vm) = node.content else {
+            Issue.record("a delegation draws as its card, not an activity row"); return
+        }
+        #expect(vm.companion == .delegate)
+    }
+
     @Test func theNewestReplyIsCurrentEvenWithoutAHeader() {
         let date = Date()
         let turns = [

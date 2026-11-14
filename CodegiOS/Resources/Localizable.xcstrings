@@ -327,6 +327,28 @@
         }
       }
     },
+    "Resuming a delegated task" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复委派任务"
+          }
+        }
+      }
+    },
+    "Resuming task #%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复任务 #%@"
+          }
+        }
+      }
+    },
     "Running in background · %@" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -38,7 +38,12 @@ struct NodeBody: View {
             case .askQuestion:
                 AskQuestionResultCard(vm: vm)
             case .none:
-                ToolCallCard(vm: vm)
+                // A refused resume revived nothing: the broker's reason is the card.
+                if let refusal = DelegationModel.resumeRefusal(vm) {
+                    RefusedResumeCard(vm: vm, refusal: refusal)
+                } else {
+                    ToolCallCard(vm: vm)
+                }
             }
         case .delegationStatusGroup(let polls):
             DelegationStatusGroupCard(polls: polls)

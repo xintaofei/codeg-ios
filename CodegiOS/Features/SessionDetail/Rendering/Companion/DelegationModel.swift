@@ -14,8 +14,11 @@ import Foundation
 // MARK: - delegate_to_agent
 
 /// Agent / task / working dir pulled from a `delegate_to_agent` call's input.
-struct DelegationParsedInput {
+struct DelegationParsedInput: Equatable {
     var agentType: AgentType?
+    /// The assistant the call names (`assistant_id`). Parsed for parity with
+    /// the web's `ParsedInput`; the iOS card has no assistant identity yet.
+    var assistantId: Int?
     var task: String?
     var workingDir: String?
 }
@@ -24,9 +27,29 @@ struct DelegationParsedInput {
 /// running *ack* (the real result arrives later via `get_delegation_status`), so
 /// an ack is kept distinct from a terminal outcome — otherwise the card would
 /// paint the ack as the result and flip its badge to "ok" prematurely.
+///
+/// `report` is the broker report the output was read from, nil when only
+/// opaque result text survived (web: `errorCode` set vs left `undefined`).
 enum DelegationToolOutput {
-    case ack(childConversationId: Int?)
-    case outcome(text: String, isError: Bool, childConversationId: Int?)
+    case ack(childConversationId: Int?, report: DelegationReport)
+    case outcome(text: String, isError: Bool, childConversationId: Int?, report: DelegationReport?)
+
+    var report: DelegationReport? {
+        switch self {
+        case .ack(_, let report): return report
+        case .outcome(_, _, _, let report): return report
+        }
+    }
+}
+
+/// What a recovered broker report — the async `DelegationTaskReport` or the
+/// legacy synchronous `DelegationOutcome` — carries beyond its kind.
+struct DelegationReport: Equatable {
+    /// `error_code` (`code` on the legacy shape); nil when the report carried
+    /// none. Read on EVERY variant, not just the failed ones: a refused resume
+    /// pairs `not_resumable` with the task's real status, so the code is the
+    /// only thing that tells it from the report of a genuine resume.
+    var errorCode: String?
 }
 
 /// The status a delegation card renders. (`waiting` — child blocked on a
@@ -48,25 +71,90 @@ struct ParsedDelegationMeta {
     var childConversationId: Int?
     var textPreview: String?
     var durationMs: Double?
+    /// Broker-minted task id, mirrored on every meta write — the only place a
+    /// call whose result names none (an opencode code-mode script) carries it.
+    var taskId: String?
 }
 
 enum DelegationModel {
 
     // MARK: delegate input
 
+    /// Agent / task / working dir from a `delegate_to_agent` call's input
+    /// (web `parseInput`): the JSON arguments, possibly inside a host wrapper,
+    /// or — for an opencode code-mode `execute` — the JS object literal inside
+    /// its `code` source, read by ``CodeModeDelegation``. A code-mode call whose
+    /// arguments can't be read is still one: its fields stay nil and the card
+    /// shows a generic sub-agent.
     static func parseInput(_ raw: String?) -> DelegationParsedInput {
-        guard let obj = CompanionDetect.unwrapArgs(CompanionJSON.object(from: raw)) else {
-            return DelegationParsedInput()
+        if let obj = CompanionDetect.unwrapArgs(CompanionJSON.object(from: raw)), hasDelegationArgs(obj) {
+            return DelegationParsedInput(
+                agentType: coerceAgentType(obj["agent_type"]),
+                assistantId: coerceAssistantId(obj["assistant_id"]),
+                task: obj["task"] as? String,
+                workingDir: obj["working_dir"] as? String
+            )
         }
-        // Validate the agent via the FAILABLE initializer (unknown → nil); the
-        // throwing `Decodable` init defaults unknown agents to `.claudeCode`,
-        // which would mislabel every unrecognized agent.
-        let agent = (obj["agent_type"] as? String).flatMap { AgentType(rawValue: $0) }
-        return DelegationParsedInput(
-            agentType: agent,
-            task: (obj["task"] as? String),
-            workingDir: (obj["working_dir"] as? String)
-        )
+        if let args = CodeModeDelegation.parseArgs(raw) {
+            return DelegationParsedInput(
+                agentType: coerceAgentType(args.agentType),
+                assistantId: coerceAssistantId(args.assistantId),
+                task: args.task,
+                workingDir: args.workingDir
+            )
+        }
+        return DelegationParsedInput()
+    }
+
+    /// The web `findDelegationArgs` direct hit: the object declares at least
+    /// one delegation field.
+    private static func hasDelegationArgs(_ obj: [String: Any]) -> Bool {
+        obj["task"] is String || obj["agent_type"] is String || obj["working_dir"] is String
+            || coerceAssistantId(obj["assistant_id"]) != nil
+    }
+
+    /// Every agent type codeg 0.44 knows (web `ALL_AGENT_TYPES`) — more than
+    /// iOS has hand-written support for; the rest draw as `.other(wire:)`.
+    private static let knownAgentTypes: Set<String> = [
+        "claude_code", "codex", "open_code", "gemini", "open_claw", "cline", "hermes",
+        "code_buddy", "kimi_code", "minimax_code", "pi", "grok", "cursor", "deepseek",
+        "qoder", "antigravity", "kiro", "zcode", "trae", "command_code",
+    ]
+
+    /// Narrow an untrusted wire value to an agent type, or nil (web
+    /// `coerceAgentType`): a known agent, or any `custom:<id>` slug. Not
+    /// `AgentType(rawValue:)` alone, which never fails — an unknown slug must
+    /// draw the generic sub-agent, not an agent named after it.
+    static func coerceAgentType(_ value: Any?) -> AgentType? {
+        guard let value = value as? String else { return nil }
+        let trimmed = ToolNameNormalizer.jsTrim(value)
+        guard !trimmed.isEmpty,
+              knownAgentTypes.contains(trimmed) || trimmed.hasPrefix(AgentType.customWirePrefix)
+        else { return nil }
+        return AgentType(rawValue: trimmed)
+    }
+
+    /// Largest assistant id: the backend keeps them in a 32-bit integer.
+    private static let maxAssistantId = 2_147_483_647
+
+    /// Narrow an untrusted wire value to an assistant id, or nil (web
+    /// `coerceAssistantId`): a positive integer, or a string of digits (some
+    /// hosts stringify numeric arguments). Never a boolean.
+    static func coerceAssistantId(_ value: Any?) -> Int? {
+        let n: Double
+        if let s = value as? String {
+            // `/^[1-9]\d{0,9}$/` on the trimmed text (`\d` is ASCII in JS).
+            let digits = Array(ToolNameNormalizer.jsTrim(s).utf16)
+            guard (1...10).contains(digits.count), digits[0] != 0x30,
+                  digits.allSatisfy({ $0 >= 0x30 && $0 <= 0x39 }) else { return nil }
+            n = Double(String(decoding: digits, as: UTF16.self)) ?? 0
+        } else if let number = ActivityJSON.number(value) {
+            n = number
+        } else {
+            return nil
+        }
+        guard n.isFinite, n == n.rounded(), n >= 1, n <= Double(maxAssistantId) else { return nil }
+        return Int(n)
     }
 
     // MARK: delegate meta
@@ -103,12 +191,15 @@ enum DelegationModel {
             for k in keys { if let v = inner[k], !v.isNull { return v } }
             return nil
         }
+        // The task id verbatim, as the web reads it (`typeof === "string" && id`).
+        let taskId = pick(["task_id", "taskId"])?.string.flatMap { $0.isEmpty ? nil : $0 }
         return ParsedDelegationMeta(
             status: status,
             errorCode: pick(["error_code", "errorCode"])?.nonEmptyString,
             childConversationId: pick(["child_conversation_id", "childConversationId"])?.double.map { Int($0) },
             textPreview: pick(["text_preview", "textPreview"])?.nonEmptyString,
-            durationMs: pick(["duration_ms", "durationMs"])?.double
+            durationMs: pick(["duration_ms", "durationMs"])?.double,
+            taskId: taskId
         )
     }
 
@@ -125,14 +216,14 @@ enum DelegationModel {
                 decoded = o
             } else if !(any is [Any]) {
                 // Top-level primitive (string / number / bool) — render directly.
-                return .outcome(text: scalarText(any), isError: forceError, childConversationId: nil)
+                return .outcome(text: scalarText(any), isError: forceError, childConversationId: nil, report: nil)
             }
             // An array falls through to the embedded-object scan below.
         }
         if decoded == nil { decoded = EmbeddedJSON.extractObject(trimmed) }
 
         guard let parsed = decoded else {
-            return .outcome(text: trimmed, isError: forceError, childConversationId: nil)
+            return .outcome(text: trimmed, isError: forceError, childConversationId: nil, report: nil)
         }
 
         // A host envelope around the MCP result — Codex's live wire sends
@@ -153,7 +244,7 @@ enum DelegationModel {
             }
             if let first = content.first as? [String: Any], let text = first["text"] as? String {
                 return .outcome(text: text, isError: envIsError || forceError,
-                                childConversationId: inner.flatMap(childConversationId))
+                                childConversationId: inner.flatMap(childConversationId), report: nil)
             }
         }
 
@@ -164,12 +255,12 @@ enum DelegationModel {
         // A host envelope that failed outright carries no result to render — its
         // own error string is the whole story, and beats dumping the envelope JSON.
         if let hostError = peel.hostError {
-            return .outcome(text: hostError, isError: true, childConversationId: nil)
+            return .outcome(text: hostError, isError: true, childConversationId: nil, report: nil)
         }
 
         // Unrecognized JSON — pretty-print so we don't surface raw braces.
         let pretty = ToolJSONFormat.prettyPrint(obj) ?? trimmed
-        return .outcome(text: "```json\n\(pretty)\n```", isError: forceError, childConversationId: nil)
+        return .outcome(text: "```json\n\(pretty)\n```", isError: forceError, childConversationId: nil, report: nil)
     }
 
     /// Whether `obj` is already one of the shapes ``parseToolOutput`` reads — a
@@ -197,7 +288,7 @@ enum DelegationModel {
         if hasError { return .err }
         switch toolOutput {
         case .ack: return .running
-        case .outcome(_, let isError, _): return isError ? .err : .ok
+        case .outcome(_, let isError, _, _): return isError ? .err : .ok
         case nil: return state == .done ? .ok : .starting
         }
     }
@@ -228,9 +319,78 @@ enum DelegationModel {
         return nil
     }
 
+    /// The broker task id a `delegate_to_agent` call was given, from what the
+    /// call itself carries: its ack, else the meta the broker stamped on it
+    /// (web `delegateCallTaskId`). An opencode code-mode script's result is
+    /// whatever the script returned, so there the meta is often the only
+    /// source.
+    static func delegateCallTaskId(_ vm: ToolCallVM) -> String? {
+        let pair = outputError(vm)
+        return parseDelegateTaskId(output: pair.output, errorText: pair.errorText)
+            ?? parseDelegationMeta(vm.meta)?.taskId
+    }
+
+    // MARK: resume_delegation verdicts
+
+    /// `DelegationTaskReport.error_code` for a refused `resume_delegation`
+    /// (`broker.rs::NOT_RESUMABLE_CODE`).
+    static let notResumableCode = "not_resumable"
+
+    /// Opening words of the broker's refusal message, which must stay readable
+    /// when the structured report is gone: `render_task_report` renders only
+    /// `message` as content text, and some hosts (OpenCode) drop
+    /// `structuredContent` entirely. The backend writes this prefix
+    /// deliberately for that case (`broker.rs::not_resumable_report`).
+    static let refusedResumeText = "Not resumed:"
+
+    /// Whether a `resume_delegation` result is the broker REFUSING to resume
+    /// (web `isRefusedResume`).
+    ///
+    /// This cannot be read off `status`: a refusal reports the task's ACTUAL
+    /// state, so "already completed" arrives as `completed` and "still
+    /// running" as `running` — indistinguishable from a real resume by status
+    /// alone. Only `error_code` separates them, or, where no structure
+    /// survived, the message prefix. It matters because a refusal still
+    /// carries `agent_type` and `child_conversation_id`, the evidence a resumed
+    /// sub-agent runs on: without this check a resume that never happened
+    /// claims the task's later checks and stays in view as if it were running.
+    static func isRefusedResume(output: String?, errorText: String?) -> Bool {
+        let parsed = parseResumeResult(output: output, errorText: errorText)
+        // Structure survived ⇒ it is the whole answer. Falling through to the
+        // text would be reading a child's own output for a verdict on the call.
+        if let report = parsed?.report { return report.errorCode == notResumableCode }
+        return opensWith(parsed, output, refusedResumeText) || opensWith(parsed, errorText, refusedResumeText)
+    }
+
+    /// ``isRefusedResume(output:errorText:)`` on a call (iOS keeps an error
+    /// result in `output`; see ``outputError(_:)``).
+    static func isRefusedResume(_ vm: ToolCallVM) -> Bool {
+        let pair = outputError(vm)
+        return isRefusedResume(output: pair.output, errorText: pair.errorText)
+    }
+
+    private static func parseResumeResult(output: String?, errorText: String?) -> DelegationToolOutput? {
+        (errorText?.isEmpty == false ? parseToolOutput(errorText, forceError: true) : nil) ?? parseToolOutput(output)
+    }
+
+    /// Does this result OPEN with the marker? Anchored, never a substring
+    /// search: for a `completed` report the content text is the child's own
+    /// LLM-written output, and a sub-agent that merely discusses delegation
+    /// must not be read as a verdict on its card. Checks the parsed outcome
+    /// text as well as the raw string, so a host envelope around the message
+    /// doesn't hide it. (JS `trimStart().startsWith`: code units.)
+    private static func opensWith(_ parsed: DelegationToolOutput?, _ raw: String?, _ marker: String) -> Bool {
+        var parsedText: String?
+        if case .outcome(let text, _, _, _)? = parsed { parsedText = text }
+        return [parsedText, raw].contains { candidate in
+            guard let candidate else { return false }
+            return ToolNameNormalizer.jsTrimStart(candidate).utf16.starts(with: marker.utf16)
+        }
+    }
+
     private static func applyOuterError(_ output: DelegationToolOutput, force: Bool) -> DelegationToolOutput {
-        guard force, case .outcome(let text, _, let cid) = output else { return output }
-        return .outcome(text: text, isError: true, childConversationId: cid)
+        guard force, case .outcome(let text, _, let cid, let report) = output else { return output }
+        return .outcome(text: text, isError: true, childConversationId: cid, report: report)
     }
 
     /// The broker's async `DelegationTaskReport` (by `status`) or the legacy
@@ -238,26 +398,36 @@ enum DelegationModel {
     /// is present.
     private static func interpretReport(_ obj: [String: Any]) -> DelegationToolOutput? {
         let cid = childConversationId(obj)
+        // Carried on EVERY variant — see `DelegationReport.errorCode`.
+        let report = DelegationReport(errorCode: obj["error_code"] as? String)
         if let status = obj["status"] as? String {
             switch status {
             case "running", "unknown":
-                return .ack(childConversationId: cid)
+                return .ack(childConversationId: cid, report: report)
             case "completed":
-                return .outcome(text: (obj["text"] as? String) ?? "", isError: false, childConversationId: cid)
+                return .outcome(text: (obj["text"] as? String) ?? "", isError: false,
+                                childConversationId: cid, report: report)
             case "failed", "canceled":
                 return .outcome(text: failureText(message: obj["message"], code: obj["error_code"]),
-                                isError: true, childConversationId: cid)
+                                isError: true, childConversationId: cid, report: report)
             default:
-                return .ack(childConversationId: cid)
+                return .ack(childConversationId: cid, report: report)
             }
         }
+        // The legacy synchronous outcome. Its report is set too — nil code
+        // where there is none — because its ABSENCE is what reads as "no report
+        // survived, fall back to the text": a well-formed legacy result whose
+        // text merely opens with "Not resumed:" must not be taken for a refusal.
         if let kind = obj["kind"] as? String {
             if kind == "ok" {
-                return .outcome(text: (obj["text"] as? String) ?? "", isError: false, childConversationId: cid)
+                return .outcome(text: (obj["text"] as? String) ?? "", isError: false,
+                                childConversationId: cid, report: DelegationReport(errorCode: nil))
             }
             if kind == "err" {
+                // The legacy shape spells the code `code`, not `error_code`.
+                let code = (obj["code"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 return .outcome(text: failureText(message: obj["message"], code: obj["code"]),
-                                isError: true, childConversationId: cid)
+                                isError: true, childConversationId: cid, report: DelegationReport(errorCode: code))
             }
         }
         return nil
@@ -581,5 +751,56 @@ extension DelegationModel {
         guard firstLine == runningMarker else { return nil }
         let secondLine = String(normalized[normalized.index(after: nl)...]).drop(while: { $0 == " " || $0 == "\t" })
         return secondLine.hasPrefix(runningReplyPrefix) ? .running : nil
+    }
+}
+
+// MARK: - resume_delegation (refused)
+
+/// A `resume_delegation` the broker refused: the task it named and what the
+/// broker said. It revived nothing, so it is drawn as just that — never as a
+/// sub-agent that came back (web: `DelegationResumeRow` falls back to the
+/// workbench row, which states the reason).
+struct ResumeRefusal: Equatable {
+    /// The `task_id` argument.
+    var taskId: String?
+    /// The broker's explanation as it wrote it ("Not resumed: the task already
+    /// completed — …"); nil when the result carried no text at all.
+    var message: String?
+}
+
+extension DelegationModel {
+    /// The refusal a `resume_delegation` call came back with; nil for any other
+    /// call, for a resume that went ahead, and for one still in flight.
+    static func resumeRefusal(_ vm: ToolCallVM) -> ResumeRefusal? {
+        // The name first: it is memoized, and this runs for every card drawn.
+        guard ToolNameNormalizer.normalizeToolName(vm.toolName).lowercased() == "resume_delegation",
+              vm.hasOutput, isRefusedResume(vm) else { return nil }
+        let pair = outputError(vm)
+        return ResumeRefusal(
+            taskId: ActivityJSON.findStringFieldDeep(vm.input, key: "task_id"),
+            message: refusalMessage(output: pair.output, errorText: pair.errorText)
+        )
+    }
+
+    /// The text a refused resume explains itself with. The report's own
+    /// `message` is preferred when it carries the refusal — for a `completed`
+    /// report the content text a host shows may be the child's earlier output
+    /// instead — then whatever the result shows, then the raw result.
+    static func refusalMessage(output: String?, errorText: String?) -> String? {
+        let raw = (output ?? errorText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty { return nil }
+        var candidates: [String?] = []
+        if let obj = parseResultObject(raw).obj {
+            let structured = obj["structuredContent"] as? [String: Any]
+            let embedded = firstContentText(obj).flatMap(EmbeddedJSON.extractObject)
+            candidates = [structured?["message"] as? String, obj["message"] as? String,
+                          embedded?["message"] as? String]
+        }
+        candidates.append(parseStatusReport(output: output, errorText: errorText).text)
+        candidates.append(raw)
+        let texts = candidates.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return texts.first { ToolNameNormalizer.jsTrimStart($0).utf16.starts(with: refusedResumeText.utf16) }
+            ?? texts.first
     }
 }
