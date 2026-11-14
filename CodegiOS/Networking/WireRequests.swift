@@ -125,6 +125,13 @@ struct ConnectionIdBody: Encodable, Sendable {
     let connectionId: String
 }
 
+/// Body for `submit_session_feedback` — a text-only note (blocks ride only the
+/// native channel, and iOS steers text alone).
+struct SubmitFeedbackBody: Encodable, Sendable {
+    let connectionId: String
+    let text: String
+}
+
 /// Body for `acp_respond_permission` — resolves a `permission_request` (and
 /// ExitPlanMode) by selecting one of the offered options. `optionId` is the
 /// chosen `PermissionOption.optionId`; a `reject*`-kind option denies.

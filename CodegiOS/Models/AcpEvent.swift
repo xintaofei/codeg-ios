@@ -105,6 +105,11 @@ enum AcpEvent: Hashable, Sendable, Decodable {
     /// `session/load` failed in a way codeg will not paper over; a
     /// `status_changed: error` follows.
     case sessionLoadFailed(sessionId: String, message: String, code: String)
+    /// A live-feedback note was recorded on the running turn (see
+    /// ``FeedbackItem``). Already `delivered` when it rode native steering.
+    case feedbackSubmitted(FeedbackItem)
+    /// The agent read these pull-channel notes.
+    case feedbackConsumed(ids: [String], deliveredAt: String?)
     case unknown(type: String)
 
     private enum CodingKeys: String, CodingKey {
@@ -115,6 +120,7 @@ enum AcpEvent: Hashable, Sendable, Decodable {
         case requestId, toolCall, options, questionId, questions, entries
         case approvalId, planMarkdown
         case attempt, maxRetries, retryDelayMs, errorStatus, record, notice, failures
+        case item, ids, deliveredAt
     }
 
     init(from decoder: Decoder) throws {
@@ -246,6 +252,16 @@ enum AcpEvent: Hashable, Sendable, Decodable {
             self = .sessionNotice(notice)
         case "plugin_load_failures":
             self = .pluginLoadFailures((try? c.decodeIfPresent([PluginLoadFailure].self, forKey: .failures)) ?? [])
+        case "feedback_submitted":
+            guard let item = try? c.decodeIfPresent(FeedbackItem.self, forKey: .item) else {
+                self = .unknown(type: type)
+                return
+            }
+            self = .feedbackSubmitted(item)
+        case "feedback_consumed":
+            self = .feedbackConsumed(
+                ids: (try? c.decodeIfPresent([String].self, forKey: .ids)) ?? [],
+                deliveredAt: try? c.decodeIfPresent(String.self, forKey: .deliveredAt))
         case "session_load_failed":
             self = .sessionLoadFailed(
                 sessionId: try c.decodeIfPresent(String.self, forKey: .sessionId) ?? "",
@@ -307,11 +323,16 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     /// The AIR failure table, resolved entries included (they are the
     /// revision watermarks). Merged by the same rule as the live upserts.
     let sessionFailures: [SessionFailureRecord]
+    /// The running turn's live-feedback notes, and the channels this session
+    /// has for them (fixed at launch; native steering can only downgrade).
+    let feedback: [FeedbackItem]
+    let feedbackToolAvailable: Bool
+    let nativeSteeringAvailable: Bool
 
     private enum CodingKeys: String, CodingKey {
         case connectionId, conversationId, folderId, status, externalId, eventSeq
         case liveMessage, activeToolCalls, pendingPermission, pendingQuestion, pendingPlanApproval
-        case lastError, sessionFailures
+        case lastError, sessionFailures, feedback, feedbackToolAvailable, nativeSteeringAvailable
     }
 
     init(from decoder: Decoder) throws {
@@ -329,6 +350,9 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         pendingPlanApproval = (try? c.decodeIfPresent(PendingPlanApprovalSnapshot.self, forKey: .pendingPlanApproval)) ?? nil
         lastError = (try? c.decodeIfPresent(SessionLastError.self, forKey: .lastError)) ?? nil
         sessionFailures = ((try? c.decodeIfPresent([SessionFailureRecord].self, forKey: .sessionFailures)) ?? nil) ?? []
+        feedback = ((try? c.decodeIfPresent([FeedbackItem].self, forKey: .feedback)) ?? nil) ?? []
+        feedbackToolAvailable = ((try? c.decodeIfPresent(Bool.self, forKey: .feedbackToolAvailable)) ?? nil) ?? false
+        nativeSteeringAvailable = ((try? c.decodeIfPresent(Bool.self, forKey: .nativeSteeringAvailable)) ?? nil) ?? false
     }
 }
 

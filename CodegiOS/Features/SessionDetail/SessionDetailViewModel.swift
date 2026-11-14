@@ -266,6 +266,68 @@ final class SessionDetailViewModel {
         sessionFailures = SessionFailures.dismiss(sessionFailures, ids: ids)
     }
 
+    // MARK: - Mid-turn messages (queue + live feedback)
+
+    /// Messages written while a turn was running (or behind ones that were),
+    /// sent one at a time once the agent is free (web `useMessageQueue`).
+    private(set) var queue = MessageQueue()
+    /// Auto-sending is paused: the last message to leave the queue was turned
+    /// away for a reason a retry would only hit again. The user's next send —
+    /// or "send now" on the strip — resumes it.
+    private(set) var queueHeld = false
+    /// When a message last bounced off a turn that was still running, for the
+    /// flush backoff.
+    private var lastQueueBounceAt: ContinuousClock.Instant?
+    private var queueFlushTask: Task<Void, Never>?
+    /// A queued row is being inserted into the running turn. It stays queued
+    /// for the round-trip — it only leaves once the backend confirms — so the
+    /// flush has to keep its hands off it meanwhile, or the turn's end would
+    /// send the same text twice: into the ending turn AND as the next one.
+    private var queueSteerInFlight = false
+
+    /// The global live-feedback switch (`get_feedback_settings`), re-read each
+    /// time the screen appears so a change made in Settings applies on return.
+    private(set) var feedbackEnabled = false
+    /// The current turn's live-feedback notes.
+    private(set) var feedbackNotes = FeedbackNotes()
+    /// The connection the notes and channel flags below describe.
+    private var feedbackConnection: String?
+    /// Whether this session's agent was given the `check_user_feedback` tool,
+    /// and whether it takes native `_session/steering` pushes. Snapshots only
+    /// ever upgrade them (they are fixed at launch); the one downgrade signal
+    /// is a submit's own result.
+    private(set) var feedbackToolAvailable = false
+    private(set) var nativeSteering = false
+    /// Latched by that downgrade, so a stale snapshot can't flip it back.
+    private var steeringDowngraded = false
+    /// The connection whose flags a turn start has already re-read.
+    private var feedbackFlagsRefreshed: String?
+    /// The composer's draft is on its way into the running turn.
+    private(set) var isSteering = false
+    /// The last turn was given up on without the server ever saying it ended
+    /// (the connection was lost for good). It may well still be running, so
+    /// the notes it was sent are not called unread, nor offered for resending.
+    private var turnEndUnconfirmed = false
+
+    /// Whether the notes still belong to a turn that may be running.
+    var feedbackTurnRunning: Bool { isInFlight || turnEndUnconfirmed }
+
+    var steerChannel: SteerChannel { nativeSteering ? .native : .pull }
+
+    /// A message can be sent into the turn that is running right now, over
+    /// one of the session's live-feedback channels.
+    var canSteer: Bool {
+        feedbackEnabled && isInFlight && isTurnActive && connectionID != nil
+            && (feedbackToolAvailable || nativeSteering)
+    }
+
+    /// The note rows above the composer: every note while the turn runs, then
+    /// only the ones the agent never read (web `useSessionFeedback`). Notes the
+    /// transcript already shows as messages are left out.
+    var visibleFeedbackNotes: [FeedbackItem] {
+        feedbackNotes.visible(turnRunning: feedbackTurnRunning, adopted: liveTurn?.steeredIDs ?? [])
+    }
+
     /// Monotonic token used to scroll-to-bottom; bump it to request a scroll.
     /// The transcript follows this *only while pinned to the bottom* (so streamed
     /// tokens don't yank a user who has scrolled up to read).
@@ -706,6 +768,9 @@ final class SessionDetailViewModel {
         isTornDown = false
         startLoad()
         scheduleReanchorIfIdle()
+        loadFeedbackSetting()
+        // Teardown cancelled any flush that was waiting.
+        scheduleQueueFlush()
     }
 
     /// The error view's "try again". Distinct from `activate()` only in where it
@@ -1257,13 +1322,43 @@ final class SessionDetailViewModel {
     /// which Grok expects as a follow-up turn). An override never touches the
     /// composer's draft or attachments, so a message the user was typing survives;
     /// a rejected send still restores the text into the composer so it isn't lost.
+    ///
+    /// While a turn runs — or while earlier messages are still waiting — the
+    /// composer's message joins the END of the queue instead (web
+    /// `shouldQueueDirectSend`): it goes out on its own once the agent is free,
+    /// and never ahead of what was written before it.
     func send(overrideText: String? = nil) {
         let text = (overrideText ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         let sending = overrideText == nil ? attachments : []
-        guard (!text.isEmpty || !sending.isEmpty), !isInFlight else { return }
+        guard !text.isEmpty || !sending.isEmpty else { return }
         // Identity comes from the loaded summary (existing conversation) or the
         // new-task request; without either the screen isn't ready to send.
         guard summary != nil || newRequest != nil else { return }
+        if overrideText == nil, isInFlight || !queue.isEmpty {
+            queue.enqueue(QueuedPrompt(text: text, attachments: sending))
+            draft = ""
+            attachments = []
+            // Sending again is also how the user resumes a held queue.
+            queueHeld = false
+            scheduleQueueFlush()
+            return
+        }
+        startSend(text: text, attachments: sending, origin: overrideText == nil ? .composer : .generated)
+    }
+
+    /// Where a prompt came from — which decides where it goes if the server
+    /// turns it away before accepting it.
+    private enum SendOrigin: Sendable {
+        /// Typed and sent: a rejection puts the text back in the composer.
+        case composer
+        /// The head of the queue: a rejection returns it to the front.
+        case queue(QueuedPrompt)
+        /// Written by the app itself (plan revision notes): it goes next.
+        case generated
+    }
+
+    private func startSend(text: String, attachments sending: [Attachment], origin: SendOrigin) {
+        guard !isInFlight else { return }
         // A draft (no linked summary yet) needs a folder + agent before it can
         // connect; lock the pickers the moment its first send begins.
         if summary == nil {
@@ -1300,7 +1395,7 @@ final class SessionDetailViewModel {
             timestamp: Date()
         )
         pendingUserTurns.append(userTurn)
-        if overrideText == nil {
+        if case .composer = origin {
             draft = ""
             attachments = []
         }
@@ -1325,11 +1420,11 @@ final class SessionDetailViewModel {
         sendTask?.cancel()
         let userTurnID = userTurn.id
         sendTask = Task { [weak self] in
-            await self?.runSend(text: text, attachments: sending, live: live, userTurnID: userTurnID)
+            await self?.runSend(text: text, attachments: sending, live: live, userTurnID: userTurnID, origin: origin)
         }
     }
 
-    private func runSend(text: String, attachments sending: [Attachment], live: LiveTurn, userTurnID: String) async {
+    private func runSend(text: String, attachments sending: [Attachment], live: LiveTurn, userTurnID: String, origin: SendOrigin) async {
         let clientMessageID = UUID().uuidString
         do {
             // For a brand-new draft, create the conversation row server-side BEFORE
@@ -1343,7 +1438,9 @@ final class SessionDetailViewModel {
 
             // Open the event stream and wait until it is ready + attached.
             try await openStream(connectionID: conn, live: live)
-            guard !Task.isCancelled else { return }
+            // Thrown, not returned: the catch is what puts an unsent message
+            // back when the screen's teardown cancelled it.
+            try Task.checkCancellation()
 
             isTurnActive = true
             if case .connecting = sendState { sendState = .thinking }
@@ -1356,26 +1453,30 @@ final class SessionDetailViewModel {
             // Prompt accepted — the created conversation is now legitimately in use,
             // so it must not be rolled back by a later stream failure.
             draftCreatedConversationID = nil
+            // A new turn began, so whatever the lost one was doing is over.
+            // (Not before acceptance: a send turned away leaves it uncertain —
+            // and not if THIS turn was lost while the reply was on its way.)
+            if liveTurn === live, isTurnActive { turnEndUnconfirmed = false }
         } catch let error as APIError where error.isStaleConnection {
             // Stale connection → drop it and retry once with a fresh spawn.
             connectionID = nil
-            await retrySendOnce(text: text, attachments: sending, live: live, clientMessageID: clientMessageID, userTurnID: userTurnID)
-        } catch APIError.turnInProgress {
-            notice = "A turn is already running on this session. Try again in a moment."
-            discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: text, restoringAttachments: sending)
+            await retrySendOnce(text: text, attachments: sending, live: live, clientMessageID: clientMessageID, userTurnID: userTurnID, origin: origin)
         } catch is CancellationError {
-            // Cancelled by the user / view teardown — handled in cancel().
+            // The user's Stop is `cancel()`'s to settle. Teardown is not:
+            // cancellation only ever lands BEFORE the prompt goes out (the
+            // attach wait, the capability check), so the message would sit in
+            // a placeholder that nothing sends — put it back where it came from.
+            if isTornDown { restoreUnsent(text: text, attachments: sending, live: live, userTurnID: userTurnID, origin: origin) }
         } catch {
             // Reaching here means the prompt was never accepted (resolve/attach/
             // prompt threw), so the optimistic user turn never made it to the
             // server. Roll it back and surface why, instead of stranding a
             // phantom "sent" message in the transcript.
-            discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: text, restoringAttachments: sending)
-            notice = Self.describe(error)
+            rejectSend(error, text: text, attachments: sending, live: live, userTurnID: userTurnID, origin: origin)
         }
     }
 
-    private func retrySendOnce(text: String, attachments sending: [Attachment], live: LiveTurn, clientMessageID: String, userTurnID: String) async {
+    private func retrySendOnce(text: String, attachments sending: [Attachment], live: LiveTurn, clientMessageID: String, userTurnID: String, origin: SendOrigin) async {
         do {
             closeStream()
             let prefs = preferredSelectors
@@ -1388,19 +1489,275 @@ final class SessionDetailViewModel {
             )
             connectionID = conn
             try await openStream(connectionID: conn, live: live)
-            guard !Task.isCancelled else { return }
+            // Thrown, not returned: the catch is what puts an unsent message
+            // back when the screen's teardown cancelled it.
+            try Task.checkCancellation()
             isTurnActive = true
             if case .connecting = sendState { sendState = .thinking }
             try await sendPrompt(conn: conn, text: text, attachments: sending, clientMessageID: clientMessageID)
             draftCreatedConversationID = nil
+            if liveTurn === live, isTurnActive { turnEndUnconfirmed = false }
         } catch is CancellationError {
-            // no-op
-        } catch APIError.turnInProgress {
-            notice = "A turn is already running on this session. Try again in a moment."
-            discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: text, restoringAttachments: sending)
+            if isTornDown { restoreUnsent(text: text, attachments: sending, live: live, userTurnID: userTurnID, origin: origin) }
         } catch {
-            discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: text, restoringAttachments: sending)
-            notice = Self.describe(error)
+            rejectSend(error, text: text, attachments: sending, live: live, userTurnID: userTurnID, origin: origin)
+        }
+    }
+
+    /// Undo a send the screen's teardown stopped before the prompt went out: a
+    /// queued message returns to the front of the queue (the flush resumes on
+    /// `activate`), anything else to the composer.
+    private func restoreUnsent(text: String, attachments sent: [Attachment], live: LiveTurn, userTurnID: String, origin: SendOrigin) {
+        if case .queue(let queued) = origin {
+            discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: "", restoringAttachments: [])
+            queue.requeueFront(queued)
+        } else {
+            discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: text, restoringAttachments: sent)
+        }
+    }
+
+    /// The server never accepted this prompt: roll the optimistic turn back,
+    /// then put the message somewhere it isn't lost.
+    ///
+    /// - Turned away by a turn that is still running (another client's, or one
+    ///   this screen hadn't seen start): into the queue, to go out once that
+    ///   turn ends — exactly as if it had been written mid-turn. A message that
+    ///   was the queue's head returns to the FRONT; a composer send that found
+    ///   the queue empty joins it. The flush backs off before retrying.
+    /// - Any other failure retries no better, so it is not retried on its own:
+    ///   a composer message goes back into the composer, and a queued one back
+    ///   to the front of a HELD queue, for the user to send again.
+    private func rejectSend(_ error: Error, text: String, attachments sent: [Attachment], live: LiveTurn, userTurnID: String, origin: SendOrigin) {
+        let prompt: QueuedPrompt
+        switch origin {
+        case .queue(let queued): prompt = queued
+        case .composer, .generated: prompt = QueuedPrompt(text: text, attachments: sent)
+        }
+        if case APIError.turnInProgress = error {
+            discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: "", restoringAttachments: [])
+            lastQueueBounceAt = ContinuousClock.now
+            if case .composer = origin { queue.enqueue(prompt) } else { queue.requeueFront(prompt) }
+            scheduleQueueFlush()
+            return
+        }
+        if case .queue = origin {
+            discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: "", restoringAttachments: [])
+            queue.requeueFront(prompt)
+        } else {
+            discardOptimisticSend(userTurnID: userTurnID, live: live, restoringDraft: text, restoringAttachments: sent)
+        }
+        // Whatever was queued behind this send would most likely fail the same
+        // way, one by one: wait for the user instead.
+        if !queue.isEmpty { queueHeld = true }
+        notice = Self.describe(error)
+    }
+
+    // MARK: - Queue
+
+    /// Send the queue's head once the agent is free — the queue's one send
+    /// engine (web's flush effect). Level-triggered: called wherever the screen
+    /// may have just become free, and a no-op whenever it isn't, so a message
+    /// re-queued after the turn's end already passed is not stranded.
+    ///
+    /// One message at a time: the send it starts makes the screen busy again,
+    /// and the next flush waits for that turn's own end.
+    private func scheduleQueueFlush() {
+        guard !queue.isEmpty, !queueHeld, queueFlushTask == nil, !isTornDown else { return }
+        let delay = MessageQueue.flushDelay(sinceBounce: lastQueueBounceAt.map { ContinuousClock.now - $0 })
+        queueFlushTask = Task { [weak self] in
+            // A turn-end commit settles first, even with no backoff to wait out.
+            if delay > .zero { try? await Task.sleep(for: delay) } else { await Task.yield() }
+            guard let self, !Task.isCancelled else { return }
+            self.queueFlushTask = nil
+            self.flushQueueHead()
+        }
+    }
+
+    private func flushQueueHead() {
+        // The SAME readiness the send path needs, checked before dequeuing: a
+        // message taken off the queue and then refused by `startSend` is lost.
+        guard !isTornDown, !queueHeld, !queueSteerInFlight, !isInFlight,
+              summary != nil || newRequest != nil else { return }
+        if summary == nil, folder == nil || selectedAgent == nil { return }
+        guard let head = queue.dequeue() else { return }
+        startSend(text: head.text, attachments: head.attachments, origin: .queue(head))
+    }
+
+    /// "Send now" on a held queue.
+    func resumeQueue() {
+        queueHeld = false
+        scheduleQueueFlush()
+    }
+
+    func removeQueued(_ id: UUID) {
+        queue.remove(id)
+        if queue.isEmpty { queueHeld = false }
+    }
+
+    /// Take a queued message back into the composer to rework it. Appended
+    /// after whatever is being typed, so nothing in the composer is lost.
+    func editQueued(_ id: UUID) {
+        guard let item = queue.remove(id) else { return }
+        if queue.isEmpty { queueHeld = false }
+        let current = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft = current.isEmpty ? item.text : current + "\n\n" + item.text
+        addAttachments(item.attachments)
+    }
+
+    // MARK: - Live feedback (steering)
+
+    /// Send the composer's draft into the running turn over the session's
+    /// live-feedback channel (web `handleSteerClick`): a native session inserts
+    /// it into the turn at once, a pull one records a note the agent reads at
+    /// its next check.
+    ///
+    /// The draft clears only once the backend has the message, and only if it
+    /// still says what was sent. The turn ending first is not a failure — the
+    /// message goes out as the next turn instead; anything else keeps the draft.
+    ///
+    /// Text only: images ride the native wire alone and the pull one refuses
+    /// them, so a draft with attachments is sent (queued) the ordinary way.
+    func steerDraft() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, attachments.isEmpty, canSteer, !isSteering, let conn = connectionID else { return }
+        isSteering = true
+        let channel = steerChannel
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isSteering = false }
+            let draftStillSent = { self.draft.trimmingCharacters(in: .whitespacesAndNewlines) == text }
+            do {
+                let item = try await self.client.submitSessionFeedback(connectionId: conn, text: text)
+                if draftStillSent() { self.draft = "" }
+                self.adoptSteerResult(item, connection: conn)
+            } catch let error where TurnRejection.isNoActiveTurn(error) {
+                if draftStillSent() { self.draft = "" }
+                self.queue.enqueue(QueuedPrompt(text: text))
+                self.notice = String(localized: "Queued instead — it will be sent with the next turn.")
+                self.scheduleQueueFlush()
+            } catch {
+                self.notice = Self.steerFailure(channel, error)
+            }
+        }
+    }
+
+    /// A queued row's "insert into current turn" (web `handleQueueSteer`). The
+    /// row stays queued for the round-trip and leaves only once delivered; if
+    /// the turn ended first it simply goes next, as the next turn's prompt.
+    func steerQueued(_ id: UUID) {
+        guard let item = queue.items.first(where: { $0.id == id }),
+              item.attachments.isEmpty, canSteer, !queueSteerInFlight,
+              let conn = connectionID else { return }
+        let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        queueSteerInFlight = true
+        let channel = steerChannel
+        Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.queueSteerInFlight = false
+                // The flush was held for this round-trip; the turn may have
+                // ended during it.
+                self.scheduleQueueFlush()
+            }
+            do {
+                let delivered = try await self.client.submitSessionFeedback(connectionId: conn, text: text)
+                self.removeQueued(id)
+                self.adoptSteerResult(delivered, connection: conn)
+            } catch let error where TurnRejection.isNoActiveTurn(error) {
+                self.queue.moveToFront(id)
+                self.notice = String(localized: "Queued instead — it will be sent with the next turn.")
+            } catch {
+                self.notice = Self.steerFailure(channel, error)
+            }
+        }
+    }
+
+    private static func steerFailure(_ channel: SteerChannel, _ error: Error) -> String {
+        let title = channel == .pull
+            ? String(localized: "Couldn’t send your note")
+            : String(localized: "Couldn’t insert into the current turn")
+        return title + " — " + describe(error)
+    }
+
+    /// Record a submitted note and converge the channel on what the submit
+    /// RESULT proves (web `reconcileChannel`).
+    ///
+    /// A `pending` note on a session thought native proves the backend already
+    /// fell back to the pull path: switch, and say so — the "insert now" became
+    /// a waiting note. A `delivered` one is ambiguous (the round that falls back
+    /// also returns delivered), so re-read the snapshot once and converge
+    /// silently if it says native steering is off.
+    private func adoptSteerResult(_ item: FeedbackItem, connection conn: String) {
+        guard feedbackConnection == nil || feedbackConnection == conn else { return }
+        feedbackNotes.submitted(item)
+        guard nativeSteering else { return }
+        if !item.isDelivered {
+            steeringDowngraded = true
+            nativeSteering = false
+            notice = String(localized: "Instant insert isn’t available in this session — your note was saved for the agent to pick up on its next check.")
+            return
+        }
+        Task { [weak self] in
+            guard let snapshot = try? await self?.client.connectionSnapshot(connectionId: conn) else { return }
+            // Only an explicit `false`: an older server omits the field.
+            guard let self, self.feedbackConnection == conn, snapshot.nativeSteeringAvailable == false else { return }
+            self.steeringDowngraded = true
+            self.nativeSteering = false
+        }
+    }
+
+    /// An unread note from a turn that is over, sent as an ordinary message.
+    func resendFeedbackNote(_ id: String) {
+        guard !feedbackTurnRunning, let note = feedbackNotes.notes.first(where: { $0.id == id }) else { return }
+        feedbackNotes.dismiss(id)
+        queue.enqueue(QueuedPrompt(text: note.text))
+        queueHeld = false
+        scheduleQueueFlush()
+    }
+
+    func dismissFeedbackNote(_ id: String) {
+        feedbackNotes.dismiss(id)
+    }
+
+    /// Adopt a snapshot's feedback state. The note list only when it can
+    /// describe the turn on screen — the pre-prompt attach snapshot of a send
+    /// still holds the PREVIOUS turn's notes — while the channel flags are
+    /// session facts and always welcome (monotonic upgrades only).
+    private func hydrateFeedback(from snap: LiveSessionSnapshot, connection conn: String, notes: Bool) {
+        if feedbackConnection != conn {
+            feedbackConnection = conn
+            feedbackNotes = FeedbackNotes()
+            feedbackToolAvailable = false
+            nativeSteering = false
+            steeringDowngraded = false
+            feedbackFlagsRefreshed = nil
+        }
+        if snap.feedbackToolAvailable { feedbackToolAvailable = true }
+        if snap.nativeSteeringAvailable, !steeringDowngraded { nativeSteering = true }
+        if notes { feedbackNotes.hydrate(snap.feedback) }
+    }
+
+    /// A fresh connection is attached before its agent has finished starting,
+    /// so the attach snapshot can report no channel yet; read the flags again
+    /// once its first turn is underway (web's self-heal), at most once.
+    private func refreshFeedbackFlagsIfUnknown() {
+        guard feedbackEnabled, !(feedbackToolAvailable && nativeSteering),
+              let conn = connectionID, feedbackConnection == conn,
+              feedbackFlagsRefreshed != conn else { return }
+        feedbackFlagsRefreshed = conn
+        Task { [weak self] in
+            guard let snapshot = try? await self?.client.connectionSnapshot(connectionId: conn) else { return }
+            guard let self, self.feedbackConnection == conn else { return }
+            if snapshot.feedbackToolAvailable == true { self.feedbackToolAvailable = true }
+            if snapshot.nativeSteeringAvailable == true, !self.steeringDowngraded { self.nativeSteering = true }
+        }
+    }
+
+    private func loadFeedbackSetting() {
+        Task { [weak self] in
+            guard let enabled = try? await self?.client.feedbackEnabled() else { return }
+            self?.feedbackEnabled = enabled
         }
     }
 
@@ -1766,7 +2123,12 @@ final class SessionDetailViewModel {
                 // and (for the initial connect) release the waiting send.
                 streamReconnects = 0
                 if isCurrent, let seq = snap.eventSeq { live.lastSeq = seq }
-                if isCurrent { hydrateSessionFailures(from: snap, connection: conn) }
+                if isCurrent {
+                    hydrateSessionFailures(from: snap, connection: conn)
+                    // The handshake's snapshot predates this prompt: its notes
+                    // are the previous turn's. A reconnect's describe this one.
+                    hydrateFeedback(from: snap, connection: conn, notes: readyContinuation == nil)
+                }
                 // A reconnect answered with a snapshot rather than a replay —
                 // first attach after a drop with no cursor, or a gap too large
                 // to replay. Either the turn ended while the socket was down, or
@@ -1966,6 +2328,7 @@ final class SessionDetailViewModel {
                 // A snapshot means the socket is healthy — reset the reconnect budget.
                 streamReconnects = 0
                 hydrateSessionFailures(from: snap, connection: conn)
+                hydrateFeedback(from: snap, connection: conn, notes: true)
                 if let rebuilt = buildLiveTurn(from: snap) {
                     live = rebuilt
                     liveTurn = rebuilt
@@ -1975,6 +2338,7 @@ final class SessionDetailViewModel {
                     liveTurnFromReattach = true
                     replyFolds.arm()
                     isTurnActive = true
+                    turnEndUnconfirmed = false
                     restorePending(from: snap)
                     sendState = .thinking
                     requestStickToBottom()
@@ -1989,7 +2353,9 @@ final class SessionDetailViewModel {
                         finalize(live: prior, stopReason: "end_turn")
                         return
                     }
-                    // Idle connection: nothing in flight. Release it.
+                    // Idle connection: nothing in flight. Release it. Whatever
+                    // turn this screen lost track of is over, too.
+                    turnEndUnconfirmed = false
                     closeStream()
                     connectionID = nil
                     // If the server had claimed a live turn at load, it finished
@@ -2235,7 +2601,9 @@ final class SessionDetailViewModel {
 
         case .userMessage:
             // The server echoes our own prompt; we already showed it optimistically.
-            break
+            // A new turn: notes are turn-scoped, and the backend just cleared them.
+            feedbackNotes.newTurn()
+            refreshFeedbackFlagsIfUnknown()
 
         case .turnComplete(let stopReason):
             // Warnings settle at a CLEAN end only: any other exit did not
@@ -2334,6 +2702,21 @@ final class SessionDetailViewModel {
                 agent: agent?.label ?? String(localized: "The agent"), agentIsCodex: agent == .codex)
             live.lastNonFatalError = (text, nil)
 
+        case .feedbackSubmitted(let item):
+            feedbackNotes.submitted(item)
+            // Already `delivered` means it rode native steering: the agent has
+            // it as a user message, so the transcript shows it as one, closing
+            // the reply so far (web `STEERING_MESSAGE`). A `pending` note is the
+            // pull channel's and stays a row above the composer. Out of turn
+            // there is no reply to split, and the note keeps its row.
+            if item.isDelivered, isTurnActive, live.isStreaming, liveTurn === live {
+                live.insertSteering(SteeredMessage(id: item.id, text: item.text, at: Date()))
+                requestScrollToBottom()
+            }
+
+        case .feedbackConsumed(let ids, let deliveredAt):
+            feedbackNotes.consumed(ids: ids, at: deliveredAt)
+
         case .sessionStarted, .conversationStatusChanged, .userPromptSent, .unknown:
             break
         }
@@ -2409,6 +2792,7 @@ final class SessionDetailViewModel {
     private func finalize(live: LiveTurn, stopReason: String) {
         guard isTurnActive else { return }
         isTurnActive = false
+        turnEndUnconfirmed = false
         // Read before clearing: this is the one transition that delivers parked
         // plan-revision notes (every other terminal path drops them).
         let planFollowUp = pendingPlanFollowUp
@@ -2429,6 +2813,9 @@ final class SessionDetailViewModel {
         // The keep-planning turn just ended — deliver the revision notes as the
         // follow-up prompt Grok expects (it discards them on the reply itself).
         if let planFollowUp { send(overrideText: planFollowUp) }
+        // The agent is free: the next queued message goes out (a no-op when
+        // the plan notes above already took the turn).
+        scheduleQueueFlush()
     }
 
     /// Roll back an optimistic send that failed *before the server accepted the
@@ -2518,6 +2905,9 @@ final class SessionDetailViewModel {
         // screen and re-anchors on the next turn that reconciles or rolls back
         // before acceptance — the same deal an explicit cancel gets.
         scheduleReanchorIfIdle()
+        // The turn died rather than ended — sending the queue into the same
+        // failure one message at a time helps nobody. It waits for the user.
+        if !queue.isEmpty { queueHeld = true }
     }
 
     // MARK: - Stream recovery (transient drops)
@@ -2686,6 +3076,8 @@ final class SessionDetailViewModel {
                     sendState = .idle
                     closeStream()
                     requestScrollToBottom()
+                    // The turn is over and the agent free, as after `finalize`.
+                    scheduleQueueFlush()
                     return
                 }
             }
@@ -2698,6 +3090,7 @@ final class SessionDetailViewModel {
         // left, which the loop guard alone does not cover (teardown can land
         // during the last attempt).
         guard lifetime == lifecycle, liveTurn === live, isTurnActive else { return }
+        turnEndUnconfirmed = true
         failLive(live, message: "Lost the connection. Your reply may still be running — reopen the session to check.")
     }
 
@@ -2994,14 +3387,11 @@ final class SessionDetailViewModel {
         pendingUserTurns.removeAll()
         // Only fold in an assistant turn that actually has renderable content. A
         // finalized turn can be non-empty *solely* because of an inline error /
-        // "Cancelled." message (which `snapshotAsMessageTurn` can't represent as a
+        // "Cancelled." message (which `snapshotAsMessageTurns` can't represent as a
         // persisted block, since ContentBlock has no error case) — appending its
         // zero-block snapshot would render as "No content". Such a transient error
         // placeholder is simply dropped on the next send; the user turn is kept.
-        let snapshot = live.snapshotAsMessageTurn()
-        if !snapshot.blocks.isEmpty {
-            turns.append(snapshot)
-        }
+        turns.append(contentsOf: live.snapshotAsMessageTurns())
         liveTurn = nil
         requestScrollToBottom()
     }
@@ -3054,6 +3444,12 @@ final class SessionDetailViewModel {
                 try? await self?.client.cancel(connectionId: conn)
             }
         }
+        // Stopped, the agent is free for the next queued message — once the
+        // server has wound the turn down, which this closed stream won't hear
+        // about. Wait out one backoff first (a send still landing early just
+        // bounces and is retried).
+        lastQueueBounceAt = ContinuousClock.now
+        scheduleQueueFlush()
         // No re-anchor drain here: the cancelled reply is deliberately left on
         // screen, and the server may have already persisted the same round — so
         // adopting its tail underneath would show that round twice. Nor is one
@@ -3089,6 +3485,8 @@ final class SessionDetailViewModel {
         piTrustTask = nil
         sendTask?.cancel()
         sendTask = nil
+        queueFlushTask?.cancel()
+        queueFlushTask = nil
         consumerTask?.cancel()
         consumerTask = nil
         reconcileTask?.cancel()

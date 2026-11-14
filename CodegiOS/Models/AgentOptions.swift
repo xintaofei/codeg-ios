@@ -82,10 +82,16 @@ struct SessionSnapshot: Hashable, Sendable, Decodable {
     /// connection that has already died; an unrecognized value decodes to nil,
     /// which means "keep waiting" — the safe direction.
     let status: ConnectionStatus?
+    /// The live-feedback channels this session has (see ``FeedbackItem``).
+    /// Nil when the server omits them — an older one — which must never read
+    /// as a downgrade.
+    let feedbackToolAvailable: Bool?
+    let nativeSteeringAvailable: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case modes, currentMode, configOptions, selectorsReady, availableCommands
         case promptCapabilities, status
+        case feedbackToolAvailable, nativeSteeringAvailable
     }
 
     init(from decoder: Decoder) throws {
@@ -97,6 +103,8 @@ struct SessionSnapshot: Hashable, Sendable, Decodable {
         availableCommands = try c.decodeIfPresent([AvailableCommandInfo].self, forKey: .availableCommands) ?? []
         promptCapabilities = try c.decodeIfPresent(PromptCapabilities.self, forKey: .promptCapabilities)
         status = try c.decodeIfPresent(String.self, forKey: .status).flatMap(ConnectionStatus.init(rawValue:))
+        feedbackToolAvailable = try? c.decodeIfPresent(Bool.self, forKey: .feedbackToolAvailable)
+        nativeSteeringAvailable = try? c.decodeIfPresent(Bool.self, forKey: .nativeSteeringAvailable)
     }
 
     /// True when this session is over, so nothing more will ever be published on

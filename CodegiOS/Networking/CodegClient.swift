@@ -254,6 +254,14 @@ struct CodegClient: Sendable {
         ))
     }
 
+    /// Send a message into the RUNNING turn over the session's live-feedback
+    /// channel: native steering inserts it at once, the pull tool leaves it for
+    /// the agent's next check. Fails with an "no active turn" server error when
+    /// the turn already ended — the caller then sends it as the next prompt.
+    func submitSessionFeedback(connectionId: String, text: String) async throws -> FeedbackItem {
+        try await postJSON("submit_session_feedback", SubmitFeedbackBody(connectionId: connectionId, text: text))
+    }
+
     /// Cancel the in-flight turn on a connection.
     func cancel(connectionId: String) async throws {
         _ = try await send("acp_cancel", body: ConnectionIdBody(connectionId: connectionId))

@@ -337,6 +337,10 @@ struct SessionDetailView: View {
                     .transition(.opacity)
                     .zIndex(2)
                 }
+                // What the user wrote that hasn't become a turn yet: notes sent
+                // into the running one, and messages queued for the next.
+                MidTurnStrips(model: model)
+                    .zIndex(2)
                 if !model.isPinnedToBottom {
                     JumpToLatestButton { model.userTappedScrollToBottom() }
                         .padding(.bottom, 10)
@@ -361,7 +365,11 @@ struct SessionDetailView: View {
                     onSend: { model.send() },
                     onStop: { model.cancel() },
                     onDismissNotice: { model.notice = nil },
-                    insertModel: model.insertModel
+                    insertModel: model.insertModel,
+                    canSteer: model.canSteer,
+                    steerChannel: model.steerChannel,
+                    isSteering: model.isSteering,
+                    onSteer: { model.steerDraft() }
                 )
             }
             .animation(.snappy(duration: 0.24), value: model.isPinnedToBottom)

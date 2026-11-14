@@ -132,14 +132,25 @@ enum LiveSegment: Identifiable {
     case text(LiveTextRun)
     case thinking(LiveTextRun)
     case tool(LiveToolCall)
+    /// A message the user inserted into this turn (native steering). It ends
+    /// the reply so far, and what follows is the reply to it.
+    case steering(SteeredMessage)
 
     var id: String {
         switch self {
         case .text(let run): return "t-\(run.id)"
         case .thinking(let run): return "k-\(run.id)"
         case .tool(let call): return "x-\(call.id)"
+        case .steering(let message): return "s-\(message.id)"
         }
     }
+}
+
+/// A user message inserted into a running turn (a delivered ``FeedbackItem``).
+struct SteeredMessage: Hashable, Sendable {
+    let id: String
+    let text: String
+    let at: Date
 }
 
 /// A growing run of text (either assistant prose or reasoning). A reference type
@@ -286,6 +297,7 @@ final class LiveTurn: Identifiable {
             if case .thinking(let run) = segment { run.flushNow() }
         }
         segments = other.segments
+        steeredIDs = other.steeredIDs
         toolIndex = other.toolIndex
         livePlan = other.livePlan
     }
@@ -299,6 +311,20 @@ final class LiveTurn: Identifiable {
     }
 
     // MARK: - Mutation (event handlers call these on the main actor)
+
+    /// The ids of the messages inserted into this turn. Stored rather than
+    /// derived from `segments`, so the note strips that read it are not
+    /// re-rendered by every segment the reply appends.
+    private(set) var steeredIDs: Set<String> = []
+
+    /// Insert a steered user message at this point of the stream. Idempotent by
+    /// id: the submit broadcast reaches the sender too.
+    func insertSteering(_ message: SteeredMessage) {
+        guard !steeredIDs.contains(message.id) else { return }
+        flushAllText()
+        segments.append(.steering(message))
+        steeredIDs.insert(message.id)
+    }
 
     func appendText(_ delta: String, parentToolUseId: String? = nil) {
         guard !delta.isEmpty else { return }
@@ -346,6 +372,7 @@ final class LiveTurn: Identifiable {
             switch segment {
             case .text(let run), .thinking(let run): run.flushNow()
             case .tool(let call): call.flushTranscript()
+            case .steering: break
             }
         }
     }
@@ -423,8 +450,22 @@ final class LiveTurn: Identifiable {
     /// mirrors `MessageRender.adaptLive` so the folded copy renders the same; a
     /// tool's diff `content` rides in the result preview (its only persisted slot)
     /// when there's no separate output text.
-    func snapshotAsMessageTurn() -> MessageTurn {
+    ///
+    /// A message the user steered into the turn splits it, as it does on
+    /// screen: the reply so far, the user's message, then the reply to it.
+    /// Empty replies are left out.
+    func snapshotAsMessageTurns() -> [MessageTurn] {
+        var out: [MessageTurn] = []
         var blocks: [ContentBlock] = []
+        var chunk = 0
+        func closeReply() {
+            if !blocks.isEmpty {
+                out.append(MessageTurn(id: chunk == 0 ? id : "\(id)~\(chunk)", role: .assistant,
+                                       blocks: blocks, timestamp: Date()))
+            }
+            blocks = []
+            chunk += 1
+        }
         for segment in segments {
             switch segment {
             case .text(let run):
@@ -443,6 +484,10 @@ final class LiveTurn: Identifiable {
                 let output = call.rawOutput.isEmpty ? call.content : call.rawOutput
                 blocks.append(.toolResult(id: call.id, outputPreview: output, isError: call.isError,
                                           agentStats: nil))
+            case .steering(let message):
+                closeReply()
+                out.append(MessageTurn(id: "steer-\(message.id)", role: .user,
+                                       blocks: [.text(message.text)], timestamp: message.at))
             }
         }
         // A failed round keeps saying why after it is folded in — the same
@@ -452,6 +497,7 @@ final class LiveTurn: Identifiable {
            !failure.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             blocks.append(.turnError(failure))
         }
-        return MessageTurn(id: id, role: .assistant, blocks: blocks, timestamp: Date())
+        closeReply()
+        return out
     }
 }

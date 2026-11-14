@@ -375,18 +375,25 @@ enum MessageRender {
         return liveness == .round ? .running : .done
     }
 
-    static func adaptLive(_ turn: LiveTurn, groupTools: Bool = true) -> [RenderPart] {
+    /// `range`: only these segments — one reply of a turn the user steered
+    /// into (see `LiveSegment.steering`). The streaming flag still follows the
+    /// turn's LAST segment.
+    static func adaptLive(_ turn: LiveTurn, range: Range<Int>? = nil, groupTools: Bool = true) -> [RenderPart] {
         var parts: [RenderPart] = []
         let segments = turn.segments
+        let span = range ?? segments.indices
         // Only the *final* segment is still growing — it alone carries the
         // streaming flag (the typing caret + cache bypass). Earlier text/reasoning
         // runs are frozen the moment the agent moved on to the next segment, so
         // they render as finalized (no caret, cached). Without this, every text
         // segment showed its own blinking caret.
         let lastIndex = segments.count - 1
-        for (idx, segment) in segments.enumerated() {
+        for idx in span {
+            let segment = segments[idx]
             let isLast = idx == lastIndex
             switch segment {
+            case .steering:
+                continue   // a boundary between replies, drawn by the timeline
             case .text(let run):
                 parts.append(.liveText(run, streaming: turn.isStreaming && isLast))
             case .thinking(let run):

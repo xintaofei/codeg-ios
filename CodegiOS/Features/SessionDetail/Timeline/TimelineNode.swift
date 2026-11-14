@@ -273,12 +273,31 @@ enum TranscriptTimeline {
         if !live.livePlan.isEmpty {
             out.append(TimelineNode(id: "\(live.id)#plan", content: .plan(live.livePlan, streaming: live.isStreaming), agent: agent))
         }
-        if live.isEmpty && live.isStreaming {
-            out.append(TimelineNode(id: "\(live.id)#thinking", content: .thinking, agent: agent))
+        // A message the user steered into the turn ends the reply so far and
+        // starts the reply to it (web `buildStreamingTurnsFromLiveMessage`):
+        // each stretch between steers is a reply of its own, the message a
+        // user bubble between them.
+        let segments = live.segments
+        var start = 0
+        var ownerID = live.id
+        for (idx, segment) in segments.enumerated() {
+            guard case .steering(let message) = segment else { continue }
+            out.append(contentsOf: replyNodes(
+                parts: MessageRender.adaptLive(live, range: start..<idx, groupTools: false),
+                ownerID: ownerID, completed: true, durationMs: nil, agent: agent))
+            let turn = MessageTurn(id: "steer-\(message.id)", role: .user,
+                                   blocks: [.text(message.text)], timestamp: message.at)
+            out.append(TimelineNode(id: turn.id, content: .user(turn), agent: agent, startsGroup: true))
+            start = idx + 1
+            ownerID = "\(live.id)~\(message.id)"
+        }
+        if start == segments.count && live.isStreaming && live.errorMessage == nil
+            && (start > 0 || live.livePlan.isEmpty) {
+            out.append(TimelineNode(id: "\(ownerID)#thinking", content: .thinking, agent: agent))
         }
         out.append(contentsOf: replyNodes(
-            parts: MessageRender.adaptLive(live, groupTools: false),
-            ownerID: live.id, completed: !live.isStreaming, durationMs: nil, agent: agent,
+            parts: MessageRender.adaptLive(live, range: start..<segments.count, groupTools: false),
+            ownerID: ownerID, completed: !live.isStreaming, durationMs: nil, agent: agent,
             keepAnswer: live.isStreaming && replyOpen))
         if let error = live.errorMessage {
             out.append(TimelineNode(id: "\(live.id)#error",

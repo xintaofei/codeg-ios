@@ -2,8 +2,11 @@ import SwiftUI
 import PhotosUI
 
 /// The pinned bottom compose bar. A leading "+" sits to the left of a growing
-/// multiline field; a send button (which becomes Stop while a turn streams) sits
-/// on the right. Attached-image thumbnails appear above the field. The "agent is
+/// multiline field; a send button sits on the right. While a turn streams it
+/// becomes Stop — joined, once something is typed, by a send that QUEUES the
+/// message for when the agent is free, and whose long-press sends it into the
+/// running turn instead (when the session has a live-feedback channel).
+/// Attached-image thumbnails appear above the field. The "agent is
 /// working" state is shown as a node at the tail of the transcript timeline (a
 /// thinking tick, a running tool, a streaming reply) — not as a status line here.
 ///
@@ -29,6 +32,14 @@ struct ComposeBar: View {
     let onDismissNotice: () -> Void
     /// Backs the "+" menu's text-insert pickers (quick messages / experts / commands).
     let insertModel: ComposeInsertModel
+    /// The session can take a message into the running turn right now, and
+    /// over which channel — the long-press offer's wording follows it, so a
+    /// pull session never promises an instant insert.
+    var canSteer: Bool = false
+    var steerChannel: SteerChannel = .pull
+    /// A steer is on its way; the mid-turn send waits for it.
+    var isSteering: Bool = false
+    var onSteer: () -> Void = {}
 
     @FocusState private var focused: Bool
     /// Bumped on each send tap to fire a light "sent" impact immediately (rather
@@ -43,8 +54,13 @@ struct ComposeBar: View {
     private var hasText: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    private var canSend: Bool {
-        (hasText || !attachments.isEmpty) && !isInFlight
+    private var hasContent: Bool {
+        hasText || !attachments.isEmpty
+    }
+    /// Images ride only one of the two live-feedback wires, so a draft carrying
+    /// them is queued whole instead.
+    private var canSteerDraft: Bool {
+        canSteer && hasText && attachments.isEmpty && !isSteering
     }
     private var remainingSlots: Int {
         max(0, AttachmentPrep.maxCount - attachments.count)
@@ -122,6 +138,7 @@ struct ComposeBar: View {
             }
         }
         .animation(Theme.Motion.expand, value: isInFlight)
+        .animation(Theme.Motion.expand, value: hasContent)
         .animation(Theme.Motion.expand, value: notice)
         .animation(Theme.Motion.expand, value: attachments)
         // Width + keyboard-gap shift on focus change, kept just slightly slower
@@ -177,36 +194,89 @@ struct ComposeBar: View {
     @ViewBuilder
     private var actionButton: some View {
         if isInFlight {
-            Button(action: onStop) {
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 16, weight: .bold))
-                    .frame(width: 26, height: 26)
+            HStack(spacing: 8) {
+                Button(action: onStop) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 26, height: 26)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(Theme.danger)
+                .clipShape(Circle())
+                .accessibilityLabel("Stop")
+                if hasContent {
+                    queueButton
+                        .transition(.scale.combined(with: .opacity))
+                }
             }
-            .buttonStyle(.glassProminent)
-            .tint(Theme.danger)
-            .clipShape(Circle())
             .transition(.scale.combined(with: .opacity))
-            .accessibilityLabel("Stop")
         } else {
             Button(action: send) {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 16, weight: .bold))
-                    .frame(width: 26, height: 26)
+                sendGlyph
             }
             .buttonStyle(.glassProminent)
             .tint(Theme.accent)
             .clipShape(Circle())
-            .disabled(!canSend)
-            .opacity(canSend ? 1 : 0.5)
+            .disabled(!hasContent)
+            .opacity(hasContent ? 1 : 0.5)
             .transition(.scale.combined(with: .opacity))
             .accessibilityLabel("Send")
         }
     }
 
+    private var sendGlyph: some View {
+        Image(systemName: "arrow.up")
+            .font(.system(size: 16, weight: .bold))
+            .frame(width: 26, height: 26)
+    }
+
+    /// Mid-turn send: a tap queues the message (what sending has always meant
+    /// while the agent works); a long-press offers to send it into the turn
+    /// that is running instead — the bolt is the instant insert, the clock the
+    /// note that waits for the agent's next check.
+    @ViewBuilder
+    private var queueButton: some View {
+        if canSteerDraft {
+            Menu {
+                Button(action: steer) {
+                    Label(steerChannel == .pull ? LocalizedStringKey("Send note for next check") : LocalizedStringKey("Insert into current turn"),
+                          systemImage: steerChannel == .pull ? "clock" : "bolt.fill")
+                }
+                Button(action: send) {
+                    Label("Queue message", systemImage: "text.line.last.and.arrowtriangle.forward")
+                }
+            } label: {
+                sendGlyph
+            } primaryAction: {
+                send()
+            }
+            .buttonStyle(.glassProminent)
+            .tint(Theme.accent)
+            .clipShape(Circle())
+            .accessibilityLabel("Queue message")
+        } else {
+            Button(action: send) {
+                sendGlyph
+            }
+            .buttonStyle(.glassProminent)
+            .tint(Theme.accent)
+            .clipShape(Circle())
+            .disabled(isSteering)
+            .opacity(isSteering ? 0.5 : 1)
+            .accessibilityLabel("Queue message")
+        }
+    }
+
     private func send() {
-        guard canSend else { return }
+        guard hasContent, !isSteering else { return }
         sendHaptic &+= 1
         onSend()
+    }
+
+    private func steer() {
+        guard canSteerDraft else { return }
+        sendHaptic &+= 1
+        onSteer()
     }
 
     // MARK: - Attachment intake
