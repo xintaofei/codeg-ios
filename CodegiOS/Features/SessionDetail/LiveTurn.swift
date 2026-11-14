@@ -237,10 +237,34 @@ final class LiveTurn: Identifiable {
     /// message, mirroring the web's split between the alert body and the composer
     /// tooltip. See ``AcpEvent/error(message:code:details:)``.
     var errorDetails: String?
+    /// The latest NON-fatal `error` this turn received (see ``AcpErrorRoute``),
+    /// kept so that if the connection then dies — the backend follows a
+    /// terminal error with `status_changed: error`, which carries no text — the
+    /// failure line says why instead of a generic "the connection errored".
+    /// Not rendered on its own; the notice already showed it.
+    var lastNonFatalError: (message: String, details: String?)?
+    /// `errorMessage` is the agent's OWN account of the failure (an `error`
+    /// with no code: a prompt it rejected), as opposed to codeg's verdict
+    /// (`turn_failed_*`). One account per turn, and the agent's words win
+    /// whichever arrives first — mirrors the web's `TURN_FAILED`.
+    var errorFromAgent = false
+    /// `errorMessage` is the local "Cancelled." placeholder, not a failure —
+    /// so it is not carried into the promoted snapshot as one.
+    var errorIsCancellation = false
     /// Whether the turn is still receiving events (drives the pulse).
     var isStreaming = true
     /// Most recent stop reason once the turn completes.
     var stopReason: String?
+    /// The highest event `seq` applied to this turn — from the attach
+    /// snapshot's cursor, then every envelope. A reconnect resumes from it
+    /// (`since_seq`), so the server replays what the socket missed instead of
+    /// the deltas being lost; and an event at or below it is a duplicate of one
+    /// already applied. Not observed by any view.
+    @ObservationIgnored var lastSeq: UInt64?
+    /// An event has shown the server running THIS turn (its `prompting`
+    /// status, the prompt's echo, or any of the reply). Until then an idle
+    /// connection means the turn has not started, not that it has ended.
+    @ObservationIgnored var serverTurnStarted = false
 
     init(id: String = "live-\(UUID().uuidString)") {
         self.id = id
@@ -248,6 +272,26 @@ final class LiveTurn: Identifiable {
 
     /// True before any content has streamed — used to show a "waiting" shimmer.
     var isEmpty: Bool { segments.isEmpty && errorMessage == nil && livePlan.isEmpty }
+
+    /// Take over another turn's streamed content wholesale — used when a
+    /// reconnect could not be replayed (the gap was too large, or the cursor
+    /// fell out of the server's ring buffer) and the server sent its snapshot
+    /// of the in-flight reply instead. That snapshot is the authoritative whole
+    /// of what was streamed, so it REPLACES what this turn holds rather than
+    /// being appended to it. The turn keeps its identity, which is what every
+    /// `liveTurn === live` ownership check on the screen keys on.
+    func adoptContent(from other: LiveTurn) {
+        for segment in segments {
+            if case .text(let run) = segment { run.flushNow() }
+            if case .thinking(let run) = segment { run.flushNow() }
+        }
+        segments = other.segments
+        toolIndex = other.toolIndex
+        livePlan = other.livePlan
+    }
+
+    /// This round failed here (as opposed to being cancelled, or not failing).
+    var failedLocally: Bool { errorMessage != nil && !errorIsCancellation }
 
     /// Replace the live plan from a `plan_update` event (or snapshot `plan` block).
     func updatePlan(_ entries: [PlanEntry]) {
@@ -400,6 +444,13 @@ final class LiveTurn: Identifiable {
                 blocks.append(.toolResult(id: call.id, outputPreview: output, isError: call.isError,
                                           agentStats: nil))
             }
+        }
+        // A failed round keeps saying why after it is folded in — the same
+        // failure line a reload draws from the server's `turn_error`. (Its
+        // evidence disclosure is live-only: the record has no slot for it.)
+        if let failure = errorMessage, !errorIsCancellation,
+           !failure.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            blocks.append(.turnError(failure))
         }
         return MessageTurn(id: id, role: .assistant, blocks: blocks, timestamp: Date())
     }

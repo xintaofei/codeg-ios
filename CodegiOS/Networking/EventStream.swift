@@ -46,14 +46,18 @@ enum WSServerMessage: Decodable, Sendable {
     case unknown
 
     private enum CodingKeys: String, CodingKey {
-        case type, snapshot, events, envelope, reason
+        case type, snapshot, events, envelope, reason, eventSeq
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .type) {
         case "snapshot":
-            self = .snapshot(try c.decode(LiveSessionSnapshot.self, forKey: .snapshot))
+            var snap = try c.decode(LiveSessionSnapshot.self, forKey: .snapshot)
+            if snap.eventSeq == nil {
+                snap.eventSeq = try c.decodeIfPresent(UInt64.self, forKey: .eventSeq)
+            }
+            self = .snapshot(snap)
         case "replay":
             self = .replay(try c.decodeIfPresent([EventEnvelope].self, forKey: .events) ?? [])
         case "event":

@@ -179,7 +179,15 @@ struct AskQuestionCard: View {
                 ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
                     optionRow(question, label: option.label, description: option.description)
                 }
-                otherRow(question)
+                // An option-less question IS a free-text one: just the input,
+                // no "Other" to pick first. One whose bridge only accepts the
+                // given option ids (`allowOther == false`) gets no input at all —
+                // a typed answer could not be delivered.
+                if question.options.isEmpty {
+                    answerField(question)
+                } else if question.allowOther {
+                    otherRow(question)
+                }
             }
         }
     }
@@ -253,16 +261,30 @@ struct AskQuestionCard: View {
             .buttonStyle(.plain)
             .disabled(submitting)
 
-            if selected {
+            if selected { answerField(question) }
+        }
+    }
+
+    /// The typed answer. Masked for a secret (an API key, say) — and then a
+    /// single line, since `SecureField` has no vertical axis.
+    @ViewBuilder
+    private func answerField(_ question: QuestionSpec) -> some View {
+        Group {
+            if question.isSecret {
+                SecureField("Type your answer…", text: otherBinding(question.id))
+                    .textContentType(.password)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            } else {
                 TextField("Type your answer…", text: otherBinding(question.id), axis: .vertical)
-                    .font(.subheadline)
                     .lineLimit(1...3)
-                    .padding(8)
-                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
-                    .hairlineBorder(Theme.Radius.sm)
-                    .disabled(submitting)
             }
         }
+        .font(.subheadline)
+        .padding(8)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        .hairlineBorder(Theme.Radius.sm)
+        .disabled(submitting)
     }
 
     private func indicator(selected: Bool, multi: Bool) -> some View {
@@ -301,8 +323,11 @@ struct AskQuestionCard: View {
     private func labels(for question: QuestionSpec) -> [String] {
         var set = chosen[question.id] ?? []
         let hasOther = set.remove(Self.otherKey) != nil
+        // Labels only from what this question can actually submit: with
+        // `allowOther == false` a stale "Other" (a replayed record) is dropped,
+        // and an option-less question's input needs no selection to count.
         var result = Array(set)
-        if hasOther {
+        if question.options.isEmpty || (hasOther && question.allowOther) {
             let typed = otherText[question.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !typed.isEmpty { result.append(typed) }
         }

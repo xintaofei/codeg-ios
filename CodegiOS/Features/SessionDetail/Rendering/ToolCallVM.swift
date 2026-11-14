@@ -240,6 +240,9 @@ enum RenderPart {
     /// marker, not a tool call. Rendered as a chrome-less centered divider; the
     /// token counts are Grok-only (codex sends none).
     case compaction(before: Int?, after: Int?, running: Bool)
+    /// A `turn_error` block. Normally alone in a `system` turn (drawn by the
+    /// timeline builder directly); this covers one found inside a reply.
+    case turnError(String)
     case unknown(type: String)
 }
 
@@ -300,6 +303,10 @@ enum MessageRender {
                 parts.append(.tool(ToolCallVM(
                     id: toolID ?? "result-\(idx)", rawName: "result", kind: "", state: e ? .error : .done,
                     input: nil, output: outPreview, content: nil, isError: e, agentStats: stats)))
+            case .turnError(let message):
+                if !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    parts.append(.turnError(message))
+                }
             case .unknown(let type):
                 parts.append(.unknown(type: type))
             }

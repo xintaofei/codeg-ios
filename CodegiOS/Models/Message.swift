@@ -86,6 +86,11 @@ enum ContentBlock: Hashable, Sendable, Decodable {
     case imageGeneration(revisedPrompt: String?, image: ImageData?)
     case toolUse(id: String?, name: String, inputPreview: String?, status: ToolUseStatus, meta: AnyJSON?)
     case toolResult(id: String?, outputPreview: String?, isError: Bool, agentStats: AgentExecutionStats?)
+    /// The turn FAILED, in the agent's own words ("stream disconnected before
+    /// completion: …", "API Error: 503 …") — Rust `ContentBlock::TurnError`
+    /// (codeg 0.30+). Never agent prose: the parser puts it alone in a `system`
+    /// turn that closes the failed round.
+    case turnError(String)
     case unknown(type: String)
 
     private enum CodingKeys: String, CodingKey {
@@ -93,7 +98,7 @@ enum ContentBlock: Hashable, Sendable, Decodable {
         // here already camelCased — match them in camelCase.
         case type, text, data, mimeType, uri, revisedPrompt, image
         case toolUseId, toolName, inputPreview, status, meta
-        case outputPreview, isError, agentStats
+        case outputPreview, isError, agentStats, message
     }
 
     init(from decoder: Decoder) throws {
@@ -132,9 +137,32 @@ enum ContentBlock: Hashable, Sendable, Decodable {
                 isError: try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false,
                 agentStats: try c.decodeIfPresent(AgentExecutionStats.self, forKey: .agentStats)
             )
+        case "turn_error":
+            self = .turnError(try c.decodeIfPresent(String.self, forKey: .message) ?? "")
         default:
             self = .unknown(type: type)
         }
+    }
+}
+
+extension MessageTurn {
+    /// A failed round's closing line: a `system` turn made only of `turn_error`
+    /// blocks. Mirrors the web's `isTurnErrorTurn`.
+    var isTurnErrorTurn: Bool {
+        role == .system && !blocks.isEmpty && blocks.allSatisfy {
+            if case .turnError = $0 { return true }
+            return false
+        }
+    }
+
+    /// The failure text a turn-error turn carries, joined.
+    var turnErrorText: String {
+        blocks.compactMap { block -> String? in
+            if case .turnError(let m) = block { return m }
+            return nil
+        }
+        .joined(separator: "\n")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

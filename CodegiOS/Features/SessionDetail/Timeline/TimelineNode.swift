@@ -152,9 +152,16 @@ enum TranscriptTimeline {
                 nodes.append(TimelineNode(id: turn.id, content: .user(turn), agent: agent, startsGroup: true))
                 i += 1
             case .system:
+                // A failed round's closing line draws as the same failure node
+                // the live turn showed, so the round reads the same before and
+                // after it is reconciled — and a reopened session still says
+                // why the round came back empty.
+                let failure = turn.turnErrorText
+                if !failure.isEmpty {
+                    nodes.append(TimelineNode(id: turn.id, content: .error(failure, details: nil), agent: agent))
+                } else if !SystemText.of(turn).isEmpty {
                 // Skip system turns with no renderable text so the rail doesn't
                 // show a lone marker against an empty row.
-                if !SystemText.of(turn).isEmpty {
                     nodes.append(TimelineNode(id: turn.id, content: .system(turn), agent: agent, startsGroup: true))
                 }
                 i += 1
@@ -258,6 +265,8 @@ enum TranscriptTimeline {
             return TimelineNode(id: base,
                                 content: .compaction(before: before, after: after, running: running),
                                 agent: agent)
+        case .turnError(let message):
+            return TimelineNode(id: base, content: .error(message, details: nil), agent: agent)
         case .unknown(let type):
             return TimelineNode(id: base, content: .unsupported(type), agent: agent)
         }

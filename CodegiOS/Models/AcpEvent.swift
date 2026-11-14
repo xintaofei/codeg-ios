@@ -241,7 +241,11 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     let folderId: Int?
     let status: ConnectionStatus?
     let externalId: String?
-    let eventSeq: UInt64?
+    /// The connection's event cursor at the moment of this snapshot. Rust
+    /// carries it on the `snapshot` FRAME (`ServerMsg::Snapshot.event_seq`),
+    /// beside the snapshot rather than inside it — `WSServerMessage` fills it
+    /// in from there. It is what a reconnect resumes from (`since_seq`).
+    var eventSeq: UInt64?
     let liveMessage: LiveMessageSnapshot?
     let activeToolCalls: [ToolCallStateSnapshot]?
     let pendingPermission: PendingPermissionSnapshot?

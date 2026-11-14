@@ -86,7 +86,47 @@ struct QuestionSpec: Decodable, Hashable, Sendable, Identifiable {
     let question: String
     let header: String
     let multiSelect: Bool
+    /// The choices. Empty means free-text: only the typed answer is offered.
     let options: [QuestionOption]
+    /// The answer is a secret (codex `request_user_input` marks API keys etc.
+    /// with `_meta.codex.isSecret`): the free-text input is masked. Absent on
+    /// the wire for every non-secret source.
+    let isSecret: Bool
+    /// When false, "Other" and its free-text input are hidden. False for native
+    /// permission bridges (Antigravity, Pi select) that accept only one of the
+    /// given option ids — a typed answer there cannot be delivered. Meaningful
+    /// only with options: an option-less question always takes free text.
+    let allowOther: Bool
+
+    /// Whether the card offers a typed answer at all.
+    var offersFreeText: Bool { allowOther || options.isEmpty }
+
+    init(id: String, question: String, header: String, multiSelect: Bool,
+         options: [QuestionOption], isSecret: Bool = false, allowOther: Bool = true) {
+        self.id = id
+        self.question = question
+        self.header = header
+        self.multiSelect = multiSelect
+        self.options = options
+        self.isSecret = isSecret
+        self.allowOther = allowOther
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, question, header, multiSelect, options, isSecret, allowOther
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        question = try c.decode(String.self, forKey: .question)
+        header = try c.decodeIfPresent(String.self, forKey: .header) ?? ""
+        multiSelect = try c.decodeIfPresent(Bool.self, forKey: .multiSelect) ?? false
+        options = try c.decodeIfPresent([QuestionOption].self, forKey: .options) ?? []
+        // Rust: `#[serde(default)]` (false) and `#[serde(default = "default_true")]`.
+        isSecret = try c.decodeIfPresent(Bool.self, forKey: .isSecret) ?? false
+        allowOther = try c.decodeIfPresent(Bool.self, forKey: .allowOther) ?? true
+    }
 }
 
 /// One question's answer: the per-question id plus the chosen option label

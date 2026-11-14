@@ -53,6 +53,29 @@ struct KimiInterfaceTypeMeta: Sendable {
     let defaultBaseUrl: String
     /// vertexai authenticates via GCP ADC, so it exposes no API key field.
     let usesApiKey: Bool
+
+    /// The protocol this interface's SDK lists models over
+    /// (`list_provider_models`), or nil when there is no key to list with.
+    /// Mirrors the web's `modelsProtocol`.
+    var modelsProtocol: String? {
+        switch value {
+        case .kimi, .openai, .openaiResponses: return "openai"
+        case .anthropic: return "anthropic"
+        case .googleGenai: return "gemini"
+        case .vertexai: return nil
+        }
+    }
+
+    /// Where the SDK goes when the base URL is left blank — so the listing asks
+    /// the same endpoint the agent will. Mirrors the web's `sdkBaseUrl`.
+    var sdkBaseUrl: String {
+        switch value {
+        case .kimi: return kimiBaseUrlInternational
+        case .anthropic: return "https://api.anthropic.com"
+        case .googleGenai: return "https://generativelanguage.googleapis.com"
+        case .openai, .openaiResponses, .vertexai: return ""
+        }
+    }
 }
 
 let kimiInterfaceTypes: [KimiInterfaceTypeMeta] = [

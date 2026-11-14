@@ -1726,11 +1726,26 @@ final class SessionDetailViewModel {
                 // prompt is fired. Otherwise acp_prompt (a separate HTTP request)
                 // can reach the server before the WS attach is registered, and the
                 // first streamed events would be delivered to no subscriber.
-                stream.attach(subscriptionId: subscriptionID, connectionId: conn)
+                //
+                // A RECONNECT (past the handshake) resumes from the last event
+                // applied, so the server replays what the dropped socket missed —
+                // without it every delta in the gap was lost for good.
+                let resumeFrom = readyContinuation == nil ? live.lastSeq : nil
+                stream.attach(subscriptionId: subscriptionID, connectionId: conn, sinceSeq: resumeFrom)
             case .snapshot(let snap):
                 // Attach confirmed — a healthy socket. Reset the reconnect budget
                 // and (for the initial connect) release the waiting send.
                 streamReconnects = 0
+                if isCurrent, let seq = snap.eventSeq { live.lastSeq = seq }
+                // A reconnect answered with a snapshot rather than a replay —
+                // first attach after a drop with no cursor, or a gap too large
+                // to replay. Either the turn ended while the socket was down, or
+                // it is still running and the snapshot is the only full account
+                // of what was streamed in the gap.
+                if isCurrent, readyContinuation == nil, isTurnActive, liveTurn === live,
+                   resumeAfterReconnect(live: live, snapshot: snap) {
+                    return
+                }
                 // A mid-turn RECONNECT can drop the socket exactly as a
                 // `permission_request` / `question_request` arrives — losing that
                 // live event. The fresh snapshot still carries the pending card, so
@@ -1739,15 +1754,21 @@ final class SessionDetailViewModel {
                 // with no way to approve. Mirrors `consumeReattach` + the web client.
                 // Skipped during the INITIAL attach handshake (readyContinuation set)
                 // — that snapshot is the pre-prompt state and carries no live card.
-                if isCurrent, readyContinuation == nil, isTurnActive { restorePending(from: snap) }
                 if isCurrent { resumeReady(throwing: nil) }
-            case .replay:
+            case .replay(let events):
                 streamReconnects = 0
-                if isCurrent { resumeReady(throwing: nil) }
+                // The events the dropped socket missed, in order. Applied like
+                // live ones (they used to be discarded unread).
+                if isCurrent {
+                    for envelope in events where liveTurn === live {
+                        apply(envelope, to: live)
+                    }
+                    resumeReady(throwing: nil)
+                }
             case .pong:
                 break
             case .event(let envelope):
-                if isCurrent { handle(event: envelope.event, live: live) }
+                if isCurrent { apply(envelope, to: live) }
             case .detached(let reason):
                 guard isCurrent else { return }
                 // During the attach handshake (before the prompt is accepted),
@@ -1926,6 +1947,16 @@ final class SessionDetailViewModel {
                     sendState = .thinking
                     requestStickToBottom()
                 } else {
+                    // A reconnect that finds the connection idle: the turn this
+                    // screen was showing ENDED while the socket was down, and its
+                    // `turn_complete` went to nobody. Settle it the way that event
+                    // would have — otherwise it stays "running" until reopened.
+                    // (A first reattach never gets here with a turn active.)
+                    if isTurnActive, let prior = liveTurn {
+                        recordSnapshotFailure(snap, on: prior)
+                        finalize(live: prior, stopReason: "end_turn")
+                        return
+                    }
                     // Idle connection: nothing in flight. Release it.
                     closeStream()
                     connectionID = nil
@@ -2114,6 +2145,16 @@ final class SessionDetailViewModel {
 
     private func handle(event: AcpEvent, live: LiveTurn) {
         switch event {
+        // Only the turn's own opening counts: the backend delivers stray
+        // updates BETWEEN turns too (a late tool update, a straggling delta),
+        // and one of those arriving before this prompt starts would otherwise
+        // read as "this turn is running".
+        case .statusChanged(.prompting), .userMessage:
+            live.serverTurnStarted = true
+        default:
+            break
+        }
+        switch event {
         case .contentDelta(let text, let parent):
             live.appendText(text, parentToolUseId: parent)
             if case .running = sendState {} else { sendState = .thinking }
@@ -2143,7 +2184,15 @@ final class SessionDetailViewModel {
             case .connecting: if case .idle = sendState { sendState = .connecting }
             case .prompting: if case .running = sendState {} else { sendState = .thinking }
             case .error:
-                failLive(live, message: "The agent connection errored.")
+                // The agent died. A terminal `error` (`process_exited`, …)
+                // usually came first and was routed as a notice because its
+                // code is not a turn verdict — this is where it ends the turn,
+                // so carry its text rather than a generic line.
+                // A turn failure already recorded (a code-less terminal error)
+                // is the better account still.
+                let cause = live.lastNonFatalError
+                failLive(live, message: live.errorMessage ?? cause?.message ?? "The agent connection errored.",
+                         details: live.errorMessage == nil ? cause?.details : nil)
             default:
                 break
             }
@@ -2158,8 +2207,25 @@ final class SessionDetailViewModel {
         case .turnComplete(let stopReason):
             finalize(live: live, stopReason: stopReason)
 
-        case .error(let message, _, let details):
-            failLive(live, message: message, details: details)
+        case .error(let message, let code, let details):
+            // Only some errors end the turn (see `AcpErrorRoute`). Failing on
+            // every one closed the stream on turns that were still running — a
+            // dropped image or a failed compaction lost the rest of the reply.
+            switch AcpErrorRoute.route(code: code, message: message) {
+            case .failsTurn(let text):
+                // Recorded on the turn, NOT ended here — the web does the same.
+                // The backend always follows a turn verdict with
+                // `turn_complete` (or, if the agent died, `status_changed:
+                // error`), and letting that end the turn is what reconciles it
+                // against the transcript, whose `turn_error` line then takes
+                // over from this one.
+                markTurnFailed(live, message: text, details: details, fromAgent: code == nil)
+            case .notice(let text):
+                live.lastNonFatalError = (text, details)
+                notice = text
+            case .silent:
+                break
+            }
 
         case .conversationLinked(let linkedID, _):
             adoptLinkedConversation(linkedID)
@@ -2300,6 +2366,24 @@ final class SessionDetailViewModel {
         scheduleReanchorIfIdle()
     }
 
+    /// Record that the running turn failed, without ending it (see the
+    /// `.failsTurn` route). One account per turn: the agent's own words win
+    /// over codeg's verdict whichever arrives first; otherwise the later one
+    /// replaces the earlier.
+    private func markTurnFailed(_ live: LiveTurn, message: String, details: String?, fromAgent: Bool) {
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, isTurnActive else { return }
+        if live.errorMessage != nil, live.errorFromAgent, !fromAgent { return }
+        live.errorMessage = text
+        live.errorFromAgent = fromAgent
+        live.errorIsCancellation = false
+        if let trimmed = details?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty {
+            live.errorDetails = trimmed
+        }
+        sendState = .error(text)
+        requestScrollToBottom()
+    }
+
     private func failLive(_ live: LiveTurn, message: String?, details: String? = nil) {
         isTurnActive = false
         clearInteractivePrompts()
@@ -2381,6 +2465,64 @@ final class SessionDetailViewModel {
         }
     }
 
+    /// Apply one envelope to the send path's live turn, at most once. The cursor
+    /// it advances is what a reconnect resumes from; an envelope at or below it
+    /// was already applied (a replay overlapping the live tail) and is dropped.
+    /// `seq == 0` means the frame carried none — never treated as a duplicate.
+    private func apply(_ envelope: EventEnvelope, to live: LiveTurn) {
+        if envelope.seq > 0 {
+            if let last = live.lastSeq, envelope.seq <= last { return }
+            live.lastSeq = envelope.seq
+        }
+        handle(event: envelope.event, live: live)
+    }
+
+    /// A turn that ended while the socket was down: carry over the failure the
+    /// server recorded for it, if it failed. Routed exactly as the live `error`
+    /// would have been — `last_error` holds the latest error of ANY kind, so a
+    /// non-fatal one (a dropped image) must not turn into a failure here, while
+    /// a real one counts whether or not it brought diagnostic `details` (a
+    /// rejected prompt or most verdicts bring none). Recording it is what lets
+    /// the reconcile accept the transcript's own `turn_error` line.
+    private func recordSnapshotFailure(_ snap: LiveSessionSnapshot, on live: LiveTurn) {
+        guard let lastError = snap.lastError else { return }
+        if case .failsTurn(let text) = AcpErrorRoute.route(code: lastError.code, message: lastError.message) {
+            markTurnFailed(live, message: text, details: lastError.details, fromAgent: lastError.code == nil)
+        }
+    }
+
+    /// A send-path reconnect landed on a snapshot. Returns true when the turn is
+    /// over and the consumer should stop.
+    ///
+    /// The snapshot is the connection's state NOW, so it settles both cases a
+    /// replay would have covered:
+    /// - not prompting — the turn ENDED while the socket was down. Its
+    ///   `turn_complete` went to nobody and will not be sent again, so without
+    ///   this the turn stayed "running" (Stop lit) until the session was
+    ///   reopened. Finalize it and let the reconcile fetch what was persisted.
+    /// - prompting — still running; the snapshot's in-flight reply is the whole
+    ///   of what was streamed, gap included, so it replaces what this turn
+    ///   holds.
+    private func resumeAfterReconnect(live: LiveTurn, snapshot snap: LiveSessionSnapshot) -> Bool {
+        // "Not prompting" means ENDED only once the server has been seen to
+        // start this turn. Before that — the prompt still in flight, or queued
+        // behind the connection loop — an idle snapshot is the turn not having
+        // begun yet, and finalizing it would orphan the reply about to stream.
+        if snap.status != .prompting, live.serverTurnStarted {
+            recordSnapshotFailure(snap, on: live)
+            finalize(live: live, stopReason: "end_turn")
+            return true
+        }
+        // A prompting snapshot past the handshake is this turn running — the
+        // same evidence its opening events would have been, had they arrived.
+        if snap.status == .prompting { live.serverTurnStarted = true }
+        restorePending(from: snap)
+        if let rebuilt = buildLiveTurn(from: snap), !rebuilt.segments.isEmpty {
+            live.adoptContent(from: rebuilt)
+        }
+        return false
+    }
+
     /// Recovery's last resort: the socket can't be re-attached (the connection was
     /// GC'd, or reconnects kept failing). The turn may actually have completed
     /// during the outage, so re-fetch the transcript and adopt it silently when the
@@ -2426,7 +2568,8 @@ final class SessionDetailViewModel {
                 // matching note in `refreshAfterTurn` for why the window is
                 // deliberately left stranded rather than rebased here.)
                 if !fetch.reanchored,
-                   detail.globalEnd > loadedEnd, Self.transcriptHasReply(detail.turns) {
+                   detail.globalEnd > loadedEnd,
+                   Self.transcriptHasReply(detail.turns, localRoundFailed: live.failedLocally) {
                     isTurnActive = false
                     clearInteractivePrompts()
                     turns = detail.turns
@@ -2617,7 +2760,8 @@ final class SessionDetailViewModel {
                     // the turn has settled — leaving it retired is what used to
                     // freeze this screen for the rest of the visit.
                     let advanced = !fetch.reanchored && detail.globalEnd > baselineEnd
-                    if advanced, !mustPreserveReply || Self.transcriptHasReply(detail.turns) {
+                    if advanced, !mustPreserveReply
+                        || Self.transcriptHasReply(detail.turns, localRoundFailed: live.failedLocally) {
                         turns = detail.turns
                         adoptTranscriptScope(detail)
                         pendingUserTurns.removeAll()
@@ -2758,13 +2902,21 @@ final class SessionDetailViewModel {
     /// True when the latest persisted turn is an assistant reply that actually
     /// carries renderable content — the signal that the server has committed the
     /// reply we just streamed (vs. only the user turn, or an empty placeholder).
-    private static func transcriptHasReply(_ turns: [MessageTurn]) -> Bool {
-        guard let last = turns.last, last.role == .assistant else { return false }
+    ///
+    /// It also holds when the transcript ends on a FAILED round's line (a
+    /// `turn_error` system turn) — but only if the round that just ended here
+    /// failed too. Otherwise that line is an EARLIER round's, and the transcript
+    /// has not reached this round at all. Mirrors the web's
+    /// `parseHoldsTheLatestRound`.
+    private static func transcriptHasReply(_ turns: [MessageTurn], localRoundFailed: Bool) -> Bool {
+        guard let last = turns.last else { return false }
+        if last.isTurnErrorTurn { return localRoundFailed }
+        guard last.role == .assistant else { return false }
         return last.blocks.contains { block in
             switch block {
             case .text(let t), .thinking(let t):
                 return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            case .image, .toolUse, .toolResult, .unknown:
+            case .image, .toolUse, .toolResult, .turnError, .unknown:
                 return true
             case .imageGeneration(let prompt, let image):
                 return image != nil || !(prompt ?? "").isEmpty
@@ -2783,6 +2935,7 @@ final class SessionDetailViewModel {
         live.isStreaming = false
         if live.isEmpty {
             live.errorMessage = "Cancelled."
+            live.errorIsCancellation = true
         }
         sendState = .idle
         sendTask?.cancel()

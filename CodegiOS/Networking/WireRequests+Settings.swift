@@ -265,10 +265,34 @@ struct UpdateKimiCodeConfigBody: Encodable, Sendable {
     var rawConfigToml: String?
 }
 
-/// `acp_fetch_kimi_models` — probe the provider's `/models` (doubles as a key test).
-struct FetchKimiModelsBody: Encodable, Sendable {
-    let baseUrl: String
-    let apiKey: String
+/// `list_provider_models` (codeg 0.37+, replacing the per-agent
+/// `acp_fetch_kimi_models`): list a provider's models over its own protocol,
+/// which doubles as a key test. Wrapped in `params` on the wire.
+struct ListProviderModelsBody: Encodable, Sendable {
+    struct Params: Encodable, Sendable {
+        /// Rust `ModelsProtocol`: `openai` / `anthropic` / `gemini`.
+        let `protocol`: String
+        let baseUrl: String
+        let keySource: KeySource
+    }
+    /// Rust `ModelsKeySource`, internally tagged by `kind`. Only the inline key
+    /// this client's settings forms hold is modelled.
+    struct KeySource: Encodable, Sendable {
+        let kind = "inline"
+        let apiKey: String
+    }
+    let params: Params
+}
+
+/// Rust `ModelList`: the URL that answered, and the models in the provider's
+/// order. camelCase on the wire, which the snake-case decoder leaves intact.
+struct ProviderModelList: Decodable, Sendable {
+    struct Model: Decodable, Sendable {
+        let id: String
+        let displayName: String?
+    }
+    let url: String?
+    let models: [Model]
 }
 
 /// `acp_update_pi_config` — writes pi's native settings.json/auth.json. camelCase

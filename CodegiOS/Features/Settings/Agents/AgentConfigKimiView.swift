@@ -345,8 +345,14 @@ struct KimiConfigSection: View {
     }
 
     private func fetchModels() {
-        let url = effectiveBaseUrl
+        // Asked where and how the interface's SDK itself would go — a blank URL
+        // is the SDK's own default.
+        let url = effectiveBaseUrl.isEmpty ? meta.sdkBaseUrl : effectiveBaseUrl
         let key = apiKey.trimmingCharacters(in: .whitespaces)
+        guard let proto = meta.modelsProtocol else {
+            banner = Banner(text: "This interface has no API key to list models with", isError: true)
+            return
+        }
         guard !url.isEmpty, !key.isEmpty else {
             banner = Banner(text: "Enter an API key and endpoint first", isError: true)
             return
@@ -354,7 +360,7 @@ struct KimiConfigSection: View {
         fetchingModels = true
         Task {
             do {
-                let list = try await client?.fetchKimiModels(baseUrl: url, apiKey: key) ?? []
+                let list = try await client?.listProviderModels(protocol: proto, baseUrl: url, apiKey: key) ?? []
                 models = list
                 banner = Banner(text: list.isEmpty ? "Key works, but no models were returned" : "Found \(list.count) models", isError: false)
             } catch {

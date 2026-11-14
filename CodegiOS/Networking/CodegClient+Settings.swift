@@ -184,9 +184,13 @@ extension CodegClient {
         try await postJSON("acp_update_kimi_code_config", body)
     }
 
-    /// Probe a Kimi provider's `/models` endpoint (also validates the key).
-    func fetchKimiModels(baseUrl: String, apiKey: String) async throws -> [String] {
-        try await postJSON("acp_fetch_kimi_models", FetchKimiModelsBody(baseUrl: baseUrl, apiKey: apiKey))
+    /// The model ids a provider lists, asked the way the agent's SDK would ask
+    /// (`protocol`: `openai` / `anthropic` / `gemini`).
+    func listProviderModels(protocol proto: String, baseUrl: String, apiKey: String) async throws -> [String] {
+        let body = ListProviderModelsBody(params: .init(
+            protocol: proto, baseUrl: baseUrl, keySource: .init(apiKey: apiKey)))
+        let list: ProviderModelList = try await postJSON("list_provider_models", body)
+        return list.models.map(\.id)
     }
 
     /// Probe `cursor-agent status` for the Cursor panel's auth card. `apiKey` is
