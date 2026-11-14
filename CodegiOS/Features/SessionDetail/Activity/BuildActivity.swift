@@ -101,7 +101,28 @@ enum BuildActivity {
             default: continue
             }
         }
-        return parts.isEmpty ? "empty" : "i\(parts.count)"
+        // No call to name it by: hash what it opens with (the web hashes the
+        // first part's JSON), so two such replies — a short thought before the
+        // answer is the common one — do not share their rows' keys.
+        guard let first = parts.first else { return "empty" }
+        return "h" + hashText(String(decoding: Array(anchorSignature(first).utf16.prefix(200)), as: UTF16.self))
+    }
+
+    /// The first part's content, for `replyAnchor`'s fallback.
+    private static func anchorSignature(_ part: RenderPart) -> String {
+        switch part {
+        case .text(let t): return "text:\(t)"
+        case .reasoning(let t): return "reasoning:\(t)"
+        case .turnError(let message): return "turn-error:\(message)"
+        case .image(let image, let caption):
+            return "image:\(caption ?? ""):\(image.uri ?? ""):\(image.data.prefix(160))"
+        case .compaction(let before, let after, _):
+            return "compaction:\(before.map(String.init) ?? ""):\(after.map(String.init) ?? "")"
+        case .unknown(let type): return "unknown:\(type)"
+        case .liveText(let run, _), .liveReasoning(let run, _): return "run:\(run.id)"
+        case .tool(let vm): return "tool:\(vm.id)"
+        case .toolGroup, .delegationStatusGroup, .taskGroup: return "group"
+        }
     }
 
     /// A step's identity within its own reply: its key without the reply's

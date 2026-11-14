@@ -77,6 +77,9 @@ enum DescribeToolCall {
         let input: String?
         let output: String?
         let parsed: [String: Any]?
+        /// The text `parsed` was read from — the input, or the output when the
+        /// input is not a JSON object — whose key order JavaScript would keep.
+        let parsedSource: String?
 
         func field(_ key: String) -> String? {
             if let nested = ActivityJSON.findStringFieldDeep(parsed, key: key) { return nested }
@@ -86,9 +89,12 @@ enum DescribeToolCall {
     }
 
     private static func payload(_ call: ToolCallVM) -> Payload {
-        let parsed = ToolNameNormalizer.aliasToolInputKeys(call.input.flatMap(ActivityJSON.tryParse))
-            ?? call.output.flatMap(ActivityJSON.tryParse)
-        return Payload(input: call.input, output: call.output, parsed: parsed)
+        if let fromInput = ToolNameNormalizer.aliasToolInputKeys(call.input.flatMap(ActivityJSON.tryParse)) {
+            return Payload(input: call.input, output: call.output, parsed: fromInput, parsedSource: call.input)
+        }
+        let fromOutput = call.output.flatMap(ActivityJSON.tryParse)
+        return Payload(input: call.input, output: call.output, parsed: fromOutput,
+                       parsedSource: fromOutput == nil ? nil : call.output)
     }
 
     private static func filePath(_ payload: Payload) -> String? {
@@ -209,7 +215,7 @@ enum DescribeToolCall {
             return base
         case .generic:
             let name = genericName(call, toolName)
-            let detail = firstMeaningfulArgument(payload.parsed, source: call.input)
+            let detail = firstMeaningfulArgument(payload.parsed, source: payload.parsedSource)
                 ?? ToolNameNormalizer.extractClaudeCodeMetaTitle(call.meta)
             base.target = ToolTarget(text: name)
             base.detail = detail != name ? detail : nil
@@ -421,8 +427,13 @@ enum DescribeToolCall {
            let args = parsed["arguments"], !(args is NSNull) {
             if let s = args as? String {
                 argsSource = s
-            } else if JSONSerialization.isValidJSONObject(args),
-                      let data = try? JSONSerialization.data(withJSONObject: args) {
+            } else if let raw = payload.parsedSource.flatMap({ rawTopLevelValue($0, key: "arguments") }) {
+                // The arguments as the agent wrote them: `JSON.stringify` keeps
+                // their key order, which a re-serialized dictionary has lost.
+                argsSource = raw
+            } else if JSONSerialization.isValidJSONObject([args]),
+                      let data = try? JSONSerialization.data(withJSONObject: args,
+                                                             options: [.fragmentsAllowed, .sortedKeys]) {
                 argsSource = String(data: data, encoding: .utf8)
             }
         }
@@ -434,6 +445,58 @@ enum DescribeToolCall {
         d.target = identity.map { ToolTarget(text: $0.tool) }
         d.detail = detail.isEmpty ? nil : detail
         return d
+    }
+
+    /// The JSON text of the top-level `key`'s value in `source`, exactly as
+    /// written (nil when it is not there, or does not parse on its own).
+    private static func rawTopLevelValue(_ source: String, key: String) -> String? {
+        let units = Array(source.utf16)
+        let quote: UInt16 = 0x22, backslash: UInt16 = 0x5C
+        var i = 0
+        while i < units.count, units[i] != 0x7B /* { */ { i += 1 }
+        guard i < units.count else { return nil }
+        i += 1
+        var depth = 0
+        var expectKey = true
+        var matched = false
+        var valueStart: Int?
+        func value(upTo end: Int) -> String? {
+            guard let start = valueStart, start <= end else { return nil }
+            let text = String(decoding: units[start..<end], as: UTF16.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return ActivityJSON.parseValue(text) == nil ? nil : text
+        }
+        while i < units.count {
+            let c = units[i]
+            if c == quote {
+                let start = i + 1
+                i = start
+                while i < units.count, units[i] != quote { i += units[i] == backslash ? 2 : 1 }
+                if depth == 0, expectKey {
+                    let literal = [quote] + units[start..<min(i, units.count)] + [quote]
+                    matched = (ActivityJSON.parseValue(String(decoding: literal, as: UTF16.self)) as? String) == key
+                    expectKey = false
+                }
+                i += 1
+                continue
+            }
+            switch c {
+            case 0x3A where depth == 0 && matched && valueStart == nil: // :
+                valueStart = i + 1
+            case 0x7B, 0x5B: // { [
+                depth += 1
+            case 0x7D, 0x5D: // } ]
+                if depth == 0 { return value(upTo: i) }
+                depth -= 1
+            case 0x2C where depth == 0: // ,
+                if valueStart != nil { return value(upTo: i) }
+                expectKey = true
+            default:
+                break
+            }
+            i += 1
+        }
+        return nil
     }
 
     private static func genericName(_ call: ToolCallVM, _ normalized: String) -> String {
