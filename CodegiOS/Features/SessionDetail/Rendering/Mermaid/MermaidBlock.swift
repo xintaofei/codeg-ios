@@ -34,6 +34,7 @@ struct MermaidBlock: View {
     @State private var showSource = false
     @State private var localViewer: RichBlockViewerInput?
     @State private var copyTick = 0
+    @Environment(\.transcriptContentGrew) private var contentGrew
 
     private struct Shown {
         let source: String
@@ -126,12 +127,14 @@ struct MermaidBlock: View {
             } else {
                 failure = Failure(key: request.diagramKey, message: nil)
             }
+            contentGrew()
         }
     }
 
     private func show(_ rendering: MermaidRendering) {
         shown = Shown(source: source, rendering: rendering)
         failure = nil
+        contentGrew()
     }
 
     private func open(_ rendering: MermaidRendering) {

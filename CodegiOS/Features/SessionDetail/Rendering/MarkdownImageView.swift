@@ -31,6 +31,7 @@ struct MarkdownImageBlock: View {
     @State private var failedKey: String?
     @State private var width: CGFloat = 0
     @State private var copyTick = 0
+    @Environment(\.transcriptContentGrew) private var contentGrew
 
     private struct Shown {
         let key: String
@@ -116,6 +117,7 @@ struct MarkdownImageBlock: View {
                 failedKey = key
             }
         }
+        contentGrew()
     }
 
     // MARK: States

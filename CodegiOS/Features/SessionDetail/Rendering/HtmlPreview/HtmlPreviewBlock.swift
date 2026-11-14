@@ -34,6 +34,10 @@ struct HtmlPreviewBlock: View {
     @State private var shown: Shown?
     @State private var failedKey: String?
     @State private var localViewer: RichBlockViewerInput?
+    @Environment(\.transcriptContentGrew) private var contentGrew
+    /// Off once the reader switches the view or its height: the picture that
+    /// lands for their own choice must not move the transcript under them.
+    @State private var followsGrowth = true
 
     private struct Shown {
         let source: String
@@ -99,6 +103,7 @@ struct HtmlPreviewBlock: View {
             Picker("HTML preview", selection: Binding(
                 get: { preview ? Mode.preview : Mode.code },
                 set: { mode in
+                    followsGrowth = false
                     preview = mode == .preview
                     remember()
                 }
@@ -166,12 +171,14 @@ struct HtmlPreviewBlock: View {
         } catch {
             guard !Task.isCancelled else { return }
             failedKey = WebRenderKey.htmlDocument(source: request.source, theme: request.theme)
+            if followsGrowth { contentGrew() }
         }
     }
 
     private func show(_ rendering: HtmlRendering) {
         shown = Shown(source: source, rendering: rendering)
         failedKey = nil
+        if followsGrowth { contentGrew() }
     }
 
     private func picture(_ rendering: HtmlRendering) -> some View {
@@ -210,6 +217,7 @@ struct HtmlPreviewBlock: View {
 
             if HtmlPreviewMetrics.overflows(rendering.height) {
                 Button {
+                    followsGrowth = false
                     withAnimation(Theme.Motion.expand) { expanded.toggle() }
                     remember()
                 } label: {

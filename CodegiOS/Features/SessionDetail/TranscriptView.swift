@@ -14,10 +14,29 @@ private struct TranscriptScrollKey: EnvironmentKey {
     static let defaultValue = TranscriptScrollAction { _, _ in }
 }
 
+/// Told by a block that grows on its own after it is first laid out — a
+/// diagram, an HTML preview or an image that finished rendering or loading —
+/// so a reader parked at the bottom stays there. Only a render landing calls
+/// it, never the reader's own toggles (Show all, Code / Preview): those keep
+/// the place the reader is looking at.
+struct TranscriptGrowthAction {
+    let perform: () -> Void
+    func callAsFunction() { perform() }
+}
+
+private struct TranscriptGrowthKey: EnvironmentKey {
+    static let defaultValue = TranscriptGrowthAction {}
+}
+
 extension EnvironmentValues {
     var transcriptScroll: TranscriptScrollAction {
         get { self[TranscriptScrollKey.self] }
         set { self[TranscriptScrollKey.self] = newValue }
+    }
+
+    var transcriptContentGrew: TranscriptGrowthAction {
+        get { self[TranscriptGrowthKey.self] }
+        set { self[TranscriptGrowthKey.self] = newValue }
     }
 }
 
@@ -102,6 +121,13 @@ struct TranscriptView<Header: View>: View {
     /// auto-follow (only follow streamed tokens when true). Starts true so a fresh
     /// open follows.
     @State private var stuckToBottom = true
+    /// The list's own scroll view, for moving to its bottom EDGE. Following the
+    /// stream and re-pinning never scroll to a row: SwiftUI resolves a row
+    /// scroll to an index when it is asked for and applies it with the next
+    /// batch of row changes, and a send turned away at once removes the rows it
+    /// had just added — the stale index then points past the end and UIKit
+    /// throws (`scroll to an out-of-bounds item`).
+    @State private var scrollBox = TranscriptScrollBox()
 
     // MARK: Windowing
     //
@@ -270,6 +296,8 @@ struct TranscriptView<Header: View>: View {
     }
 
     var body: some View {
+        let built = nodes
+        let firstID = built.first?.id
         ScrollViewReader { proxy in
             List {
                 // Top of the list. When the whole history is loaded, the `header`
@@ -287,7 +315,7 @@ struct TranscriptView<Header: View>: View {
                         .modifier(TimelineRowChrome(top: 14, leading: TimelineMetrics.rowTrailingInset))
                 }
 
-                ForEach(nodes) { node in
+                ForEach(built) { node in
                     TimelineRailRow(
                         marker: node.marker,
                         connectTop: node.connectTop,
@@ -297,6 +325,11 @@ struct TranscriptView<Header: View>: View {
                         NodeBody(node: node)
                     }
                     .modifier(TimelineRowChrome())
+                    // The list opens at one end or the other, so between this
+                    // and the bottom anchor one of them finds its scroll view.
+                    .background {
+                        if node.id == firstID { TranscriptScrollLocator(box: scrollBox) }
+                    }
                     // Fade newly-inserted nodes in (the optimistic user bubble on
                     // send, the thinking tick, each streamed segment) instead of a
                     // hard cut. Pure opacity only — a geometric transition would
@@ -313,6 +346,7 @@ struct TranscriptView<Header: View>: View {
                     .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 0, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
+                    .background(TranscriptScrollLocator(box: scrollBox))
                     .id(bottomAnchor)
             }
             .listStyle(.plain)
@@ -330,6 +364,11 @@ struct TranscriptView<Header: View>: View {
                     proxy.scrollTo(id, anchor: anchor)
                 }
             })
+            // Read when called: the block's new size is not laid out yet, so
+            // this is still where the reader was before it grew.
+            .environment(\.transcriptContentGrew, TranscriptGrowthAction {
+                if stuckToBottom { scrollToBottom() }
+            })
             // Track bottom-proximity. Mapping geometry to a Bool means `action`
             // only fires when we cross the threshold (not every scroll pixel).
             // `contentInsets.bottom` keeps the math correct across keyboard /
@@ -341,6 +380,19 @@ struct TranscriptView<Header: View>: View {
             } action: { _, atBottom in
                 stuckToBottom = atBottom
                 onPinnedChange(atBottom)
+            }
+            // Something below the list grew into it — the running chip, a
+            // status strip, the keyboard — while the reader sat at the bottom
+            // and did not scroll: keep the newest line in view rather than
+            // leaving the last reply's footer under the chip.
+            .onScrollGeometryChange(for: BottomEdge.self) { geo in
+                BottomEdge(offset: geo.contentOffset.y,
+                           visibleBottom: geo.containerSize.height - geo.contentInsets.bottom,
+                           contentHeight: geo.contentSize.height)
+            } action: { old, new in
+                guard new.offset == old.offset, new.visibleBottom < old.visibleBottom,
+                      old.hidden <= bottomThreshold, new.hidden > 0.5 else { return }
+                pinBottomEdge()
             }
             // Reveal older turns as the user scrolls toward the top. Mapped to a
             // Bool so `action` fires only when crossing into the near-top zone (not
@@ -357,11 +409,11 @@ struct TranscriptView<Header: View>: View {
                 }
             }
             // Streamed growth: follow instantly, but ONLY while pinned. A single
-            // plain `scrollTo` per tick (no re-assert) — the content is already
-            // moving, so anything heavier stacks and stutters.
+            // move to the bottom edge per tick (no re-assert) — the content is
+            // already moving, so anything heavier stacks and stutters.
             .onChange(of: scrollTick) { _, _ in
                 guard stuckToBottom else { return }
-                proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                pinBottomEdge()
             }
             // Force re-pin (user send / initial load / jump-to-latest tap),
             // regardless of scroll state. Routed through `scrollToBottom`, which
@@ -371,9 +423,9 @@ struct TranscriptView<Header: View>: View {
             .onChange(of: stickTick) { _, _ in
                 stuckToBottom = true
                 onPinnedChange(true)
-                scrollToBottom(proxy)
+                scrollToBottom()
             }
-            .onAppear { scrollToBottom(proxy) }
+            .onAppear { scrollToBottom() }
             .onChange(of: resetToken) { _, _ in windowStartTurn = nil }
             .onChange(of: jumpRequest) { _, request in
                 if let request { jump(to: request, proxy: proxy) }
@@ -381,16 +433,25 @@ struct TranscriptView<Header: View>: View {
         }
     }
 
-    /// Scroll to the bottom anchor, then re-assert once on the next runloop so a
-    /// far jump (or a fresh load) still lands when late-measuring rich content
-    /// has grown the transcript after the first pass. `reassert: false` is for
-    /// the streaming follow, which fires every chunk and must stay single-shot.
-    private func scrollToBottom(_ proxy: ScrollViewProxy, reassert: Bool = true) {
-        proxy.scrollTo(bottomAnchor, anchor: .bottom)
-        guard reassert else { return }
+    /// Put the end of the content at the bottom of what is visible of the list.
+    private func pinBottomEdge() {
+        guard let scrollView = scrollBox.scrollView else { return }
+        let inset = scrollView.adjustedContentInset
+        let bottom = max(-inset.top, scrollView.contentSize.height + inset.bottom - scrollView.bounds.height)
+        guard abs(scrollView.contentOffset.y - bottom) > 0.5 else { return }
+        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: bottom), animated: false)
+    }
+
+    /// Scroll to the bottom edge, then re-assert once after ~80 ms so a far
+    /// jump (or a fresh load) still lands when late-measuring rich content has
+    /// grown the transcript after the first pass.
+    private func scrollToBottom() {
+        pinBottomEdge()
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(80))
-            proxy.scrollTo(bottomAnchor, anchor: .bottom)
+            // The reader took hold of the list in the meantime: theirs now.
+            if let scrollView = scrollBox.scrollView, scrollView.isTracking { return }
+            pinBottomEdge()
         }
     }
 
@@ -398,6 +459,57 @@ struct TranscriptView<Header: View>: View {
     /// lines, comfortably larger than one ~50ms streamed chunk's height delta so
     /// a single chunk can't flip auto-follow off.
     private let bottomThreshold: CGFloat = 80
+}
+
+/// Holds the transcript list's scroll view once a row has found it.
+@MainActor
+final class TranscriptScrollBox {
+    weak var scrollView: UIScrollView?
+}
+
+/// An invisible view in a transcript row that finds the list's scroll view
+/// (its nearest scrolling ancestor) and leaves it in the box.
+private struct TranscriptScrollLocator: UIViewRepresentable {
+    let box: TranscriptScrollBox
+
+    func makeUIView(context: Context) -> LocatorView {
+        let view = LocatorView()
+        view.box = box
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = false
+        return view
+    }
+
+    func updateUIView(_ view: LocatorView, context: Context) {
+        view.box = box
+    }
+
+    final class LocatorView: UIView {
+        weak var box: TranscriptScrollBox?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil, let box, box.scrollView == nil else { return }
+            var ancestor = superview
+            while let view = ancestor {
+                if let scrollView = view as? UIScrollView {
+                    box.scrollView = scrollView
+                    return
+                }
+                ancestor = view.superview
+            }
+        }
+    }
+}
+
+/// Where the list's content ends against what is visible of it.
+private struct BottomEdge: Equatable {
+    var offset: CGFloat
+    /// The bottom of the visible area, above the composer and anything over it.
+    var visibleBottom: CGFloat
+    var contentHeight: CGFloat
+    /// How much of the content is hidden below the visible area.
+    var hidden: CGFloat { contentHeight - (offset + visibleBottom) }
 }
 
 /// Shared chrome for a timeline row: transparent background, no separators, and
