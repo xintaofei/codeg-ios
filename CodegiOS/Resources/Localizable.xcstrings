@@ -23,6 +23,17 @@
         }
       }
     },
+    "%@ is working" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 正在工作"
+          }
+        }
+      }
+    },
     "%@ session failed to load. Reload to retry, or start a new conversation." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -96,6 +107,17 @@
         }
       }
     },
+    "%lld running" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个运行中"
+          }
+        }
+      }
+    },
     "+%lld more" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -114,6 +136,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "访问受限"
+          }
+        }
+      }
+    },
+    "Background tasks" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "后台任务"
           }
         }
       }
@@ -162,6 +195,28 @@
         }
       }
     },
+    "Delegated sub-agent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "委派的子 Agent"
+          }
+        }
+      }
+    },
+    "Delegations" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "委派"
+          }
+        }
+      }
+    },
     "Elapsed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -169,6 +224,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "耗时"
+          }
+        }
+      }
+    },
+    "Failed to stop the task: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止任务失败：%@"
           }
         }
       }
@@ -360,6 +426,39 @@
         }
       }
     },
+    "Scheduled task" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "定时任务"
+          }
+        }
+      }
+    },
+    "Scheduled wakeup" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "定时唤醒"
+          }
+        }
+      }
+    },
+    "Scheduled wakeup for %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "定时唤醒（%@）"
+          }
+        }
+      }
+    },
     "Send as message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -426,6 +525,28 @@
         }
       }
     },
+    "Shows what is running in the background" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示后台正在运行的内容"
+          }
+        }
+      }
+    },
+    "Sub-agents" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "子 Agent"
+          }
+        }
+      }
+    },
     "Task failed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -466,6 +587,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "任务已停止"
+          }
+        }
+      }
+    },
+    "That task could not be stopped — it may have already finished." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法停止该任务，它可能已经结束。"
           }
         }
       }
@@ -554,6 +686,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已用 tokens"
+          }
+        }
+      }
+    },
+    "Use" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "填入"
+          }
+        }
+      }
+    },
+    "Use suggested message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用建议的消息"
           }
         }
       }

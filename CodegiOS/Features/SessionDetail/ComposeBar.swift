@@ -40,8 +40,14 @@ struct ComposeBar: View {
     /// A steer is on its way; the mid-turn send waits for it.
     var isSteering: Bool = false
     var onSteer: () -> Void = {}
+    /// The prompt the agent predicts comes next, offered as the empty field's
+    /// placeholder; "Use" (or a bare hardware Tab) fills it in — never sends.
+    var suggestion: String? = nil
+    var onUseSuggestion: () -> Void = {}
 
     @FocusState private var focused: Bool
+    /// Bumped when the suggestion is taken, for its selection tick.
+    @State private var suggestionHaptic = 0
     /// Bumped on each send tap to fire a light "sent" impact immediately (rather
     /// than waiting for the turn to start streaming).
     @State private var sendHaptic = 0
@@ -65,6 +71,11 @@ struct ComposeBar: View {
     private var remainingSlots: Int {
         max(0, AttachmentPrep.maxCount - attachments.count)
     }
+    /// The suggestion, only while the field it would fill is empty.
+    private var offeredSuggestion: String? {
+        PromptSuggestionGate.offered(suggestion, draft: text, hasAttachments: !attachments.isEmpty,
+                                     inFlight: isInFlight, steering: isSteering, queueEmpty: true)
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -80,9 +91,16 @@ struct ComposeBar: View {
             GlassEffectContainer(spacing: 8) {
                 HStack(alignment: .bottom, spacing: 8) {
                     addButton
-                    TextField("Message", text: $text, axis: .vertical)
+                    TextField("Message", text: $text,
+                              prompt: offeredSuggestion.map { Text(verbatim: $0) }, axis: .vertical)
                         .textInputAutocapitalization(.sentences)
-                        .lineLimit(1...6)
+                        // A suggestion is a placeholder, not a draft: two lines at most.
+                        .lineLimit(offeredSuggestion == nil ? 1...6 : 1...2)
+                        .onKeyPress(keys: [.tab], phases: .down) { press in
+                            guard press.modifiers.isEmpty, offeredSuggestion != nil else { return .ignored }
+                            useSuggestion()
+                            return .handled
+                        }
                         // Match the transcript body so the text you type reads at
                         // the same size as the reply it produces (was `.callout`,
                         // visibly smaller than the messages).
@@ -91,7 +109,11 @@ struct ComposeBar: View {
                         .tint(Theme.accent)
                         .focused($focused)
                         .padding(.horizontal, 16)
+                        .padding(.trailing, offeredSuggestion == nil ? 0 : 44)
                         .padding(.vertical, 10)
+                        .overlay(alignment: .trailing) {
+                            if offeredSuggestion != nil { useSuggestionButton }
+                        }
                         // `xl` radius clamps to a capsule while the field is one
                         // line (rhyming with the round +/send buttons) and relaxes
                         // to a rounded rect as it grows — no hard switch needed.
@@ -145,6 +167,30 @@ struct ComposeBar: View {
         // than the keyboard's own animation so the bar settles into place.
         .animation(.snappy(duration: 0.26), value: focused)
         .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: sendHaptic)
+        .sensoryFeedback(.selection, trigger: suggestionHaptic)
+    }
+
+    /// "Use" inside the field, while the predicted prompt is its placeholder.
+    private var useSuggestionButton: some View {
+        Button(action: useSuggestion) {
+            Text("Use")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(Theme.accent.opacity(0.14), in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 8)
+        .accessibilityLabel("Use suggested message")
+        .transition(.opacity)
+    }
+
+    private func useSuggestion() {
+        guard offeredSuggestion != nil else { return }
+        suggestionHaptic &+= 1
+        onUseSuggestion()
     }
 
     // MARK: - Buttons

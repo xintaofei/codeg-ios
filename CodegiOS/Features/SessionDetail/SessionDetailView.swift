@@ -341,6 +341,11 @@ struct SessionDetailView: View {
                 // into the running one, and messages queued for the next.
                 MidTurnStrips(model: model)
                     .zIndex(2)
+                // What the connection runs beside the turn. It outlives the
+                // turn, so the chip stays between turns too. Reads `runs` in its
+                // own body: a running-list update re-renders the chip alone.
+                LiveRunsChip(runs: model.runs, agentName: model.agentTypeForUI.label)
+                    .zIndex(2)
                 if !model.isPinnedToBottom {
                     JumpToLatestButton { model.userTappedScrollToBottom() }
                         .padding(.bottom, 10)
@@ -369,7 +374,9 @@ struct SessionDetailView: View {
                     canSteer: model.canSteer,
                     steerChannel: model.steerChannel,
                     isSteering: model.isSteering,
-                    onSteer: { model.steerDraft() }
+                    onSteer: { model.steerDraft() },
+                    suggestion: model.promptSuggestionOffer,
+                    onUseSuggestion: { model.usePromptSuggestion() }
                 )
             }
             .animation(.snappy(duration: 0.24), value: model.isPinnedToBottom)
