@@ -279,6 +279,9 @@ final class SessionDetailViewModel {
     /// flush backoff.
     private var lastQueueBounceAt: ContinuousClock.Instant?
     private var queueFlushTask: Task<Void, Never>?
+    /// Re-reads the row after a send found the conversation moved to another
+    /// folder (see ``followMovedConversation(_:)``).
+    private var relocationTask: Task<Void, Never>?
     /// A queued row is being inserted into the running turn. It stays queued
     /// for the round-trip — it only leaves once the backend confirms — so the
     /// flush has to keep its hands off it meanwhile, or the turn's end would
@@ -1549,7 +1552,71 @@ final class SessionDetailViewModel {
         // Whatever was queued behind this send would most likely fail the same
         // way, one by one: wait for the user instead.
         if !queue.isEmpty { queueHeld = true }
+        if let moved = ConversationMoved.from(error) {
+            followMovedConversation(moved)
+            return
+        }
         notice = Self.describe(error)
+    }
+
+    // MARK: - Moved conversation
+
+    /// A send found the conversation moved to another folder: the connection this
+    /// screen holds was started in the folder it left, and the backend refuses
+    /// every prompt on it. Follow the row there, as the web's tab does — drop the
+    /// connection, so the next send finds or starts one in the new folder (the
+    /// lookup only discovers connections launched where the conversation is
+    /// now), and re-read the row and the folders.
+    ///
+    /// The message is not resent on its own: `rejectSend` already put it back in
+    /// the composer (or at the front of the held queue) to send again.
+    private func followMovedConversation(_ moved: ConversationMoved) {
+        connectionID = nil
+        // An options resolution in flight was made for the old folder's agent.
+        connectionGeneration &+= 1
+        // Point the next send at the new folder right away when it is known, so
+        // a quick resend does not launch another agent in the old one.
+        if let id = moved.folderId, let target = allFolders.first(where: { $0.id == id }) {
+            folder = target
+            currentBranch = target.gitBranch
+        }
+        let placeholder = Self.movedNotice(folderName: moved.folderId.flatMap(movedFolderName(id:)))
+        notice = placeholder
+        notifyConversationsChanged()
+
+        guard let id = conversationID else { return }
+        let lifetime = lifecycle
+        relocationTask?.cancel()
+        relocationTask = Task { [weak self] in
+            guard let self else { return }
+            async let detailReq = self.client.conversationDetail(id: id, tailTurns: 1)
+            async let foldersReq = self.client.listFolders()
+            guard let detail = try? await detailReq, let folders = try? await foldersReq,
+                  !Task.isCancelled, lifetime == self.lifecycle, self.conversationID == id
+            else { return }
+            self.allFolders = folders
+            self.summary = detail.summary
+            if let target = folders.first(where: { $0.id == detail.summary.folderId }) {
+                self.folder = target
+            }
+            self.currentBranch = detail.summary.gitBranch ?? self.folder?.gitBranch
+            self.refreshPiTrust()
+            // The folder may only be known now (created after this screen loaded).
+            if self.notice == placeholder {
+                self.notice = Self.movedNotice(folderName: self.movedFolderName(id: detail.summary.folderId))
+            }
+        }
+    }
+
+    private func movedFolderName(id: Int) -> String? {
+        allFolders.first { $0.id == id }.map { FolderVisibility.displayName(of: $0, in: allFolders) }
+    }
+
+    private static func movedNotice(folderName: String?) -> String {
+        if let folderName, !folderName.isEmpty {
+            return String(localized: "This conversation was moved to \(folderName). Send your message again to continue there.")
+        }
+        return String(localized: "This conversation was moved to another folder. Send your message again to continue there.")
     }
 
     // MARK: - Queue
@@ -3498,6 +3565,8 @@ final class SessionDetailViewModel {
         olderTurnsTask = nil
         piTrustTask?.cancel()
         piTrustTask = nil
+        relocationTask?.cancel()
+        relocationTask = nil
         sendTask?.cancel()
         sendTask = nil
         queueFlushTask?.cancel()

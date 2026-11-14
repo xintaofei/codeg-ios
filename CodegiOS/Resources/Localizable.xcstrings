@@ -360,6 +360,28 @@
         }
       }
     },
+    "This conversation was moved to %@. Send your message again to continue there." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该会话已移到 %@，请重新发送消息，在那里继续。"
+          }
+        }
+      }
+    },
+    "This conversation was moved to another folder. Send your message again to continue there." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该会话已移到其他文件夹，请重新发送消息，在那里继续。"
+          }
+        }
+      }
+    },
     "This conversation was started with a different model provider than the one %@ uses now, and %@ only continues a conversation on its own provider. Switch back to that provider in %@’s settings and reload, or start a new conversation. (%@)" : {
       "extractionState" : "manual",
       "localizations" : {
