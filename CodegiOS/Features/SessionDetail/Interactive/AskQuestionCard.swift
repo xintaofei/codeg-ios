@@ -26,6 +26,8 @@ struct AskQuestionCard: View {
     @State private var otherText: [String: String]
     @State private var submitting = false
     @State private var failed = false
+    /// Folded down to the title row (live card only) — see `AskQuestionFold`.
+    @State private var fold: AskQuestionFold
 
     init(pending: PendingQuestion,
          onAnswer: @escaping (QuestionAnswer) async -> Bool,
@@ -51,30 +53,40 @@ struct AskQuestionCard: View {
         }
         _chosen = State(initialValue: chosen)
         _otherText = State(initialValue: other)
+        _fold = State(initialValue: AskQuestionFold(foldable: !readOnly))
     }
 
     private var answeredCount: Int { pending.questions.filter(isAnswered).count }
     private var complete: Bool { pending.questions.allSatisfy(isAnswered) }
+    /// Folded, the header row IS the card: the question stays pending and
+    /// visible, but the message list gets its space back.
+    private var collapsed: Bool { fold.isCollapsed(pending.questionId) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
 
-            questionsList
-                .allowsHitTesting(!readOnly)
+            if !collapsed {
+                questionsList
+                    .allowsHitTesting(!readOnly)
 
-            if failed, !readOnly {
-                Label("Couldn’t submit. Please try again.", systemImage: "exclamationmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(Theme.danger)
+                if failed, !readOnly {
+                    Label("Couldn’t submit. Please try again.", systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(Theme.danger)
+                }
+
+                // Dropped in the read-only view and while folded.
+                if !readOnly { footer }
             }
-
-            if !readOnly { footer }
         }
-        .padding(14)
+        .padding(collapsed ? 10 : 14)
         .background(Theme.bgElevated, in: RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
         .hairlineBorder(Theme.Radius.lg)
         .modifier(AskCardChrome(enabled: !readOnly))
+        // The host keys this card by question id, but stay correct on our own if
+        // a replacement set ever renders into the same instance.
+        .onChange(of: pending.questionId) { _, id in fold.present(id) }
     }
 
     /// In stream (read-only) the card sits in a timeline row, which owns scrolling
@@ -95,8 +107,28 @@ struct AskQuestionCard: View {
 
     // MARK: Header / footer
 
-    private var header: some View {
-        HStack(alignment: .top, spacing: 10) {
+    /// Live, the header row is the fold toggle (a full-width target rather than
+    /// just the chevron); read-only, it is plain text.
+    @ViewBuilder private var header: some View {
+        if fold.foldable {
+            Button {
+                withAnimation(Theme.Motion.expand) { fold.toggle(pending.questionId) }
+            } label: {
+                headerContent.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityValue(collapsed ? Text("Collapsed") : Text("Expanded"))
+            .accessibilityHint(collapsed ? "Expand" : "Collapse")
+        } else {
+            headerContent
+        }
+    }
+
+    private var headerContent: some View {
+        // Folded, the row centers on its single line rather than top-aligning
+        // against a subtitle that is gone.
+        HStack(alignment: collapsed ? .center : .top, spacing: 10) {
             Image(systemName: readOnly ? "questionmark.bubble.fill" : "bubble.left.and.text.bubble.right.fill")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.accent)
@@ -104,25 +136,38 @@ struct AskQuestionCard: View {
                 Text(titleOverride ?? "The agent needs your input")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
-                if let subtitleOverride {
-                    Text(subtitleOverride)
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if !readOnly {
-                    Text("Answer below, then submit. You can skip anytime.")
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                if !collapsed {
+                    if let subtitleOverride {
+                        Text(subtitleOverride)
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if !readOnly {
+                        Text("Answer below, then submit. You can skip anytime.")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             Spacer(minLength: 8)
             if !readOnly, pending.questions.count > 1 {
+                // Kept while folded: the row still says how far along the set
+                // is, so a folded blocking question never reads as a dismissed one.
                 Text(verbatim: "\(answeredCount)/\(pending.questions.count)")
                     .font(.caption.weight(.medium).monospacedDigit())
                     .foregroundStyle(Theme.textTertiary)
+                    .frame(maxHeight: .infinity, alignment: .center)
+            }
+            if fold.foldable {
+                Image(systemName: collapsed ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
+                    .frame(maxHeight: .infinity, alignment: .center)
             }
         }
+        // Lets the counter and chevron center on the row's own height.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var footer: some View {
@@ -353,6 +398,8 @@ struct AskQuestionCard: View {
         if !ok {
             failed = true
             submitting = false
+            // Folded mid-flight, the error line and the retry would be hidden.
+            withAnimation(Theme.Motion.expand) { fold.submitFailed() }
         }
     }
 }
