@@ -139,7 +139,7 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
 - **验证**：模拟器上真实 VM 对 live WS mock 跑 9 个场景，每个都跑了「只关掉对应修复」的反事实，均复现原 bug；Codex 审查两轮（第一轮 3 个 Important 全部属实已修，第二轮 APPROVED）。
 - [x] 阶段二（主体）
 - [x] 阶段三
-- [ ] 阶段四
+- [ ] 阶段四（第一波已完成；第二波 Mermaid / HTML / json-render 第 1 期待定）
 
 ### 阶段二实际做法与偏差（2026-11-14）
 
@@ -175,3 +175,40 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
 - **后台任务通道**（51b2f64）：`Activity/BackgroundTask.swift` 照搬 `background-task.ts`（Claude Code `TaskOutput`/`TaskStop`、Grok、CodeBuddy 的轮询格式），一个任务一行，折叠时只留仍在轮询的任务。iOS 的 `CompanionDetect` 按形状会把 Grok 的 `{task_ids, timeout_ms}` 当成委派状态检查，所以委派通道让出后台通道认领的调用——但**名字是 `get_delegation_status` 的调用永远留在委派通道**（web 先按名字分委派通道；Codex 抓到子任务报告里引用后台标签时会被抢走）。
 - **委派两项判定**（bfce9e0）：被拒的 `resume_delegation`（`error_code: not_resumable` 或 "Not resumed" 前缀）不认领任务、不常驻、画成说明卡；opencode code-mode `execute` 里的 `delegate_to_agent`（`Activity/CodeModeDelegation.swift` 移植 JS 源码扫描器，UTF-16 语义）画成委派卡并读出 agent/task。卡片的「按推断名选委派卡」**必须有证据**（code-mode 输入或 `_meta` 里 broker/host 的标记），否则标题里引用了 `delegate_to_agent` 的 Bash 会丢掉命令和输出（Codex 抓的）。
 - **验证**：三项移植由并行 agent 只写代码，合到一个分支后一次编译通过；全量 669 个测试（94 个 suite）全绿。Codex 只读审查：清理 + moved 一轮 APPROVED；三项移植首轮 goal APPROVED、后台通道与委派各 1 个 Important（如上，均属实已修），复审 APPROVED。**尚未在模拟器上做 UI 验证**（goal 行、后台任务行、被拒恢复卡）。
+
+### 阶段四第一波实际做法与偏差（2026-11-14）
+
+四个并行 agent 只写代码，合到一个分支后编译一次通过，全量 932 个测试（137 个 suite）全绿。
+
+- **空闲连接观察者 + live runs + `prompt_suggestion`**：
+  - `ConnectionWatcher` 自带 EventStream 和订阅 id。屏幕可见、有连接、没有回合流时 attach；`closeStream()` 时停止，所有开流路径都经过它。重连带 `since_seq`，有退避上限。每个 socket 带代际号，晚到的帧丢弃。
+  - 不写 VM 的 `connectionID`。
+  - 选项面板、fork 解析出的连接也会立刻开始 watch（`adoptResolvedConnection`）。
+  - `ConnectionRunsModel` 移植 `async-tasks.ts` / `live-runs.ts`，两条流都喂给它。
+  - 偏差：
+    - **新鲜 snapshot 若是另一个 session，整表替换**：iOS 离开页面时观察者会断开，可能错过 fork 的 `session_started`；web 不断开，所以没有这条（Codex 抓的）。
+    - 芯片不列前台子 agent（时间线里已有）；委派行不可点、没有琥珀点；没有 Output 按钮。
+    - Claude 自主 `turn` 任务结束后自己重拉转录。
+  - 建议是空输入框的 placeholder + 「填入」+ 硬件 Tab，只填不发。
+  - **未做**：观察者看到 `prompting` 时转成直播 reattach。
+- **fork + 消息导航**：
+  - fork 点取合并回复的**最后一个** turn id。能定点 fork 的只有 Claude / Codex / DeepSeek，其余 agent 只在最后一条回复上提供。有确认框。
+  - 成功后立即改 `summary.externalId`，再按新 fetch 代际整段重拉转录：重试 6 次，只采用已体现 fork 的结果。之后显示「打开原会话」条。fork 进行中，发送进队列。
+  - 导航从「…」进入，是 sheet。outline 用 window 的 (offset, prefixHash) 锚点校验，向上翻页时锚点跟着移动。跳转用 `loadOlderTurnsThrough`，再让 `TranscriptView` 放宽本地窗口并 `scrollTo`。
+- **`/` 菜单 + @ 面板**：
+  - 用 iOS 26 `TextField(selection:prompt:axis:)` 取光标，输入框上方显示建议卡。
+  - 命令来源依次为：两条流的 snapshot、`available_commands` 事件（空闲时由观察者转发）、草稿 probe；第一次输入 `/` 且没有任何来源时才 probe，按 agent+folder 缓存。
+  - @ 只做 files + agents。输入框里显示 `@relpath`，发送 / 转向 / 排队时编码成 web 同款 Markdown 链接，放回时解码。
+  - 顺带修了「+」sheet 把 `$x` 插成 `/$x`，并去掉已过时的 expert 过滤。
+  - **未验证**：硬件方向键/回车是否能到达 `onKeyPress`；CJK 输入法组字期间的表现。
+- **Markdown**：
+  - 列表统一成带层级（0–4）的 `.list`，任务项用复选框图标。
+  - 围栏有 `closed` 标志。
+  - 图片块：本地路径规则逐条移植自 web；按屏幕的加载器并发 4、合并在途请求，只在内存缓存，不按 turn id 作键；全屏查看器可缩放、复制、分享。
+  - 偏差：SVG 只显示文字；列表 / 引用 / 表格里的图片仍只显示 alt。
+  - Info.plist 加了 `NSPhotoLibraryAddUsageDescription`（分享菜单里的「存储图像」需要它）。
+  - ```spec 显示为折叠的「可交互卡片」。
+- **Codex 审查**：各 agent 内部都审过。合并后又审了两轮，各抓到 1 个 Important，均已修复，复审 APPROVED：
+  - 观察者断开期间错过 fork 后残留旧任务；
+  - fork / 选项面板新建的连接没有被 watch。
+- **尚未在模拟器上做 UI 验证**。
