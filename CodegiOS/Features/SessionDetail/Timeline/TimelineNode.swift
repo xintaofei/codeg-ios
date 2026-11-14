@@ -362,15 +362,24 @@ enum TranscriptTimeline {
             let vm = tool.call
             switch tool.tool.kind {
             case .delegation, .delegationResume:
+                // The broker patches the call's meta with the child's terminal
+                // status once it finishes — authoritative over everything else.
+                let meta = DelegationModel.parseDelegationMeta(vm.meta)
+                if let meta, meta.status == .ok || meta.status == .err { return false }
                 if tool.tool.status.isLive { return true }
                 if let later = tool.laterPolls,
                    let task = DelegationModel.buildTaskRows(later)
                        .first(where: { $0.taskId == ActivitySummarize.delegationTaskId(tool) }) {
-                    return task.badge.status == .running || task.badge.status == .starting
+                    // `.checked` is a poll that RETURNED while the task was still
+                    // running — the newest word on the child, and it says running.
+                    switch task.badge.status {
+                    case .running, .starting, .checked, .waiting: return true
+                    case .ok, .err: return false
+                    }
                 }
                 let hasError = vm.isError || vm.state == .error
                 let status = DelegationModel.resolveStatus(
-                    parsedMeta: DelegationModel.parseDelegationMeta(vm.meta),
+                    parsedMeta: meta,
                     toolOutput: DelegationModel.parseToolOutput(vm.output, forceError: vm.isError),
                     state: vm.state, hasError: hasError)
                 return status == .starting || status == .running || status == .waiting

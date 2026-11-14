@@ -78,6 +78,46 @@ struct TimelineFoldingTests {
         #expect(nodes.contains { $0.id == "tool-d1" }, "the running delegation is pinned while folded")
     }
 
+    @Test func aDelegationStaysInViewWhenItsLatestCheckSaysStillRunning() {
+        let date = Date()
+        let turns = [
+            MessageTurn(id: "u", role: .user, blocks: [.text("go")], timestamp: date),
+            MessageTurn(id: "a", role: .assistant, blocks: [
+                .toolUse(id: "d1", name: "delegate_to_agent",
+                         inputPreview: #"{"agent_type":"codex","task":"do it"}"#, status: .unknown, meta: nil),
+                .toolResult(id: "d1", outputPreview: #"{"status":"running","task_id":"t1"}"#,
+                            isError: false, agentStats: nil),
+                // The check RETURNED, reporting the task still running.
+                .toolUse(id: "p1", name: "get_delegation_status",
+                         inputPreview: #"{"task_id":"t1"}"#, status: .unknown, meta: nil),
+                .toolResult(id: "p1", outputPreview: #"{"status":"running","task_id":"t1"}"#,
+                            isError: false, agentStats: nil),
+                .text("Still working on it."),
+            ], timestamp: date),
+        ]
+        let nodes = visible(TranscriptTimeline.buildPersisted(
+            turns: turns, pending: [], agent: .claudeCode, suppressInFlight: false), store: ReplyFoldStore())
+        #expect(nodes.contains { $0.id == "tool-d1" })
+    }
+
+    @Test func aDelegationTheBrokerMarkedFinishedFoldsAway() {
+        let date = Date()
+        let meta = AnyJSON.parse(jsonString: #"{"codeg.delegation":{"status":"completed","task_id":"t1"}}"#)
+        let turns = [
+            MessageTurn(id: "u", role: .user, blocks: [.text("go")], timestamp: date),
+            MessageTurn(id: "a", role: .assistant, blocks: [
+                .toolUse(id: "d1", name: "delegate_to_agent",
+                         inputPreview: #"{"agent_type":"codex","task":"do it"}"#, status: .unknown, meta: meta),
+                .toolResult(id: "d1", outputPreview: #"{"status":"running","task_id":"t1"}"#,
+                            isError: false, agentStats: nil),
+                .text("Delegated."),
+            ], timestamp: date),
+        ]
+        let nodes = visible(TranscriptTimeline.buildPersisted(
+            turns: turns, pending: [], agent: .claudeCode, suppressInFlight: false), store: ReplyFoldStore())
+        #expect(!nodes.contains { $0.id == "tool-d1" })
+    }
+
     @Test func theNewestReplyIsCurrentEvenWithoutAHeader() {
         let date = Date()
         let turns = [
