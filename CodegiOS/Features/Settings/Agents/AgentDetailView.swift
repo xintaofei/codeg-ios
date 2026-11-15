@@ -49,7 +49,7 @@ struct AgentDetailView: View {
     /// button(s), so — like Hermes' raw editor — they hide the host "Save" and the
     /// generic native-config escape hatch.
     private var isSelfContainedAgent: Bool { agentType == .kimiCode || agentType == .pi }
-    private var hostSaveShown: Bool { !isSelfContainedAgent }
+    private var hostSaveShown: Bool { !isSelfContainedAgent && !agentType.isManagedOnDesktop }
 
     /// uv runtime readiness for the version row (uvx agents only). Derived from the
     /// preflight uv check; absent check → treated ready.
@@ -123,13 +123,17 @@ struct AgentDetailView: View {
                 header(agent)
                 installSection(agent)
                 preflightSection
+                if let adapter = preflight?.adapter { AdapterNote(adapter: adapter) }
                 typeConfigSection(agent)
                 // Hermes' config_json is a read-only backend projection, not a raw
                 // file — its structured form is the only editor. Kimi & Pi own their
                 // own raw/native editors inside their panels. A custom ACP agent has
                 // no config file at all (the server reports none), so there is
                 // nothing for the raw editor to edit.
-                if agentType != .hermes && !isSelfContainedAgent && agentType.isBuiltin { nativeConfigSection }
+                // Nor does a built-in this build has no panel for: the server
+                // keeps no config file for most of them either.
+                if agentType != .hermes && !isSelfContainedAgent && agentType.isBuiltin
+                    && !agentType.isManagedOnDesktop { nativeConfigSection }
                 if (agent.distributionType ?? "") == "binary" { clearCacheButton(agent) }
             }
             .padding(.horizontal, Theme.Layout.screenHMargin)
@@ -628,9 +632,70 @@ struct AgentConfigSection: View {
         case .cursor:     CursorConfigSection(draft: $draft, client: client)
         case .kimiCode:   KimiConfigSection(model: model, agent: agent, client: client)
         case .pi:         PiConfigSection(model: model, agent: agent, client: client)
+        // Built in since codeg 0.4x, with no panel here: configured in the
+        // desktop app. The enable switch above still works.
+        case .deepSeek, .qoder, .antigravity, .kiro, .zCode, .trae, .commandCode, .miniMaxCode:
+            DesktopManagedAgentNote()
         // A user-registered ACP agent has no structured form to route to — see
         // `CustomAgentConfigSection`.
         case .other:      CustomAgentConfigSection(agentType: agentType, agent: agent, draft: $draft, client: client)
+        }
+    }
+}
+
+/// That codeg launches an ACP adapter for this agent, not the vendor CLI —
+/// so "Not installed" beside a CLI the user has is not a bug (web
+/// `buildAcpAdapterCheck`, Android `AdapterNote`). Read-only: nothing on a
+/// phone installs anything on the server, so it says where the install lives;
+/// the docs are the one thing it can open.
+private struct AdapterNote: View {
+    let adapter: AdapterInfo
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        let tone = adapter.isSettled ? Theme.textTertiary : Theme.warning
+        VStack(alignment: .leading, spacing: 6) {
+            Text("ACP adapter")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tone)
+            Text(verbatim: adapter.explanation)
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            if let url = URL(string: adapter.docsUrl), let scheme = url.scheme?.lowercased(),
+               scheme == "https" || scheme == "http" {
+                Button("Learn more") { openURL(url) }
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Theme.accent)
+                    .buttonStyle(.plain)
+                    .frame(minHeight: 32)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(tone.opacity(0.10), in: RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
+    }
+}
+
+/// A built-in agent this build has no settings panel for (Android
+/// `agents_desktop_managed_note`).
+private struct DesktopManagedAgentNote: View {
+    var body: some View {
+        EditorSection(title: "Configuration") {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "desktopcomputer")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
+                    .accessibilityHidden(true)
+                Text("This agent's settings are managed in the codeg desktop app. You can enable or disable it here.")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
         }
     }
 }

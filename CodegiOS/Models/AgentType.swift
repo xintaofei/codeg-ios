@@ -26,6 +26,16 @@ enum AgentType: Hashable, Sendable, Identifiable {
     case pi
     case grok
     case cursor
+    // Built in since codeg 0.4x. None has a hand-written settings panel here
+    // (``isManagedOnDesktop``).
+    case deepSeek
+    case qoder
+    case antigravity
+    case kiro
+    case zCode
+    case trae
+    case commandCode
+    case miniMaxCode
 
     /// An agent with no compile-time support here: a user-registered ACP agent
     /// (`custom:<registry-id>`) or a built-in added by a newer server. The
@@ -48,7 +58,19 @@ enum AgentType: Hashable, Sendable, Identifiable {
     static let builtins: [AgentType] = [
         .claudeCode, .codex, .openCode, .gemini, .openClaw, .cline,
         .hermes, .codeBuddy, .kimiCode, .pi, .grok, .cursor,
+        .deepSeek, .qoder, .antigravity, .kiro, .zCode, .trae, .commandCode, .miniMaxCode,
     ]
+
+    /// Built-ins configured only in the codeg desktop app: this build has no
+    /// panel for them, and the server keeps no local config file for most
+    /// (`agent_local_config_path` is None), so a generic config editor would
+    /// report a save and drop it. Their detail page says so instead.
+    var isManagedOnDesktop: Bool {
+        switch self {
+        case .deepSeek, .qoder, .antigravity, .kiro, .zCode, .trae, .commandCode, .miniMaxCode: return true
+        default: return false
+        }
+    }
 
     var id: String { rawValue }
 
@@ -94,6 +116,14 @@ extension AgentType: RawRepresentable {
         case "pi": self = .pi
         case "grok": self = .grok
         case "cursor": self = .cursor
+        case "deepseek": self = .deepSeek
+        case "qoder": self = .qoder
+        case "antigravity": self = .antigravity
+        case "kiro": self = .kiro
+        case "zcode": self = .zCode
+        case "trae": self = .trae
+        case "command_code": self = .commandCode
+        case "minimax_code": self = .miniMaxCode
         case "": return nil
         default: self = .other(wire: rawValue)
         }
@@ -113,6 +143,14 @@ extension AgentType: RawRepresentable {
         case .pi: return "pi"
         case .grok: return "grok"
         case .cursor: return "cursor"
+        case .deepSeek: return "deepseek"
+        case .qoder: return "qoder"
+        case .antigravity: return "antigravity"
+        case .kiro: return "kiro"
+        case .zCode: return "zcode"
+        case .trae: return "trae"
+        case .commandCode: return "command_code"
+        case .miniMaxCode: return "minimax_code"
         case .other(let wire): return wire
         }
     }
@@ -165,6 +203,14 @@ extension AgentType {
         case .pi: return "Pi"
         case .grok: return "Grok"
         case .cursor: return "Cursor"
+        case .deepSeek: return "DeepSeek Harness"
+        case .qoder: return "Qoder"
+        case .antigravity: return "Google Antigravity"
+        case .kiro: return "Kiro CLI"
+        case .zCode: return "ZCode"
+        case .trae: return "TRAE CLI"
+        case .commandCode: return "Command Code"
+        case .miniMaxCode: return "MiniMax Code"
         case .other:
             let humanized = Self.humanize(customId ?? rawValue)
             // Only reachable from a malformed empty wire value (see the decoder);
@@ -188,6 +234,14 @@ extension AgentType {
         case .pi: return "Pi"
         case .grok: return "Grok"
         case .cursor: return "Cursor"
+        case .deepSeek: return "DeepSeek"
+        case .qoder: return "Qoder"
+        case .antigravity: return "Antigravity"
+        case .kiro: return "Kiro"
+        case .zCode: return "ZCode"
+        case .trae: return "TRAE"
+        case .commandCode: return "Command Code"
+        case .miniMaxCode: return "MiniMax"
         case .other: return displayName
         }
     }
@@ -217,6 +271,14 @@ extension AgentType {
         case .pi: return "pi"
         case .grok: return "line.diagonal"
         case .cursor: return "cursorarrow"
+        case .deepSeek: return "fish"
+        case .qoder: return "q.circle"
+        case .antigravity: return "arrow.up.circle"
+        case .kiro: return "theatermasks"
+        case .zCode: return "z.square"
+        case .trae: return "square.dashed"
+        case .commandCode: return "command"
+        case .miniMaxCode: return "m.square"
         case .other: return "puzzlepiece.extension"
         }
     }
@@ -238,6 +300,14 @@ extension AgentType {
         case .pi: return "AgentPi"
         case .grok: return "AgentGrok"
         case .cursor: return "AgentCursor"
+        case .deepSeek: return "AgentDeepSeek"
+        case .qoder: return "AgentQoder"
+        case .antigravity: return "AgentAntigravity"
+        case .kiro: return "AgentKiro"
+        case .zCode: return "AgentZCode"
+        case .trae: return "AgentTrae"
+        case .commandCode: return "AgentCommandCode"
+        case .miniMaxCode: return "AgentMiniMaxCode"
         case .other: return nil
         }
     }
@@ -248,8 +318,9 @@ extension AgentType {
     /// colors/gradients and render as-is.
     var iconIsTemplate: Bool {
         switch self {
-        case .openCode, .cline, .hermes, .codeBuddy, .grok, .cursor: return true
-        case .claudeCode, .codex, .gemini, .openClaw, .kimiCode, .pi: return false
+        case .openCode, .cline, .hermes, .codeBuddy, .grok, .cursor, .qoder, .antigravity: return true
+        case .claudeCode, .codex, .gemini, .openClaw, .kimiCode, .pi,
+             .deepSeek, .kiro, .zCode, .trae, .commandCode, .miniMaxCode: return false
         // A downloaded icon is rendered as-is; the monogram fallback tints itself.
         case .other: return false
         }
@@ -275,6 +346,15 @@ extension AgentType {
         // Cursor's cube mark is monochrome too (web renders it at plain
         // `text-foreground`), so it gets the same appearance-following tint.
         case .cursor: return Color(light: Color(white: 0.12), dark: Color(white: 0.92))
+        // The web's AGENT_COLORS. ZCode and Command Code are near-black marks,
+        // so they follow the appearance like Grok and Cursor.
+        case .deepSeek: return Color(red: 0.30, green: 0.42, blue: 1.0)      // #4D6BFE
+        case .qoder: return Color(red: 0.42, green: 0.30, blue: 0.95)        // #6C4CF1
+        case .antigravity: return Color(red: 0.10, green: 0.45, blue: 0.91)  // #1A73E8
+        case .kiro: return Color(red: 0.56, green: 0.27, blue: 1.0)          // #9046FF
+        case .zCode, .commandCode: return Color(light: Color(white: 0.12), dark: Color(white: 0.92))
+        case .trae: return Color(red: 0.20, green: 0.94, blue: 0.55)         // #32F08C
+        case .miniMaxCode: return Color(red: 0.95, green: 0.25, blue: 0.36)  // #F23F5D
         // A custom agent has no brand color, so derive a stable one from its id:
         // two agents stay visually distinct in a list, and the same agent keeps
         // its color across launches. Saturation/brightness are pinned to a band

@@ -14235,6 +14235,86 @@
           }
         }
       }
+    },
+    "Codeg runs %@ as an ACP bridge. Install and sign in to the official %@ on the desktop first; the bridge uses its existing configuration." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codeg 把 %1$@ 作为 ACP 桥接来运行。请先在桌面端安装并登录官方的 %2$@；桥接会沿用它现有的配置。"
+          }
+        }
+      }
+    },
+    "Adapter %@ is installed — that is what Codeg launches, not your own %@ at %@. They are separate packages that coexist, and both read %@, so sign-in and settings are shared." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "适配器 %1$@ 已安装 —— Codeg 启动的是它，而不是你本地的 %2$@（%3$@）。两者是各自独立的包，可以共存，且都读取 %4$@，登录和配置共享。"
+          }
+        }
+      }
+    },
+    "Adapter %@ is installed — that is what Codeg launches. It ships its own runtime, so %@ is not required." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "适配器 %1$@ 已安装 —— Codeg 启动的就是它。它自带运行时，因此不需要另外安装 %2$@。"
+          }
+        }
+      }
+    },
+    "Found your own %@ at %@. Codeg drives agents over ACP and that CLI does not speak ACP, so it launches a separate adapter package, %@ — which isn't installed yet. The adapter never modifies or replaces your %@ command and reads the same %@, so your sign-in carries over. Install it from Agent Settings on the desktop." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已检测到你本地的 %1$@：%2$@。Codeg 通过 ACP 协议驱动智能体，而该 CLI 本身不支持 ACP，所以它启动的是单独的适配器包 %3$@ —— 目前还没安装。适配器不会修改或替换你的 %4$@ 命令，读取的也是同一个 %5$@，已有的登录直接沿用。请在桌面端的「智能体设置」里安装。"
+          }
+        }
+      }
+    },
+    "Codeg drives agents over ACP and %@ does not speak ACP, so it launches a separate adapter package, %@. The adapter ships its own runtime, so the %@ CLI is not required first; if you do have it, the two coexist and share the same %@ sign-in. Install the adapter from Agent Settings on the desktop." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codeg 通过 ACP 协议驱动智能体，而 %1$@ 本身不支持 ACP，所以它启动的是单独的适配器包 %2$@。适配器自带运行时，因此不必先装 %3$@ CLI；如果你已经装了，两者可以共存，并共用 %4$@ 里的登录信息。请在桌面端的「智能体设置」里安装适配器。"
+          }
+        }
+      }
+    },
+    "ACP adapter" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ACP 适配器"
+          }
+        }
+      }
+    },
+    "Learn more" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "了解详情"
+          }
+        }
+      }
+    },
+    "This agent's settings are managed in the codeg desktop app. You can enable or disable it here." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能体的设置在 codeg 桌面端管理。这里可以启用或停用它。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

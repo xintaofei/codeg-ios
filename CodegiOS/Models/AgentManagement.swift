@@ -8,6 +8,86 @@ struct PreflightResult: Decodable, Sendable {
     let agentName: String
     let passed: Bool
     let checks: [PreflightCheck]
+    /// The adapter-vs-vendor-CLI facts, for an agent whose codeg entry is an
+    /// ACP adapter (Claude Code → claude-agent-acp, Codex → codex-acp); nil
+    /// for every other agent. Explains, never gates.
+    let adapter: AdapterInfo?
+
+    private enum CodingKeys: String, CodingKey { case agentType, agentName, passed, checks, adapter }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        agentType = try c.decode(AgentType.self, forKey: .agentType)
+        agentName = (try? c.decode(String.self, forKey: .agentName)) ?? ""
+        passed = (try? c.decode(Bool.self, forKey: .passed)) ?? false
+        checks = (try? c.decode([PreflightCheck].self, forKey: .checks)) ?? []
+        adapter = (try? c.decodeIfPresent(AdapterInfo.self, forKey: .adapter)) ?? nil
+    }
+}
+
+/// The adapter-vs-vendor-CLI split (Rust `AdapterInfo`). Neither `claude` nor
+/// `codex` speaks ACP, so codeg installs and launches an adapter package
+/// instead — and without saying so, "Not installed" beside an agent the user
+/// demonstrably has reads as a bug. Facts, not prose: the client owns the
+/// wording (and, on a phone that can install nothing, points at the desktop).
+struct AdapterInfo: Decodable, Hashable, Sendable {
+    /// npm spec codeg installs, e.g. `@agentclientprotocol/claude-agent-acp@0.81.1`.
+    let adapterPackage: String
+    /// The command the launch gate resolves, e.g. `claude-agent-acp`.
+    let adapterCmd: String
+    let adapterInstalled: Bool
+    /// The vendor CLI, e.g. `claude`, and its display name.
+    let nativeCmd: String
+    let nativeLabel: String
+    /// Where the user's own vendor CLI was found, if at all — named so the
+    /// user can see codeg looked, and is talking about a different program.
+    let nativePath: String?
+    /// The adapter needs the official runtime installed separately (ZCode).
+    let nativeRequired: Bool
+    /// The config dir both read, so no second sign-in is needed.
+    let sharedConfigDir: String
+    let docsUrl: String
+
+    private enum CodingKeys: String, CodingKey {
+        case adapterPackage, adapterCmd, adapterInstalled, nativeCmd, nativeLabel, nativePath
+        case nativeRequired, sharedConfigDir, docsUrl
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func str(_ key: CodingKeys) -> String { ((try? c.decodeIfPresent(String.self, forKey: key)) ?? nil) ?? "" }
+        adapterPackage = str(.adapterPackage)
+        adapterCmd = str(.adapterCmd)
+        adapterInstalled = ((try? c.decodeIfPresent(Bool.self, forKey: .adapterInstalled)) ?? nil) ?? false
+        nativeCmd = str(.nativeCmd)
+        nativeLabel = str(.nativeLabel)
+        let path = ((try? c.decodeIfPresent(String.self, forKey: .nativePath)) ?? nil)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        nativePath = path?.isEmpty == false ? path : nil
+        nativeRequired = ((try? c.decodeIfPresent(Bool.self, forKey: .nativeRequired)) ?? nil) ?? false
+        sharedConfigDir = str(.sharedConfigDir)
+        docsUrl = str(.docsUrl)
+    }
+
+    /// The note stands as fine (installed, and for a bridge, its runtime found).
+    var isSettled: Bool { adapterInstalled && (!nativeRequired || nativePath != nil) }
+
+    /// What the note says, in the one of five states the two facts put it
+    /// (web `buildAcpAdapterCheck`, worded for a phone).
+    var explanation: String {
+        if nativeRequired {
+            return String(localized: "Codeg runs \(adapterPackage) as an ACP bridge. Install and sign in to the official \(nativeLabel) on the desktop first; the bridge uses its existing configuration.")
+        }
+        switch (adapterInstalled, nativePath) {
+        case (true, let path?):
+            return String(localized: "Adapter \(adapterCmd) is installed — that is what Codeg launches, not your own \(nativeCmd) at \(path). They are separate packages that coexist, and both read \(sharedConfigDir), so sign-in and settings are shared.")
+        case (true, nil):
+            return String(localized: "Adapter \(adapterCmd) is installed — that is what Codeg launches. It ships its own runtime, so \(nativeLabel) is not required.")
+        case (false, let path?):
+            return String(localized: "Found your own \(nativeLabel) at \(path). Codeg drives agents over ACP and that CLI does not speak ACP, so it launches a separate adapter package, \(adapterPackage) — which isn't installed yet. The adapter never modifies or replaces your \(nativeCmd) command and reads the same \(sharedConfigDir), so your sign-in carries over. Install it from Agent Settings on the desktop.")
+        case (false, nil):
+            return String(localized: "Codeg drives agents over ACP and \(nativeLabel) does not speak ACP, so it launches a separate adapter package, \(adapterPackage). The adapter ships its own runtime, so the \(nativeCmd) CLI is not required first; if you do have it, the two coexist and share the same \(sharedConfigDir) sign-in. Install the adapter from Agent Settings on the desktop.")
+        }
+    }
 }
 
 struct PreflightCheck: Decodable, Hashable, Sendable, Identifiable {
