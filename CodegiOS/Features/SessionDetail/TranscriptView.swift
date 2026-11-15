@@ -280,7 +280,8 @@ struct TranscriptView<Header: View>: View {
                 turns: slice, pending: pendingUserTurns, agent: agent,
                 suppressInFlight: suppressInFlight,
                 inFlightUserTurnId: inFlightUserTurnId,
-                forkPoints: true
+                forkPoints: true,
+                heldAhead: Set(backgroundTurns.map(\.turn.id))
             )
             persistedMemo.key = key
             persistedMemo.tier = persisted

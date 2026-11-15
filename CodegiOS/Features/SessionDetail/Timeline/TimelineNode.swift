@@ -245,7 +245,9 @@ enum TranscriptTimeline {
         let nodeStart: Int
     }
 
-    static func buildPersistedTier(turns rawTurns: [MessageTurn], pending: [MessageTurn], agent: AgentType, suppressInFlight: Bool, inFlightUserTurnId: String? = nil, liveness: ToolLiveness = .settled, forkPoints: Bool = false) -> PersistedTier {
+    /// - Parameter heldAhead: ids of turns this client holds ahead of the
+    ///   server's copy (the out-of-turn overlay): no fork point names them.
+    static func buildPersistedTier(turns rawTurns: [MessageTurn], pending: [MessageTurn], agent: AgentType, suppressInFlight: Bool, inFlightUserTurnId: String? = nil, liveness: ToolLiveness = .settled, forkPoints: Bool = false, heldAhead: Set<String> = []) -> PersistedTier {
         var nodes: [TimelineNode] = []
         var tail: TailReply?
         var fold = DelegationTaskFold()
@@ -342,7 +344,8 @@ enum TranscriptTimeline {
                 if forkPoints {
                     let last = turns[j - 1]
                     footer.forkPoint = ReplyForkPoint(turnID: last.id, isThreadTail: forkTail == j - 1,
-                                                      hasText: ReplyForkPoint.hasForkableText(last))
+                                                      hasText: ReplyForkPoint.hasForkableText(last),
+                                                      heldAhead: heldAhead.contains(last.id))
                 }
                 nodes.append(footer)
                 i = j

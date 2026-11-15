@@ -85,6 +85,7 @@ final class DelegationChildWatch {
     @ObservationIgnored private var watches: [String: Watch] = [:]
     @ObservationIgnored private var releases: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var reopens: [String: Int] = [:]
+    @ObservationIgnored private var reopenTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var wanted: Set<String> = []
     @ObservationIgnored private var endpoint: (baseURL: URL, token: String)?
 
@@ -113,6 +114,8 @@ final class DelegationChildWatch {
         for id in Array(watches.keys) { close(id) }
         for task in releases.values { task.cancel() }
         releases = [:]
+        for task in reopenTasks.values { task.cancel() }
+        reopenTasks = [:]
         reopens = [:]
         if !progress.isEmpty { progress = [:] }
     }
@@ -125,6 +128,7 @@ final class DelegationChildWatch {
             self.releases[id] = nil
             self.close(id)
             self.reopens[id] = nil
+            self.reopenTasks.removeValue(forKey: id)?.cancel()
             self.progress[id] = nil
         }
     }
@@ -176,9 +180,11 @@ final class DelegationChildWatch {
         let attempt = (reopens[id] ?? 0) + 1
         reopens[id] = attempt
         guard attempt <= Self.maxReopens else { return }
-        Task { [weak self] in
+        reopenTasks[id]?.cancel()
+        reopenTasks[id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Double(attempt)))
-            guard let self, self.wanted.contains(id), self.watches[id] == nil else { return }
+            guard let self, !Task.isCancelled, self.wanted.contains(id), self.watches[id] == nil else { return }
+            self.reopenTasks[id] = nil
             self.open(id)
         }
     }

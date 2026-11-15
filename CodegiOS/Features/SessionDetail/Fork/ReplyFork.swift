@@ -25,6 +25,10 @@ struct ReplyForkPoint: Equatable, Hashable, Sendable {
     /// The turn carries text of its own (see ``hasForkableText(_:)``) — what
     /// the backend resolves a fork point by, as far as this client can tell.
     var hasText: Bool = true
+    /// The turn is one this client holds ahead of the server's own copy — an
+    /// out-of-turn turn from the transcript watcher (``BackgroundOverlays``),
+    /// whose id the backend's parse does not have.
+    var heldAhead: Bool = false
 
     /// What a fork from this point sends.
     struct Request: Equatable, Sendable {
@@ -48,7 +52,7 @@ struct ReplyForkPoint: Equatable, Hashable, Sendable {
     /// At the thread's tail all of them are fine — the tail IS the fork point —
     /// and the request then names nothing the backend would have to look up.
     func request(agent: AgentType) -> Request? {
-        let local = Self.isLocalTurnID(turnID)
+        let local = heldAhead || Self.isLocalTurnID(turnID)
         let pointable = Self.canForkAtTurn(agent)
         if isThreadTail {
             return Request(forkFromTurnId: local || !pointable ? nil : turnID)

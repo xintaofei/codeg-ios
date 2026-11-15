@@ -96,4 +96,32 @@ struct BackgroundOverlayTests {
         #expect(BackgroundTaskLifecycle.settle([launch], shell) == nil)
         #expect(BackgroundTaskLifecycle.settle([launch], BackgroundSettled(taskId: "a1", status: "completed")) == nil)
     }
+
+    // MARK: Fork points
+
+    /// An overlay turn's id is the watcher's, not the backend's parse's: no
+    /// "Fork from here" may name it (Codex review). At the tail a fork names
+    /// nothing anyway, so it stays on offer there.
+    @MainActor @Test func noForkPointNamesATurnHeldAheadOfTheServer() throws {
+        let server = [turn("u1", .user, at: 0, [.text("Audit it")]), turn("a1", at: 1, [.text("Started.")])]
+        let local = [turn("u2", .user, at: 10, [.text("Next")]), turn("a2", at: 11, [.text("Done next.")])]
+        let early = [BackgroundOverlayEntry(turn: turn("bg-9-0", at: 5, [.text("The audit finished.")]), watermark: 9)]
+        func forkPoints(_ overlay: [BackgroundOverlayEntry], _ turns: [MessageTurn], localFrom: Int?) -> [ReplyForkPoint] {
+            let drawn = BackgroundOverlays.compose(turns, localFrom: localFrom, overlay: overlay)
+            return TranscriptTimeline.buildPersistedTier(
+                turns: drawn, pending: [], agent: .claudeCode, suppressInFlight: false, forkPoints: true,
+                heldAhead: Set(overlay.map(\.turn.id))).nodes.compactMap(\.forkPoint)
+        }
+        // Joined onto a1 (consecutive assistant turns are one reply), it is
+        // that reply's last turn — and a folded round follows it.
+        let middle = forkPoints(early, server + local, localFrom: 2)
+        #expect(middle.map(\.turnID) == ["bg-9-0", "a2"])
+        #expect(middle[0].request(agent: .claudeCode) == nil, "never a point the server can't resolve")
+        #expect(middle[1].request(agent: .claudeCode) == ReplyForkPoint.Request(forkFromTurnId: "a2"))
+        // At the tail: offered, naming nothing.
+        let tail = forkPoints([BackgroundOverlayEntry(turn: turn("bg-9-1", at: 20, [.text("Later.")]), watermark: 9)],
+                              server, localFrom: nil)
+        #expect(tail.map(\.turnID) == ["bg-9-1"])
+        #expect(tail[0].request(agent: .claudeCode) == ReplyForkPoint.Request(forkFromTurnId: nil))
+    }
 }
