@@ -162,9 +162,11 @@ enum ShellSessionFormat {
 ///     Search
 ///     List files in '<path>'
 ///     List files
-///     Read file '<path>'            ← already resolved by the `read` name rules
+///     Read file '<path>'            ← the file only: the card needs it as its input
 ///
-/// Ports web `lib/codex-command-action.ts`.
+/// Ports web `lib/codex-command-action.ts`; the read is Android's
+/// (`CodexCommandAction.kt`), since the web takes a read's file from the ACP
+/// `locations`, which this client doesn't keep.
 enum CodexCommandAction {
     struct Search {
         /// Search pattern, or nil when codex could not extract one.
@@ -206,6 +208,20 @@ enum CodexCommandAction {
         return nil
     }
 
+    private static let readFilePrefix = "Read file '"
+
+    /// The file a `Read file '<path>'` title names, or nil. One quoted path
+    /// only — a path holding no `'` — because codex-acp joins the titles of a
+    /// multi-command line with ", ", and `Read file 'a', Read file 'b'` must not
+    /// read as one file called `a', Read file 'b`.
+    static func readFile(title: String?) -> String? {
+        guard let scalars = title?.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars,
+              scalars.starts(with: readFilePrefix.unicodeScalars), scalars.last == "'" else { return nil }
+        let inner = scalars.dropFirst(readFilePrefix.unicodeScalars.count).dropLast()
+        guard !inner.isEmpty, !inner.contains("'") else { return nil }
+        return String(String.UnicodeScalarView(inner))
+    }
+
     /// A codex-acp list-files title's path, or nil when the title isn't one.
     /// A bare "List files" parses to a non-nil action with a nil path.
     static func listFiles(title: String?) -> String?? {
@@ -218,9 +234,10 @@ enum CodexCommandAction {
 
     /// A command action resolved from its title: the canonical tool name the
     /// web maps it to, plus the arguments read back out of the title — which is
-    /// the only place they exist.
+    /// the only place they exist. A saved codex command resolves to the same
+    /// (`CodexShellAction`).
     struct Resolved {
-        /// `grep` or `glob`, matching web `normalizeToolName`.
+        /// `read`, `grep` or `glob`, matching web `normalizeToolName`.
         let name: String
         /// Synthesized `input_preview` JSON, matching what the desktop's
         /// runtime writes onto the tool-use block.
@@ -234,6 +251,11 @@ enum CodexCommandAction {
     /// call carries NO input of its own — that is the shape codex-acp sends, and
     /// a tool with real arguments should never be re-identified by its title.
     static func resolve(title: String) -> Resolved? {
+        // A read names its file in the title only: as `file_path` it gives the
+        // card "Read <file>" and the file view, as a read's saved copy has.
+        if let path = readFile(title: title) {
+            return Resolved(name: "read", input: encode(["file_path": path]))
+        }
         if let action = search(title: title) {
             var args: [String: String] = [:]
             if let query = action.query { args["pattern"] = query }
@@ -248,8 +270,11 @@ enum CodexCommandAction {
         return nil
     }
 
-    private static func encode(_ args: [String: String]) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: args, options: [.sortedKeys]),
+    /// The synthesized input as JSON text, keys sorted. Slashes unescaped, as
+    /// `JSON.stringify` writes them: these are mostly paths.
+    static func encode(_ args: [String: String]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: args,
+                                                     options: [.sortedKeys, .withoutEscapingSlashes]),
               let json = String(data: data, encoding: .utf8) else { return "{}" }
         return json
     }

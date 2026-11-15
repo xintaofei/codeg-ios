@@ -103,8 +103,10 @@ struct ToolCallVM: Identifiable {
     /// could NOT title by a command — so naming the session here is what ties
     /// those "Wait cell 17983" cards back to the command that started it.
     let announcedSessionId: String?
-    /// Set when this call was identified as a codex-acp command action, i.e. its
-    /// name, arguments and bucket were all recovered from its title.
+    /// Set when this call was identified as a codex command action, i.e. its
+    /// name, arguments and bucket were all recovered — from a live call's title
+    /// (`CodexCommandAction`), or from the command line a saved one ran
+    /// (`CodexShellAction`).
     let commandAction: CodexCommandAction.Resolved?
     /// The plan document a plan-*mode* call carries (Claude's `ExitPlanMode`
     /// `{plan: "…"}`), drawn as a plan card rather than as a raw argument;
@@ -122,7 +124,7 @@ struct ToolCallVM: Identifiable {
         // `rawName`. Its identity, its query and its path all have to be read
         // back out of that title; the synthesized input below is what the
         // desktop's runtime writes onto the tool-use block, so every derivation
-        // downstream sees an ordinary Grep/Glob call.
+        // downstream sees an ordinary Read/Grep/Glob call.
         //
         // Gated on there being no input at all, which is the shape codex sends:
         // a tool carrying real arguments must never be re-identified by its
@@ -136,14 +138,34 @@ struct ToolCallVM: Identifiable {
         // mode entered"). Resolve them to the canonical name up front so the live
         // stream lands on the same identity the persisted path reads from
         // `x.ai/tool.name` — and so the card's title stops changing mid-stream.
-        let resolvedName = ToolDerive.grokPlanModeName(meta) ?? action?.name ?? rawName
-        let resolvedInput = input ?? action?.input
+        let planName = ToolDerive.grokPlanModeName(meta)
+        // The saved copy of such a command keeps only `exec_command` and the
+        // command line: read the line as codex did, so the reply reads back with
+        // the steps it streamed ("Read 2 files", not "Ran 2 commands"). Saved
+        // calls only — a live call (`toolName` given) announced its own identity.
+        let shellAction = planName == nil && action == nil && toolName == nil && CodexShellAction.isShellName(rawName)
+            ? CodexShellAction.commandOf(input: input, parsed: ToolDerive.parseJSON(input))
+                .flatMap(CodexShellAction.resolve)
+            : nil
+        let recovered = action ?? shellAction
+        let resolvedName = planName ?? recovered?.name ?? rawName
+        // The command line is all the saved call sent; the target it names is
+        // the input the live action's card was drawn from.
+        let resolvedInput = shellAction?.input ?? input ?? action?.input
+        // A saved search that matched nothing is rg's exit 1, which codex calls
+        // a failure. As a command the exit reader settled it; as the search it
+        // now is, it settles the way the live one does (`GrepNoMatch`): done,
+        // with the empty result the search card reads as "No matches".
+        let savedNoMatch = shellAction?.isGrepLike == true && (isError || state == .error)
+            && CodexShellAction.isNoMatchResult(output: output, exitCode: exitCode)
+        let effectiveToolName = toolName ?? shellAction?.name ?? rawName
+        let effectiveOutput = savedNoMatch ? "" : output
         self.id = id
         self.rawName = resolvedName
         self.kind = kind
-        self.state = state
+        self.state = savedNoMatch ? .done : state
         self.input = resolvedInput
-        self.output = output
+        self.output = effectiveOutput
         self.content = content
         // `state == .error` and `isError` must agree: the state drives THIS card,
         // but `isError` is what everything above it reads — the group's "N failed"
@@ -151,14 +173,14 @@ struct ToolCallVM: Identifiable {
         // that keeps a failed task op out of the successful checklist. A failure
         // the tool's own `status` declared has no result block to carry the flag,
         // so it is stamped here rather than at each of those sites.
-        self.isError = isError || state == .error
+        self.isError = !savedNoMatch && (isError || state == .error)
         self.meta = meta
         self.transcript = transcript
         self.agentStats = agentStats
         self.exitCode = exitCode
-        self.toolName = toolName ?? rawName
+        self.toolName = effectiveToolName
         self.isLive = isLive
-        self.commandAction = action
+        self.commandAction = recovered
 
         let parsed = ToolDerive.parseJSON(resolvedInput)
         // A command action's bucket comes from its resolved name ALONE, never
@@ -166,19 +188,21 @@ struct ToolCallVM: Identifiable {
         // which would route it to the file-read body and dump the raw envelope.
         // (The web classifies on the name only; iOS's kind-first rule is an
         // addition, and it has to yield here.)
-        let b = action != nil ? .search : ToolDerive.bucket(name: resolvedName, kind: kind)
+        let b = recovered.map { ToolDerive.bucket(name: $0.name, kind: "") }
+            ?? ToolDerive.bucket(name: resolvedName, kind: kind)
         let comp = CompanionDetect.kind(name: resolvedName, input: resolvedInput, parsed: parsed)
-            ?? CompanionDetect.delegateByToolName(toolName ?? rawName, input: resolvedInput, meta: meta)
+            ?? CompanionDetect.delegateByToolName(effectiveToolName, input: resolvedInput, meta: meta)
         self.bucket = b
         self.companion = comp
         self.displayTitle = ToolDerive.title(name: resolvedName, bucket: b, input: resolvedInput, parsed: parsed)
         self.icon = comp.map(ToolDerive.companionIcon)
             ?? ToolDerive.icon(bucket: b, name: resolvedName, input: resolvedInput)
-        self.diffFiles = ToolDerive.diff(bucket: b, input: resolvedInput, output: output, content: content, parsed: parsed)
-        self.announcedSessionId = ToolDerive.announcedSession(name: resolvedName, output: output)
+        self.diffFiles = ToolDerive.diff(bucket: b, input: resolvedInput, output: effectiveOutput,
+                                         content: content, parsed: parsed)
+        self.announcedSessionId = ToolDerive.announcedSession(name: resolvedName, output: effectiveOutput)
         // By either name: a live call's wire name is a human title, and the
         // name inferred from its kind and input is the one that says plan mode.
-        let planModeCall = ToolDerive.isPlanModeName(resolvedName) || ToolDerive.isPlanModeName(toolName ?? rawName)
+        let planModeCall = ToolDerive.isPlanModeName(resolvedName) || ToolDerive.isPlanModeName(effectiveToolName)
         self.planDocument = planModeCall ? PlanParse.planMarkdown(resolvedInput) : nil
     }
 
@@ -887,8 +911,14 @@ enum ToolDerive {
             if let s = str(["skill", "name", "command"]) { return "Skill: \(s)" }
             return "Skill"
         default:
-            if let v = firstStringValue(args) { return "\(display(name)): \(truncate(v, 50))" }
-            return display(name)
+            guard let v = firstStringValue(args) else { return display(name) }
+            // A live call titled by its own argument — codex-acp titles a shell
+            // command with the command — would read "ls -la: ls -la". Its saved
+            // copy is titled by the command alone; so is this.
+            if v.trimmingCharacters(in: .whitespacesAndNewlines) == name.trimmingCharacters(in: .whitespacesAndNewlines) {
+                return simplifyCommand(name)
+            }
+            return "\(display(name)): \(truncate(v, 50))"
         }
     }
 

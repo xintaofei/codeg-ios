@@ -18,7 +18,8 @@ import Foundation
 /// The two other no-match shapes are read elsewhere: codex's exit-1 empty
 /// envelope by the search row and card (`ActivityExplore.searchResultText`,
 /// `ToolCallVM.searchResultText`), a shell search's exit 1 by the command row
-/// (`ActivityExitMeaning`).
+/// (`ActivityExitMeaning`) — or, for a saved codex command that reads back as
+/// the search it streamed as, by `CodexShellAction.isNoMatchResult`.
 enum GrepNoMatch {
     /// `_meta` key the server stamps on codex's `search` command actions
     /// (`stamp_codex_search_action` in `acp/connection.rs`; web

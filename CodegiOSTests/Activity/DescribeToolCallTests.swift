@@ -89,7 +89,9 @@ struct DescribeToolCallTests {
         .init("mcp__codeg-mcp__check_user_feedback", #"{}"#, "feedback"),
         .init("mcp__codeg-mcp__task_progress", #"{}"#, "workbench"),
         // codex
-        .init("exec_command", #"{"cmd":"ls"}"#, "command"),
+        // Not the web's `ls`: a saved `exec_command` codex takes for a listing
+        // now reads as one (`CodexShellAction`), as it streamed.
+        .init("exec_command", #"{"cmd":"make"}"#, "command"),
         .init("shell_command", #"{"command":"ls"}"#, "command"),
         .init("apply_patch", "*** Begin Patch\n*** End Patch", "edit"),
         .init("wait", #"{"cell_id":"7"}"#, "shell-session"),
