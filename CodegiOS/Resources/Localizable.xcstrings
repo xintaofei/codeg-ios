@@ -14315,6 +14315,326 @@
           }
         }
       }
+    },
+    "%lld Selected" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已选 %lld 个"
+          }
+        }
+      }
+    },
+    "%lld conversations" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个会话"
+          }
+        }
+      }
+    },
+    "%lld conversations were not moved" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个会话未移动"
+          }
+        }
+      }
+    },
+    "%lld conversations were not moved: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个会话未移动：%@"
+          }
+        }
+      }
+    },
+    "1 conversation was not moved" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 个会话未移动"
+          }
+        }
+      }
+    },
+    "1 conversation was not moved: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 个会话未移动：%@"
+          }
+        }
+      }
+    },
+    "Add another level" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加其它档位"
+          }
+        }
+      }
+    },
+    "Background task completed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "后台任务已完成"
+          }
+        }
+      }
+    },
+    "Background task: interim result" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "后台任务：阶段性结果"
+          }
+        }
+      }
+    },
+    "Default level" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认档位"
+          }
+        }
+      }
+    },
+    "Edit tags" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑标签"
+          }
+        }
+      }
+    },
+    "Files created during these chats stay in their scratch directories; they are not moved into the folder." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这些聊天中生成的文件仍保留在各自的临时目录，不会搬进该文件夹。"
+          }
+        }
+      }
+    },
+    "Kimi only shows a Thinking picker in the composer when the model declares a reasoning capability, so codeg writes one here. Takes effect on new sessions." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有当模型声明了推理能力时，Kimi 才会在输入框显示「Thinking」选择器，所以由 codeg 在这里写入该声明。对新建的会话生效。"
+          }
+        }
+      }
+    },
+    "Launched in background" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在后台启动"
+          }
+        }
+      }
+    },
+    "Let Kimi choose" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "由 Kimi 决定"
+          }
+        }
+      }
+    },
+    "Levels offered" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可选档位"
+          }
+        }
+      }
+    },
+    "Move %lld conversations" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移动 %lld 个会话"
+          }
+        }
+      }
+    },
+    "Moved %lld conversations to %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已将 %lld 个会话移动到 %@"
+          }
+        }
+      }
+    },
+    "Moved 1 conversation to %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已将 1 个会话移动到 %@"
+          }
+        }
+      }
+    },
+    "No conversations to select" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可选择的会话"
+          }
+        }
+      }
+    },
+    "Pick one of the levels selected above" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "必须是上面已选中的档位之一"
+          }
+        }
+      }
+    },
+    "Result not returned yet" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "结果尚未返回"
+          }
+        }
+      }
+    },
+    "Running in background" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "后台运行中"
+          }
+        }
+      }
+    },
+    "Select" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择"
+          }
+        }
+      }
+    },
+    "Select Conversations" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择会话"
+          }
+        }
+      }
+    },
+    "The model always reasons — remove the Off row from the picker" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型始终推理——从选择器中去掉 Off 档"
+          }
+        }
+      }
+    },
+    "The selected %lld conversations will be moved to this folder:" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选中的 %lld 个会话将移动到以下文件夹："
+          }
+        }
+      }
+    },
+    "These become the rows of the composer’s Thinking picker. Kimi forwards the level to the provider verbatim, so pick ones your model accepts." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这些会成为输入框「Thinking」选择器里的档位。Kimi 会把档位原样传给供应商，请选择你的模型能接受的值。"
+          }
+        }
+      }
+    },
+    "Updated plan" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新了计划"
+          }
+        }
+      }
+    },
+    "With no levels chosen the composer falls back to a plain Off / On toggle." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一个档位都不选时，输入框只提供 Off / On 开关。"
+          }
+        }
+      }
+    },
+    "Fix the highlighted fields first" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先修正标红的字段"
+          }
+        }
+      }
+    },
+    "Kimi’s reasoning settings were changed elsewhere while you edited them, so nothing was saved. They’ve been reloaded — check them and save again." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kimi 的推理设置在你编辑期间已在别处被修改，因此没有保存。已重新载入，请检查后再保存。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
