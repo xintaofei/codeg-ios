@@ -349,11 +349,24 @@ struct ContextCompactionDivider: View {
     var body: some View {
         let summary = info.summary
         VStack(spacing: 4) {
-            HStack(spacing: 10) {
-                hairline
-                marker
-                if summary != nil { summaryToggle }
-                hairline
+            // One line when the label and the toggle both fit; on a phone the
+            // token counts often don't leave room, and truncating them to
+            // "41,20…" says less than giving the toggle a line of its own.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    hairline
+                    marker
+                    if summary != nil { summaryToggle }
+                    hairline
+                }
+                VStack(spacing: 2) {
+                    HStack(spacing: 10) {
+                        hairline
+                        marker
+                        hairline
+                    }
+                    if summary != nil { summaryToggle }
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 2)

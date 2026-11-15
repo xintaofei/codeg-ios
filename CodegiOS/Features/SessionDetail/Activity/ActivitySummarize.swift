@@ -88,7 +88,11 @@ enum ActivitySummarize {
                 if ops.contains(where: { ActivityStatus.of($0).isLive }) { summary.running = true }
                 continue
             case .compaction(_, let info):
+                // Not a step of its own (web: a continuation), but a failed one
+                // is a failure of the reply's — counted, and what "N failed"
+                // opens the reply at, so a folded reply doesn't hide it.
                 if info.running { summary.running = true }
+                if info.failed { failures.append((step.key, nil, index)) }
                 continue
             case .note, .image, .plan, .unsupported:
                 continue

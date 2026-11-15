@@ -188,4 +188,15 @@ struct ActivitySummarizeTests {
         #expect(summary.steps == 1)
         #expect(summary.failed == 1)
     }
+
+    @Test("a failed compaction is a failure, though not a step")
+    func aFailedCompactionIsAFailureThoughNotAStep() {
+        let summary = ActivitySummarize.summarize([
+            .compaction(key: "compaction:1", CompactionInfo(before: nil, after: nil, running: false, failed: true)),
+            .compaction(key: "compaction:2", CompactionInfo(before: 9, after: 3, running: false)),
+        ])
+        #expect(summary.steps == 0)
+        #expect(summary.failed == 1)
+        #expect(summary.firstUnrecoveredKey == "compaction:1")
+    }
 }
