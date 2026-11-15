@@ -207,6 +207,13 @@ final class SessionDetailViewModel {
     /// A pending permission request — or ExitPlanMode — awaiting the user's
     /// choice. Rendered as a card above the compose bar; nil when none is pending.
     private(set) var pendingPermission: PendingPermission?
+    /// How this session's answered permission requests went, by tool call id,
+    /// for the chips on their rows: the live `tool_approval` records and the
+    /// snapshots' (`ActivityApproval.mergeToolApprovals`, which only ever adds
+    /// or replaces with a later decision). A reopened transcript's calls carry
+    /// their own stamps besides. Kept for the screen's life: each record is a
+    /// fact about one call, true whichever connection the session moves to.
+    private(set) var toolApprovals: ToolApprovalMap = ActivityApproval.emptyToolApprovals
     /// A pending `ask_user_question` awaiting the user's answers.
     private(set) var pendingQuestion: PendingQuestion?
     /// A pending Grok `exit_plan_mode` awaiting approve / request-changes / abandon.
@@ -2321,6 +2328,7 @@ final class SessionDetailViewModel {
                     runs.hydrate(snap, connection: conn)
                     adoptForkSupport(status: snap.status, supported: snap.forkSupported)
                     composer.adoptSnapshotCommands(snap.availableCommands)
+                    adoptToolApprovals(snap.toolApprovals)
                 }
                 // A reconnect answered with a snapshot rather than a replay —
                 // first attach after a drop with no cursor, or a gap too large
@@ -2526,6 +2534,7 @@ final class SessionDetailViewModel {
                 runs.hydrate(snap, connection: conn)
                 adoptForkSupport(status: snap.status, supported: snap.forkSupported)
                 composer.adoptSnapshotCommands(snap.availableCommands)
+                adoptToolApprovals(snap.toolApprovals)
                 if let rebuilt = buildLiveTurn(from: snap) {
                     // A reattach owns the running turn from the start: what
                     // streams from here IS that turn.
@@ -2714,8 +2723,8 @@ final class SessionDetailViewModel {
 
     private func restorePending(from snap: LiveSessionSnapshot) {
         if let p = snap.pendingPermission {
-            pendingPermission = PendingPermission(requestId: p.requestId, toolCall: p.toolCall, options: p.options,
-                                                  liveInfo: liveTurn?.permissionLiveInfo(for: p.toolCall))
+            pendingPermission = admitPermission(requestId: p.requestId, toolCall: p.toolCall, options: p.options,
+                                                queued: p.queued, live: liveTurn)
         }
         if let q = snap.pendingQuestion {
             pendingQuestion = PendingQuestion(questionId: q.questionId, questions: q.questions)
@@ -2732,6 +2741,33 @@ final class SessionDetailViewModel {
         } else {
             pendingPlanApproval = nil
         }
+    }
+
+    /// A permission request as its card shows it: merged with the live call it
+    /// is about, each filling what the other left out (`PermissionLiveMerge`).
+    /// The live turn learns of the call too (web `PERMISSION_REQUEST`), so the
+    /// step the user is asked about stands on the rail, waiting on them — a
+    /// call the request came ahead of included.
+    private func admitPermission(requestId: String, toolCall: AnyJSON, options: [PermissionOption],
+                                 queued: Int, live: LiveTurn?) -> PendingPermission {
+        let pending = PendingPermission(requestId: requestId, toolCall: toolCall, options: options,
+                                        queued: queued, liveInfo: live?.permissionLiveInfo(for: toolCall))
+        if let live, live.isStreaming, let callId = pending.toolCallId,
+           let input = PermissionLiveMerge.requestInput(pending.toolCall) {
+            live.noteAwaitedCall(id: callId,
+                                 title: PermissionLiveMerge.requestTitle(toolCall) ?? "",
+                                 kind: PermissionLiveMerge.requestKind(toolCall) ?? "tool",
+                                 rawInput: input)
+        }
+        return pending
+    }
+
+    /// Fold approval records into the screen's (a snapshot's, or one live
+    /// record). Assigned only when something changed, so a snapshot restating
+    /// what is known doesn't redraw the rows.
+    private func adoptToolApprovals(_ incoming: [ToolApprovalInfo]) {
+        let merged = ActivityApproval.mergeToolApprovals(toolApprovals, incoming)
+        if merged != toolApprovals { toolApprovals = merged }
     }
 
     /// Fill a showing permission card in from the call an event just touched —
@@ -2865,17 +2901,27 @@ final class SessionDetailViewModel {
         case .conversationLinked(let linkedID, _):
             adoptLinkedConversation(linkedID)
 
-        case .permissionRequest(let requestId, let toolCall, let options):
+        case .permissionRequest(let requestId, let toolCall, let options, let queued):
             // The agent paused for approval (incl. ExitPlanMode). Surface the card
             // above the compose bar; the turn stays in-flight until it's resolved.
-            pendingPermission = PendingPermission(requestId: requestId, toolCall: toolCall, options: options,
-                                                  liveInfo: live.permissionLiveInfo(for: toolCall))
+            pendingPermission = admitPermission(requestId: requestId, toolCall: toolCall, options: options,
+                                                queued: queued, live: live)
             requestScrollToBottom()
+
+        case .permissionQueueDepth(let depth):
+            // A request queued up behind the card on screen. No card up, nothing
+            // to annotate: a late depth after a drain must not resurrect one.
+            if let pending = pendingPermission, pending.queued != depth {
+                pendingPermission?.queued = depth
+            }
 
         case .permissionResolved(let requestId):
             // Resolved here or by another client — clear the matching card only, so
             // a stale echo can't wipe a freshly-raised one.
             if pendingPermission?.requestId == requestId { pendingPermission = nil }
+
+        case .toolApproval(let approval):
+            adoptToolApprovals([approval])
 
         case .questionRequest(let questionId, let questions):
             pendingQuestion = PendingQuestion(questionId: questionId, questions: questions)
@@ -3991,12 +4037,16 @@ extension SessionDetailViewModel {
             guard let self else { return }
             self.composer.adoptSnapshotCommands(snap.availableCommands)
             self.adoptForkSupport(status: snap.status, supported: snap.forkSupported)
+            self.adoptToolApprovals(snap.toolApprovals)
         }
         watcher.onEvent = { [weak self] event in
             guard let self else { return }
             switch event {
             case .availableCommands(let list): self.composer.adoptLiveCommands(list)
             case .forkSupported(let supported): self.forkSupported = supported
+            // Answered from another client between turns: the call is in the
+            // transcript already, and its row takes the chip.
+            case .toolApproval(let approval): self.adoptToolApprovals([approval])
             default: break
             }
         }

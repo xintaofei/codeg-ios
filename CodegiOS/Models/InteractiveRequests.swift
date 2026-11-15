@@ -203,16 +203,25 @@ struct PendingPermission: Identifiable {
     let toolCall: AnyJSON
     let parsed: ParsedPermission
     let options: [PermissionOption]
+    /// Requests waiting behind this card (`queued`, then
+    /// `permission_queue_depth`). One card shows at a time, so without the
+    /// count the rest read as the agent having stopped.
+    var queued: Int
     var id: String { requestId }
+
+    /// The tool call this request is about, when it names one.
+    var toolCallId: String? { PermissionLiveMerge.toolCallId(toolCall) }
 
     /// `liveInfo` is the live tool call this request is about, when the turn has
     /// one — see ``PermissionLiveMerge`` for what it may lend the request.
-    init(requestId: String, toolCall: AnyJSON, options: [PermissionOption], liveInfo: PermissionLiveInfo? = nil) {
+    init(requestId: String, toolCall: AnyJSON, options: [PermissionOption], queued: Int = 0,
+         liveInfo: PermissionLiveInfo? = nil) {
         let merged = PermissionLiveMerge.merge(toolCall, with: liveInfo)
         self.requestId = requestId
         self.toolCall = merged
         self.parsed = ParsedPermission.parse(merged)
         self.options = options
+        self.queued = queued
     }
 
     /// This request re-merged with the live call it names, after a `tool_call` /
@@ -226,7 +235,8 @@ struct PendingPermission: Identifiable {
         guard PermissionLiveMerge.toolCallId(toolCall) == toolCallId,
               let info = live.permissionLiveInfo(for: toolCall)
         else { return nil }
-        let next = PendingPermission(requestId: requestId, toolCall: toolCall, options: options, liveInfo: info)
+        let next = PendingPermission(requestId: requestId, toolCall: toolCall, options: options,
+                                     queued: queued, liveInfo: info)
         return next.toolCall == toolCall ? nil : next
     }
 }
@@ -298,6 +308,51 @@ enum PermissionLiveMerge {
             }
         }
         return .object(next)
+    }
+
+    /// The request's input as a tool call's raw input (web
+    /// `serializePermissionToolCall`): its nested input when it has one, else
+    /// the request with its wrapper fields stripped. Nil when there is none.
+    static func requestInput(_ toolCall: AnyJSON) -> String? {
+        guard let record = toolCall.object else { return nil }
+        if let (_, value) = pickInput(record) {
+            if case .string(let s) = value { return s }
+            if let json = compactJSON(value) { return json }
+        }
+        let rest = record.filter { !wrapperKeys.contains($0.key) }
+        return rest.isEmpty ? nil : compactJSON(.object(rest))
+    }
+
+    /// The title a request names its call by (web `extractPermissionToolTitle`).
+    static func requestTitle(_ toolCall: AnyJSON) -> String? {
+        firstString(toolCall, ["title", "tool_name", "toolName", "name", "type"])
+    }
+
+    /// The kind a request names its call by (web `extractPermissionToolKind`).
+    static func requestKind(_ toolCall: AnyJSON) -> String? {
+        firstString(toolCall, ["kind", "tool_name", "toolName", "name", "type"])
+    }
+
+    private static func firstString(_ toolCall: AnyJSON, _ keys: [String]) -> String? {
+        guard let record = toolCall.object else { return nil }
+        for key in keys {
+            if case .string(let s)? = record[key], !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return s }
+        }
+        return nil
+    }
+
+    /// Fields of the request's own wrapper, not of the tool's input — in both
+    /// casings, as the shared decoder camelCases them.
+    private static let wrapperKeys = Set([
+        "content", "kind", "status", "title", "toolCallId", "tool_call_id", "callId", "call_id",
+    ] + inputKeys)
+
+    private static func compactJSON(_ value: AnyJSON) -> String? {
+        let any = value.foundationValue
+        guard JSONSerialization.isValidJSONObject(any),
+              let data = try? JSONSerialization.data(withJSONObject: any, options: [.sortedKeys, .withoutEscapingSlashes])
+        else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     private static let inputKeys = ["rawInput", "raw_input", "input", "arguments", "params", "payload"]

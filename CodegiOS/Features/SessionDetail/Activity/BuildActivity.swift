@@ -20,13 +20,14 @@ enum BuildActivity {
     ///   - keepAnswer: keep closing prose as steps instead of splitting it off
     ///     as the answer — for a reply still being written, whose closing prose
     ///     is not known yet, and for a sub-agent's own timeline.
-    ///   - awaitingToolIds: calls with a permission request open.
-    static func build(_ parts: [RenderPart], isStreaming: Bool, keepAnswer: Bool = false,
-                      awaitingToolIds: Set<String> = []) -> ReplyActivity {
+    ///
+    /// What only the live connection knows — the call a permission request
+    /// waits on, how answered ones went — is laid over the rows as they draw
+    /// (``ActivityLive``), not built in, so a request never rebuilds a reply.
+    static func build(_ parts: [RenderPart], isStreaming: Bool, keepAnswer: Bool = false) -> ReplyActivity {
         let (body, trailing) = keepAnswer ? (parts, []) : splitTrailingAnswer(parts)
         let anchor = replyAnchor(body)
-        let steps = linkLaterDelegationPolls(collectSteps(body, isStreaming: isStreaming,
-                                                          anchor: anchor, awaiting: awaitingToolIds))
+        let steps = linkLaterDelegationPolls(collectSteps(body, isStreaming: isStreaming, anchor: anchor))
         let summary = ActivitySummarize.summarize(steps)
         let items = ActivityGroup.items(steps.filter { !isBlankInterruption($0) })
         return ReplyActivity(steps: steps, items: items, answer: trailing, summary: summary)
@@ -143,8 +144,7 @@ enum BuildActivity {
 
     // MARK: - Steps
 
-    private static func collectSteps(_ parts: [RenderPart], isStreaming: Bool, anchor: String,
-                                     awaiting: Set<String>) -> [ActivityStep] {
+    private static func collectSteps(_ parts: [RenderPart], isStreaming: Bool, anchor: String) -> [ActivityStep] {
         var steps: [ActivityStep] = []
         for (index, part) in parts.enumerated() {
             let key = { (kind: String) in "\(kind):\(anchor):\(index)" }
@@ -167,7 +167,7 @@ enum BuildActivity {
                 steps.append(.thought(key: key("thought"), text: .live(run, streaming: streaming),
                                       streaming: isStreaming && streaming))
             case .tool(let vm):
-                steps.append(.tool(toolStep(vm, awaiting: awaiting.contains(vm.id))))
+                steps.append(.tool(toolStep(vm)))
             case .delegationStatusGroup(let polls):
                 guard let first = polls.first else { continue }
                 steps.append(.delegationPolls(key: "dpoll:\(first.id)", polls: polls,
@@ -186,23 +186,22 @@ enum BuildActivity {
             case .unknown(let type):
                 steps.append(.unsupported(key: key("unsupported"), type: type))
             case .goalRun(let run):
-                steps.append(.goal(goalStep(run, awaitingToolIds: awaiting)))
+                steps.append(.goal(goalStep(run)))
             }
         }
         return steps
     }
 
-    private static func toolStep(_ vm: ToolCallVM, awaiting: Bool) -> ActivityToolStep {
-        ActivityToolStep(key: "tool:\(vm.id)", call: vm, tool: DescribeCache.describe(vm, awaiting: awaiting))
+    private static func toolStep(_ vm: ToolCallVM) -> ActivityToolStep {
+        ActivityToolStep(key: "tool:\(vm.id)", call: vm, tool: DescribeCache.describe(vm, awaiting: false))
     }
 
     /// A goal run's step: its parts built as a model of their own, streaming
     /// while the run is, with no answer split off (the goal row has no answer
     /// slot).
-    static func goalStep(_ run: GoalRunPart, awaitingToolIds: Set<String> = []) -> ActivityGoalStep {
+    static func goalStep(_ run: GoalRunPart) -> ActivityGoalStep {
         ActivityGoalStep(key: "goal:\(run.start.id)", run: run,
-                         model: build(run.items, isStreaming: run.isRunning, keepAnswer: true,
-                                      awaitingToolIds: awaitingToolIds))
+                         model: build(run.items, isStreaming: run.isRunning, keepAnswer: true))
     }
 
     /// A goal call outside any run — an `update_goal` whose run began in an

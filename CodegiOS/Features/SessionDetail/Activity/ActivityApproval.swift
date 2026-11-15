@@ -5,9 +5,9 @@ import Foundation
 /// snapshot's `tool_approvals`, and kept by the backend for reopened
 /// conversations.
 ///
-/// Not decoded anywhere yet. Its properties are the camelCase forms of the
-/// wire's snake_case keys, so it decodes through the app's shared
-/// `.convertFromSnakeCase` decoder as is.
+/// Its properties are the camelCase forms of the wire's snake_case keys, so it
+/// decodes through the app's shared `.convertFromSnakeCase` decoder. Only the
+/// call and the option kind are required; the rest only annotate the chip.
 struct ToolApprovalInfo: Decodable, Equatable, Hashable, Sendable {
     var toolCallId: String
     /// The chosen option's ACP kind (`allow_once`, `allow_always`,
@@ -19,6 +19,25 @@ struct ToolApprovalInfo: Decodable, Equatable, Hashable, Sendable {
     var origin: String
     /// ISO timestamp.
     var decidedAt: String
+
+    init(toolCallId: String, optionKind: String, optionName: String, origin: String, decidedAt: String) {
+        self.toolCallId = toolCallId
+        self.optionKind = optionKind
+        self.optionName = optionName
+        self.origin = origin
+        self.decidedAt = decidedAt
+    }
+
+    private enum CodingKeys: String, CodingKey { case toolCallId, optionKind, optionName, origin, decidedAt }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        toolCallId = try c.decode(String.self, forKey: .toolCallId)
+        optionKind = try c.decode(String.self, forKey: .optionKind)
+        optionName = ((try? c.decodeIfPresent(String.self, forKey: .optionName)) ?? nil) ?? ""
+        origin = ((try? c.decodeIfPresent(String.self, forKey: .origin)) ?? nil) ?? ""
+        decidedAt = ((try? c.decodeIfPresent(String.self, forKey: .decidedAt)) ?? nil) ?? ""
+    }
 }
 
 /// A connection's approval records, by tool call id (web `ToolApprovalMap`).

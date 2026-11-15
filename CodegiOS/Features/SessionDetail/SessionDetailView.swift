@@ -286,6 +286,10 @@ struct SessionDetailView: View {
             .padding(.bottom, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // What the connection knows that the transcript doesn't: the call a
+        // permission request waits on, and how the answered ones went.
+        .environment(\.activityLive, ActivityLive(awaitingToolCallId: model.pendingPermission?.toolCallId,
+                                                  approvals: model.toolApprovals))
         .animation(.snappy(duration: 0.28), value: model.pendingUserTurns)
         .animation(.snappy(duration: 0.28), value: model.liveTurn?.id)
         .safeAreaInset(edge: .bottom) {

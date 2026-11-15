@@ -7,6 +7,19 @@ import SwiftUI
 // with lifecycles of their own (sub-agents, delegations, questions, plan mode,
 // goals) keep their dedicated cards.
 
+/// What the live connection knows about the rows (``ActivityLive``) — set by
+/// the session screen; `none` everywhere else.
+private struct ActivityLiveKey: EnvironmentKey {
+    static let defaultValue = ActivityLive.none
+}
+
+extension EnvironmentValues {
+    var activityLive: ActivityLive {
+        get { self[ActivityLiveKey.self] }
+        set { self[ActivityLiveKey.self] = newValue }
+    }
+}
+
 enum ActivityRowStyle {
     /// Whether this call draws as a plain activity row (else its own card).
     static func usesRow(_ step: ActivityToolStep) -> Bool {
@@ -275,9 +288,12 @@ struct ActivityToolRow: View {
     var nested = false
 
     @State private var userExpanded: Bool?
+    @Environment(\.activityLive) private var live
 
     private var vm: ToolCallVM { step.call }
-    private var tool: ToolDescriptor { step.tool }
+    /// The call as the connection knows it: waiting on the user, declined,
+    /// and how its permission request was answered.
+    private var tool: ToolDescriptor { live.tool(for: step) }
 
     /// Opens by itself while it needs attention: running (live output), a
     /// failure nothing redid, or waiting on the user.
@@ -341,6 +357,9 @@ struct ActivityToolRow: View {
                 }
             }
             Spacer(minLength: 6)
+            if ActivityLive.showsApproval(tool.approval, status: tool.status), let approval = tool.approval {
+                ApprovalChip(approval: approval)
+            }
             ActivityFigure(tool: tool, recovered: recovered)
             if hasBody {
                 Image(systemName: "chevron.right")
@@ -364,10 +383,23 @@ struct ActivityToolRow: View {
 struct ActivityGroupRow: View {
     let kind: ActivityGroupKind
     let steps: [ActivityToolStep]
-    let status: StepStatus
+    /// The members' combined status, as the build left it.
+    let given: StepStatus
     let recoveredKeys: Set<String>
 
     @State private var userExpanded: Bool?
+    @Environment(\.activityLive) private var live
+
+    init(kind: ActivityGroupKind, steps: [ActivityToolStep], status: StepStatus, recoveredKeys: Set<String>) {
+        self.kind = kind
+        self.steps = steps
+        self.given = status
+        self.recoveredKeys = recoveredKeys
+    }
+
+    /// The member a pending permission request is about.
+    private var awaited: ActivityToolStep? { live.awaitedStep(in: steps) }
+    private var status: StepStatus { awaited != nil ? .awaiting : given }
 
     private var unrecoveredFailures: Int {
         steps.filter { $0.tool.status.isFailure && !recoveredKeys.contains($0.key) }.count
@@ -379,7 +411,7 @@ struct ActivityGroupRow: View {
     private var expanded: Bool { userExpanded ?? autoExpands }
 
     private var title: String {
-        let live = status.isLive
+        let live = status.isLive || status == .awaiting
         switch kind {
         case .command:
             return live
@@ -429,7 +461,12 @@ struct ActivityGroupRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 6)
-                if status.isLive {
+                if status == .awaiting {
+                    Text("needs you")
+                        .font(.caption)
+                        .foregroundStyle(Theme.warning)
+                        .lineLimit(1)
+                } else if status.isLive {
                     ProgressView().controlSize(.mini)
                 } else if unrecoveredFailures > 0 {
                     Text(verbatim: String(localized: "\(unrecoveredFailures) failed", comment: "Activity header: unrecovered failures"))
@@ -447,19 +484,106 @@ struct ActivityGroupRow: View {
 
             if expanded {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(steps, id: \.key) { step in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: ActivityRowStyle.icon(step.tool))
-                                .font(.system(size: 11))
-                                .foregroundStyle(Theme.textTertiary)
-                                .frame(width: 16)
-                            ActivityToolRow(step: step, recovered: recoveredKeys.contains(step.key), nested: true)
-                        }
-                    }
+                    ForEach(steps, id: \.key) { step in member(step) }
                 }
                 .padding(.leading, 2)
                 .transition(.opacity)
+            } else if let awaited {
+                // Folded, the member waiting on the user still shows: the step
+                // the card above the composer asks about is never hidden.
+                member(awaited)
+                    .padding(.leading, 2)
+                    .transition(.opacity)
             }
         }
+    }
+
+    private func member(_ step: ActivityToolStep) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: ActivityRowStyle.icon(step.tool))
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textTertiary)
+                .frame(width: 16)
+            ActivityToolRow(step: step, recovered: recoveredKeys.contains(step.key), nested: true)
+        }
+    }
+}
+
+/// `🛡 approved once` — how a call's permission request was answered, beside
+/// its row's figure (web `ApprovalChip`). The agent's own wording of the
+/// option (what an "always" covers differs by agent), who answered when it
+/// was not a person at the card, and when, open in a popover on a tap — the
+/// web's tooltip.
+struct ApprovalChip: View {
+    let approval: ToolApproval
+
+    @Environment(\.locale) private var locale
+    @State private var showsDetail = false
+
+    private var rejected: Bool { approval.decision == .rejected }
+
+    private var label: Text {
+        switch approval.decision {
+        case .allowOnce: return Text("approved once")
+        case .allowAlways: return Text("always allowed")
+        case .rejected: return Text("declined")
+        }
+    }
+
+    private var who: Text? {
+        switch approval.origin {
+        case "chat_channel": return Text("via a chat channel")
+        case "cli_policy": return Text("by the run's permission policy")
+        default: return nil
+        }
+    }
+
+    private var decidedAt: String? {
+        guard let iso = approval.decidedAt, let ms = ActivityApproval.parseDateMs(iso) else { return nil }
+        let date = Date(timeIntervalSince1970: Double(ms) / 1000)
+        return date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale))
+    }
+
+    private var details: [Text] {
+        [approval.optionName.map { Text(verbatim: $0) }, who, decidedAt.map { Text(verbatim: $0) }]
+            .compactMap { $0 }
+    }
+
+    var body: some View {
+        let details = details
+        if details.isEmpty {
+            chip
+        } else {
+            Button { showsDetail = true } label: { chip }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showsDetail) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(details.enumerated()), id: \.offset) { index, line in
+                            line
+                                .font(index == 0 ? .footnote.weight(.medium) : .caption)
+                                .foregroundStyle(index == 0 ? Theme.textPrimary : Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: 280, alignment: .leading)
+                    .presentationCompactAdaptation(.popover)
+                }
+                .accessibilityHint(Text("Shows how it was answered"))
+        }
+    }
+
+    private var chip: some View {
+        HStack(spacing: 3) {
+            Image(systemName: rejected ? "xmark.shield" : "checkmark.shield")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(rejected ? Theme.textTertiary : Theme.warning)
+            label
+                .font(.caption)
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .accessibilityElement(children: .combine)
     }
 }

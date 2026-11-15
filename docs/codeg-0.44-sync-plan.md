@@ -341,3 +341,24 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
 - 折叠后 8 秒那次重读按服务端现状接管：如果智能体 8 秒后还没写完折叠的那轮，这轮会暂时从屏幕上消失，要等下次读取。
 
 根治办法仍是 web 那套本地移交加元数据回填（Android d7849b4、855c581）。
+
+### 权限卡接线：排队数、审批记录、等待中的调用（2026-11-15）
+
+对照 Android 时发现：iOS 已经移植了「审批记录」的解析和合并（`ActivityApproval`）、行上的 `.awaiting`（「待你处理」琥珀色），但都没人喂；`permission_queue_depth`、`tool_approval` 和 `queued` 字段也没解码。这次照 web 0.44 接上：
+
+- **排队数**：`permission_request.queued`、快照 `pending_permission.queued`，之后由 `permission_queue_depth{depth}` 更新。卡片头部显示「+N waiting / 还有 N 项待审批」。没有卡片时收到 depth 不做任何事（不能把已清掉的卡片复活）。
+- **审批记录**：`tool_approval{approval}` 事件和快照的 `tool_approvals`（两个开流路径和空闲观察者都合并），存进 VM 的 `toolApprovals`，同一调用以后决定的为准，只增不减，整个页面生命周期内保留。读不懂或没有调用 id 的记录单独丢掉，不影响整帧。
+- **行上的叠加层**（web `useLiveToolStep`）：不进 memo 的回复模型，而是 `SessionDetailView` 在转录上设环境值 `ActivityLive`（等待中的调用 id + 审批记录），`ActivityToolRow` / `ActivityGroupRow` 绘制时叠加：
+  - 卡片问的那个调用（未结束的）读作「needs you」，琥珀色，自动展开。
+  - 有审批记录的调用在右侧显示徽标（「approved once / always allowed / declined」），连接的记录优先，否则用转录自带的 `codeg.approval` 标记。点徽标弹出选项原文、谁批的（聊天频道 / 权限策略）、时间（web 是悬停提示）。
+  - 被拒且转录只显示失败的调用读作「declined」，此时不再叠徽标。
+  - 分组里有等待中的成员时，组头也读「needs you」；用户把组折起来，这个成员仍留在组头下面。
+  - 原来 `BuildActivity.build` 上从没被传过的 `awaitingToolIds` 参数删掉了（web 0.44 的 build 也没有它）。
+- **请求先于调用**（web `PERMISSION_REQUEST`）：请求到达时，若直播回合里已有这个调用但没有输入，就用请求的输入补上；若还没有这个调用（Claude 沙箱网络请求就是先到请求），就先放一个 pending 的占位调用，让被问的那一步出现在时间线上；真正的 `tool_call` 到了会原地接管这一条。
+
+验证：
+- 新增 18 个单元测试（解码、叠加层、请求输入提取、占位调用），全量 1152 个通过。
+- Codex 审查第一轮 APPROVED，无阻塞问题。
+- 模拟器对 mock（会话 220 加了排队数、4 秒后的 depth、快照里一条权限策略的审批、批准后 1.5 秒来一个先于调用的网络请求）用临时 XCUITest 驱动：+2 → +3 → +1；等待中的行「needs you」；快照审批徽标和弹出详情；批准后「approved once」；占位调用出现并被真调用原地接管；拒绝后只显示一次「declined」；折叠分组后只剩等待中的成员。反事实：把环境值换成 `.none`，这些断言全部失败。
+
+没做：子智能体 / 委派等卡片式工具（非 activity 行）不显示审批徽标，web 在这些行上有；web 在等待用户时停掉回复底部的转圈，iOS 没有对应的转圈，不需要。占位调用如果被拒且智能体始终不发它的 `tool_call`，会一直转到回合结束（web 相同）。

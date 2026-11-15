@@ -13165,6 +13165,66 @@
           }
         }
       }
+    },
+    "approved once" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已批准一次"
+          }
+        }
+      }
+    },
+    "always allowed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "总是允许"
+          }
+        }
+      }
+    },
+    "via a chat channel" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来自聊天频道"
+          }
+        }
+      }
+    },
+    "by the run's permission policy" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "由运行的权限策略决定"
+          }
+        }
+      }
+    },
+    "Shows how it was answered" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示这次审批的详情"
+          }
+        }
+      }
+    },
+    "+%lld waiting" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还有 %lld 项待审批"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

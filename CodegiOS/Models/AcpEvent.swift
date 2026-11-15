@@ -71,9 +71,21 @@ enum AcpEvent: Hashable, Sendable, Decodable {
     /// Agent asks the user to approve a tool call before it runs. Also carries
     /// ExitPlanMode — the proposed plan rides inside `toolCall`. Resolve via
     /// `acp_respond_permission` with the chosen `option_id`.
-    case permissionRequest(requestId: String, toolCall: AnyJSON, options: [PermissionOption])
+    /// `queued`: how many further requests wait behind this one. The server
+    /// shows one card at a time; zero on a card admitted to a free screen,
+    /// non-zero only on one promoted while others trail it.
+    case permissionRequest(requestId: String, toolCall: AnyJSON, options: [PermissionOption], queued: Int)
+    /// The number of requests waiting behind the card on screen changed, the
+    /// card itself didn't (a request arrived while another was showing).
+    case permissionQueueDepth(depth: Int)
     /// A pending permission was resolved (by this or another client) — clear the card.
     case permissionResolved(requestId: String)
+    /// How an answered permission request went for its tool call. Follows the
+    /// `permission_resolved` that retired the card, only for an answer that
+    /// took effect. Agent transcripts record no approvals; this, the
+    /// snapshot's recent ones and the stamp a detail load puts on the call
+    /// are all that say it.
+    case toolApproval(ToolApprovalInfo)
     /// Agent asks one or more multiple-choice questions (`ask_user_question`).
     /// Resolve via `acp_answer_question`.
     case questionRequest(questionId: String, questions: [QuestionSpec])
@@ -134,7 +146,7 @@ enum AcpEvent: Hashable, Sendable, Decodable {
         case toolCallId, parentToolUseId, rawInput, rawOutput, rawOutputAppend
         case stopReason, sessionId, conversationId, folderId
         case used, size, messageId, blocks, message, code, details, textPreview
-        case requestId, toolCall, options, questionId, questions, entries
+        case requestId, toolCall, options, queued, depth, approval, questionId, questions, entries
         case approvalId, planMarkdown
         case attempt, maxRetries, retryDelayMs, errorStatus, record, notice, failures
         case item, ids, deliveredAt
@@ -221,10 +233,22 @@ enum AcpEvent: Hashable, Sendable, Decodable {
             self = .permissionRequest(
                 requestId: try c.decodeIfPresent(String.self, forKey: .requestId) ?? "",
                 toolCall: try c.decodeIfPresent(AnyJSON.self, forKey: .toolCall) ?? .null,
-                options: try c.decodeIfPresent([PermissionOption].self, forKey: .options) ?? []
+                options: try c.decodeIfPresent([PermissionOption].self, forKey: .options) ?? [],
+                queued: Self.count(c, .queued)
             )
+        case "permission_queue_depth":
+            self = .permissionQueueDepth(depth: Self.count(c, .depth))
         case "permission_resolved":
             self = .permissionResolved(requestId: try c.decodeIfPresent(String.self, forKey: .requestId) ?? "")
+        case "tool_approval":
+            // A record that can't be read (or names no call) is not an
+            // approval of anything: drop it rather than the frame.
+            if let approval = (try? c.decodeIfPresent(ToolApprovalInfo.self, forKey: .approval)) ?? nil,
+               !approval.toolCallId.isEmpty {
+                self = .toolApproval(approval)
+            } else {
+                self = .unknown(type: type)
+            }
         case "question_request":
             self = .questionRequest(
                 questionId: try c.decodeIfPresent(String.self, forKey: .questionId) ?? "",
@@ -304,6 +328,12 @@ enum AcpEvent: Hashable, Sendable, Decodable {
             self = AcpEvent.decodeRunsEvent(type: type, from: decoder) ?? .unknown(type: type)
         }
     }
+
+    /// A count the server sends as `u32`: absent, unreadable or negative reads
+    /// as none.
+    private static func count(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Int {
+        max(0, ((try? c.decodeIfPresent(Int.self, forKey: key)) ?? nil) ?? 0)
+    }
 }
 
 /// The flat ACP event envelope (Rust `EventEnvelope`): `{seq, connection_id,
@@ -376,6 +406,11 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     /// verbatim). Nil between turns — and during a turn an agent started on
     /// its own, which answers no prompt.
     let pendingUserMessageId: String?
+    /// The connection's recent approval records, oldest first — for a client
+    /// that attached after they were answered. Folded into what the screen
+    /// already holds (`ActivityApproval.mergeToolApprovals`), never replacing
+    /// it. Read record by record, so one this build can't read drops alone.
+    let toolApprovals: [ToolApprovalInfo]
 
     private enum CodingKeys: String, CodingKey {
         case connectionId, conversationId, folderId, status, externalId, eventSeq
@@ -384,6 +419,13 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         case forkSupported
         case availableCommands
         case pendingUserMessage
+        case toolApprovals
+    }
+
+    /// One element of a list read record by record.
+    private struct Lenient<Value: Decodable>: Decodable {
+        let value: Value?
+        init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
     }
 
     private struct PendingUserMessage: Decodable {
@@ -412,6 +454,9 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         forkSupported = (try? c.decodeIfPresent(Bool.self, forKey: .forkSupported)) ?? nil
         availableCommands = (try? c.decodeIfPresent([AvailableCommandInfo].self, forKey: .availableCommands)) ?? nil
         pendingUserMessageId = ((try? c.decodeIfPresent(PendingUserMessage.self, forKey: .pendingUserMessage)) ?? nil)?.messageId
+        toolApprovals = (((try? c.decodeIfPresent([Lenient<ToolApprovalInfo>].self, forKey: .toolApprovals)) ?? nil) ?? [])
+            .compactMap(\.value)
+            .filter { !$0.toolCallId.isEmpty }
     }
 
     /// Whether a RECONNECT snapshot shows that the send still waiting for its
@@ -534,13 +579,17 @@ struct PendingPermissionSnapshot: Sendable, Decodable {
     let requestId: String
     let toolCall: AnyJSON
     let options: [PermissionOption]
+    /// Requests queued behind this card, kept current server-side by
+    /// `permission_queue_depth` — see `AcpEvent.permissionRequest`.
+    let queued: Int
 
-    private enum CodingKeys: String, CodingKey { case requestId, toolCall, options }
+    private enum CodingKeys: String, CodingKey { case requestId, toolCall, options, queued }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         requestId = try c.decodeIfPresent(String.self, forKey: .requestId) ?? ""
         toolCall = try c.decodeIfPresent(AnyJSON.self, forKey: .toolCall) ?? .null
         options = try c.decodeIfPresent([PermissionOption].self, forKey: .options) ?? []
+        queued = max(0, ((try? c.decodeIfPresent(Int.self, forKey: .queued)) ?? nil) ?? 0)
     }
 }
 

@@ -97,6 +97,18 @@ struct PermissionRequestCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
+            // Only one card shows at a time, so without this the remaining
+            // approvals look like the agent has stopped responding.
+            if pending.queued > 0 {
+                Text("+\(pending.queued) waiting")
+                    .font(.caption2.weight(.medium).monospacedDigit())
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Theme.warning.opacity(0.16), in: Capsule())
+                    .lineLimit(1)
+                    .fixedSize()
+            }
             if parsed.networkHost != nil {
                 kindBadge(Text("network"))
             } else if !parsed.isPlan, !parsed.kind.isEmpty {

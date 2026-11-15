@@ -450,6 +450,23 @@ final class LiveTurn: Identifiable {
                                   rawInput: call.rawInput, meta: call.meta)
     }
 
+    /// A permission request is about call `id` (web `PERMISSION_REQUEST`): the
+    /// input it names fills a call that hasn't sent its own yet, and a call
+    /// the request comes ahead of is announced here, pending, so the step the
+    /// user is asked about stands on the rail. Its own `tool_call` later
+    /// takes the entry over. Returns whether anything changed.
+    @discardableResult
+    func noteAwaitedCall(id: String, title: String, kind: String, rawInput: String) -> Bool {
+        if let existing = toolIndex[id] {
+            guard existing.rawInput?.isEmpty ?? true else { return false }
+            existing.rawInput = rawInput
+            return true
+        }
+        upsertToolCall(id: id, title: title, kind: kind, status: "pending",
+                       rawInput: rawInput, rawOutput: nil, content: nil)
+        return true
+    }
+
     /// Short human-readable label for the currently active tool, for the compose
     /// status line ("Running Edit…").
     var activeToolTitle: String? {
