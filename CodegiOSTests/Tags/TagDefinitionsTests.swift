@@ -52,19 +52,25 @@ import Testing
 
     @Test func aConfirmedWritePatchesOnlyItsOwnServersRow() {
         var rows = [F.summary(1, tags: [1]), F.summary(2)]
-        #expect(!rows.applyTagChange(ConversationTagsChange(endpoint: "http://elsewhere", conversationID: 1, tagIDs: [5]),
-                                     endpoint: "http://here"))
+        // `#expect` can't take a mutating call: each result is read first.
+        let elsewhere = rows.applyTagChange(ConversationTagsChange(endpoint: "http://elsewhere", conversationID: 1, tagIDs: [5]),
+                                            endpoint: "http://here")
+        #expect(!elsewhere)
         #expect(rows[0].tagIds == [1])
-        #expect(!rows.applyTagChange(ConversationTagsChange(endpoint: "http://here", conversationID: 3, tagIDs: [5]),
-                                     endpoint: "http://here"), "not in this list")
-        #expect(rows.applyTagChange(ConversationTagsChange(endpoint: "http://here", conversationID: 2, tagIDs: [4, 5]),
-                                    endpoint: "http://here"))
+        let absent = rows.applyTagChange(ConversationTagsChange(endpoint: "http://here", conversationID: 3, tagIDs: [5]),
+                                         endpoint: "http://here")
+        #expect(!absent, "not in this list")
+        let patched = rows.applyTagChange(ConversationTagsChange(endpoint: "http://here", conversationID: 2, tagIDs: [4, 5]),
+                                          endpoint: "http://here")
+        #expect(patched)
         #expect(rows[1].tagIds == [4, 5])
-        #expect(!rows.applyTagChange(ConversationTagsChange(endpoint: "http://here", conversationID: 2, tagIDs: [4, 5]),
-                                     endpoint: "http://here"), "unchanged: nothing to redraw")
+        let unchanged = rows.applyTagChange(ConversationTagsChange(endpoint: "http://here", conversationID: 2, tagIDs: [4, 5]),
+                                            endpoint: "http://here")
+        #expect(!unchanged, "unchanged: nothing to redraw")
         // A list from no server patches nothing.
-        #expect(!rows.applyTagChange(ConversationTagsChange(endpoint: "http://here", conversationID: 1, tagIDs: []),
-                                     endpoint: nil))
+        let noServer = rows.applyTagChange(ConversationTagsChange(endpoint: "http://here", conversationID: 1, tagIDs: []),
+                                           endpoint: nil)
+        #expect(!noServer)
     }
 
     @MainActor

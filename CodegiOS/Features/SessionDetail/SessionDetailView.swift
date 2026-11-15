@@ -189,10 +189,7 @@ struct SessionDetailView: View {
         // The definitions the header's chips resolve against: read here (a
         // late read only redraws chips), and again after any tag edit — a tag
         // created from the picker included.
-        .task(id: tagSource) { await tagDefinitions.load(client: client) }
-        .onReceive(NotificationCenter.default.publisher(for: .conversationTagDefinitionsDidChange)) { _ in
-            Task { await tagDefinitions.load(client: client) }
-        }
+        .modifier(TagDefinitionsLoader(definitions: tagDefinitions, client: client, source: tagSource))
         // Moved from the Chats list beside this screen (iPad).
         .onReceive(NotificationCenter.default.publisher(for: .conversationDidMove)) { note in
             if let change = note.object as? ConversationMovedChange { model.adoptMove(change) }
@@ -517,6 +514,23 @@ struct SessionDetailView: View {
             .animation(.snappy(duration: 0.26), value: model.pendingPlanApproval?.id)
             .animation(.snappy(duration: 0.26), value: model.sessionLoadFailure)
         }
+    }
+}
+
+/// Reads the tag definitions the header's chips resolve against, and again
+/// after any tag edit. Its own modifier: the screen's chain is already as
+/// long as the type checker takes in one expression.
+private struct TagDefinitionsLoader: ViewModifier {
+    let definitions: TagDefinitionsModel
+    let client: CodegClient
+    let source: String
+
+    func body(content: Content) -> some View {
+        content
+            .task(id: source) { await definitions.load(client: client) }
+            .onReceive(NotificationCenter.default.publisher(for: .conversationTagDefinitionsDidChange)) { _ in
+                Task { await definitions.load(client: client) }
+            }
     }
 }
 
