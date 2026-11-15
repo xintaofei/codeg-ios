@@ -495,10 +495,13 @@ final class LiveTurn: Identifiable {
                     blocks.append(.thinking(run.fullText))
                 }
             case .tool(let call):
-                // The snapshot always pairs a result below, so the status slot has
-                // nothing to add — the pair already states the outcome.
+                // The snapshot always pairs a result below, which states the
+                // outcome. A `failed` status is kept all the same: it is what
+                // tells codex's search that found nothing (a bare live `failed`)
+                // from a real failure (`GrepNoMatch`), so the folded copy draws it
+                // as the live one did.
                 blocks.append(.toolUse(id: call.id, name: call.title, inputPreview: call.rawInput,
-                                       status: .unknown, meta: call.meta))
+                                       status: call.status == "failed" ? .failed : .unknown, meta: call.meta))
                 let output = call.rawOutput.isEmpty ? call.content : call.rawOutput
                 blocks.append(.toolResult(id: call.id, outputPreview: output, isError: call.isError,
                                           agentStats: nil))

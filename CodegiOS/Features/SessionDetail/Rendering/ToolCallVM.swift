@@ -326,8 +326,20 @@ enum MessageRender {
                 if let r = resultIdx, case .toolResult(_, let outPreview, let e, let s, let code) = blocks[r] {
                     output = outPreview; isErr = e; stats = s; exitCode = code; consumed.insert(r)
                 }
-                let state = toolState(paired: resultIdx != nil, isError: isErr,
-                                      status: status, liveness: liveness)
+                // codex's own search that failed live with nothing printed is
+                // rg's exit 1 — "no matches" — and settles as a success, its
+                // empty body the search card's "No matches" (web
+                // `isGrepNoMatchResult`). Only a live status says `failed`: a
+                // record of codex's search keeps its own rendering.
+                let noMatch = resultIdx != nil && isErr && status == .failed
+                    && GrepNoMatch.isCodexSearchNoMatch(toolName: name, input: inputPreview, output: output, meta: meta)
+                if noMatch {
+                    isErr = false
+                    output = output ?? ""
+                }
+                let state: ToolCallState = noMatch
+                    ? .done
+                    : toolState(paired: resultIdx != nil, isError: isErr, status: status, liveness: liveness)
                 // A compaction is a boundary marker, not a call: it renders as a
                 // divider between turns, so it never becomes a `ToolCallVM` (and so
                 // can't be swept into a tool group).
@@ -437,12 +449,20 @@ enum MessageRender {
                         failed: state == .error)))
                     continue
                 }
+                let toolName = ToolNameNormalizer.inferLiveToolName(
+                    title: call.title, kind: call.kind, rawInput: call.rawInput, meta: call.meta)
+                // codex's own search failing with nothing printed found nothing
+                // (rg's exit 1): a success, as in the persisted path above.
+                let noMatch = state == .error && call.status == "failed"
+                    && GrepNoMatch.isCodexSearchNoMatch(
+                        toolName: toolName, input: call.rawInput,
+                        output: call.rawOutput.isEmpty ? call.content : call.rawOutput, meta: call.meta)
                 parts.append(.tool(ToolCallVM(
-                    id: call.id, rawName: call.title, kind: call.kind, state: state,
-                    input: call.rawInput, output: call.rawOutput, content: call.content, isError: call.isError,
+                    id: call.id, rawName: call.title, kind: call.kind, state: noMatch ? .done : state,
+                    input: call.rawInput, output: call.rawOutput, content: call.content,
+                    isError: noMatch ? false : call.isError,
                     meta: call.meta, transcript: call.transcript, isLive: turn.isStreaming,
-                    toolName: ToolNameNormalizer.inferLiveToolName(
-                        title: call.title, kind: call.kind, rawInput: call.rawInput, meta: call.meta))))
+                    toolName: toolName)))
             }
         }
         // A reply the user steered away from ended there: only the stretch
