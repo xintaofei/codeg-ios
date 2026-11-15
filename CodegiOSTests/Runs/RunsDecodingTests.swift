@@ -52,15 +52,29 @@ private func event(_ json: String) throws -> AcpEvent {
            {"task_id":"b1","kind":"shell","started_at_ms":5}],
          "turns":[{"id":"bg-1","role":"assistant","blocks":[]}]}
         """#)
-        guard case .backgroundActivity(let tasks) = decoded else { Issue.record("decoded \(decoded)"); return }
+        guard case .backgroundActivity(let tasks, _) = decoded else { Issue.record("decoded \(decoded)"); return }
         #expect(tasks.map(\.taskId) == ["a1", "b1"])
         #expect(tasks[0].toolUseId == "toolu_1")
         #expect(tasks[0].startedAtMs == 1_700_000_000_000)
         #expect(tasks[1].kind == "shell")
         #expect(tasks[1].toolUseId == nil)
+        guard case .backgroundActivity(_, let outOfTurn) = decoded else { return }
+        #expect(outOfTurn.turnCount == 1)
+        #expect(outOfTurn.settled.isEmpty)
+
+        let settled = try event(#"""
+        {"type":"background_activity","session_id":"s1","outstanding":0,"watermark":12,
+         "settled":[{"task_id":"a1","status":"completed","summary":"Survey done","tool_use_id":"toolu_1"},
+                    {"task_id":"a2","status":"completed","interim":true},{"status":"completed"}]}
+        """#)
+        guard case .backgroundActivity(let rest, let batch) = settled else { Issue.record("decoded \(settled)"); return }
+        #expect(rest.isEmpty)
+        #expect(batch.turnCount == 0)
+        #expect(batch.settled == [BackgroundSettled(taskId: "a1", status: "completed", summary: "Survey done"),
+                                  BackgroundSettled(taskId: "a2", status: "completed", interim: true)])
 
         // Absent on the wire = none.
-        guard case .backgroundActivity(let none) = try event(#"{"type":"background_activity","outstanding":0}"#) else {
+        guard case .backgroundActivity(let none, _) = try event(#"{"type":"background_activity","outstanding":0}"#) else {
             Issue.record("expected background activity"); return
         }
         #expect(none.isEmpty)

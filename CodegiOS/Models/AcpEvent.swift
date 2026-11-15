@@ -126,8 +126,9 @@ enum AcpEvent: Hashable, Sendable, Decodable {
     // Live runs + the predicted next prompt — decoded in `AcpEvent+Runs.swift`.
     /// A JetBrains AIR async-task delta (see ``AsyncTasks``).
     case asyncTask(AsyncTaskDelta)
-    /// The producer's whole set of background tasks still out.
-    case backgroundActivity(outstandingTasks: [BackgroundOutstandingTask])
+    /// The producer's whole set of background tasks still out, and what its
+    /// transcript watcher saw happen out of turn in this batch.
+    case backgroundActivity(outstandingTasks: [BackgroundOutstandingTask], outOfTurn: BackgroundOutOfTurn = .init())
     /// A codeg delegation of this connection started / finished, and the
     /// lifecycle-only running flag sent for every delegation.
     case delegationStarted(DelegationInfo)
@@ -418,6 +419,10 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     /// verbatim). Nil between turns — and during a turn an agent started on
     /// its own, which answers no prompt.
     let pendingUserMessageId: String?
+    /// That prompt's text (its text blocks joined) — what a client following a
+    /// turn another client sent shows as its prompt, since the one-shot
+    /// `user_message` won't replay. Nil when it had none.
+    let pendingUserMessageText: String?
     /// The connection's recent approval records, oldest first — for a client
     /// that attached after they were answered. Folded into what the screen
     /// already holds (`ActivityApproval.mergeToolApprovals`), never replacing
@@ -442,6 +447,22 @@ struct LiveSessionSnapshot: Sendable, Decodable {
 
     private struct PendingUserMessage: Decodable {
         let messageId: String
+        let blocks: [UserMessageBlock]?
+
+        private enum CodingKeys: String, CodingKey { case messageId, blocks }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            messageId = try c.decode(String.self, forKey: .messageId)
+            blocks = (try? c.decodeIfPresent([UserMessageBlock].self, forKey: .blocks)) ?? nil
+        }
+
+        var text: String? {
+            let joined = (blocks ?? []).compactMap { block -> String? in
+                if case .text(let t) = block { return t }
+                return nil
+            }.joined(separator: "\n")
+            return joined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : joined
+        }
     }
 
     init(from decoder: Decoder) throws {
@@ -465,7 +486,9 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         runs = ConnectionRunsSnapshot.lenient(from: decoder)
         forkSupported = (try? c.decodeIfPresent(Bool.self, forKey: .forkSupported)) ?? nil
         availableCommands = (try? c.decodeIfPresent([AvailableCommandInfo].self, forKey: .availableCommands)) ?? nil
-        pendingUserMessageId = ((try? c.decodeIfPresent(PendingUserMessage.self, forKey: .pendingUserMessage)) ?? nil)?.messageId
+        let pendingUser = (try? c.decodeIfPresent(PendingUserMessage.self, forKey: .pendingUserMessage)) ?? nil
+        pendingUserMessageId = pendingUser?.messageId
+        pendingUserMessageText = pendingUser?.text
         toolApprovals = (((try? c.decodeIfPresent([Lenient<ToolApprovalInfo>].self, forKey: .toolApprovals)) ?? nil) ?? [])
             .compactMap(\.value)
             .filter { !$0.toolCallId.isEmpty }

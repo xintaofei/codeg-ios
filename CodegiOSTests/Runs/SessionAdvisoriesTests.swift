@@ -248,6 +248,22 @@ private let link = "https://claude.ai/code/session_01ABC"
                                                agentIsCodex: true) == nil)
     }
 
+    @Test func finishedBackgroundTasksAreToldOncePerBatch() {
+        #expect(SessionNotices.backgroundSettled([], agent: "Claude Code") == nil)
+        #expect(SessionNotices.backgroundSettled([BackgroundSettled(taskId: "a", status: "completed", interim: true)],
+                                                 agent: "Claude Code") == nil, "it will report again")
+        let one = SessionNotices.backgroundSettled(
+            [BackgroundSettled(taskId: "a", status: "completed", summary: " Audit finished ")], agent: "Claude Code")
+        #expect(one?.hasPrefix("Claude Code") == true)
+        #expect(one?.hasSuffix("Audit finished") == true, "the summary, trimmed")
+        let bare = SessionNotices.backgroundSettled([BackgroundSettled(taskId: "a", status: "failed")], agent: "Claude Code")
+        #expect(bare?.contains("failed") == true)
+        let many = SessionNotices.backgroundSettled(
+            [BackgroundSettled(taskId: "a", status: "completed"), BackgroundSettled(taskId: "b", status: "completed"),
+             BackgroundSettled(taskId: "c", status: "completed", interim: true)], agent: "Claude Code")
+        #expect(many?.contains("2") == true)
+    }
+
     @Test func anUnconfirmedLoadNamesTheAgent() {
         #expect(SessionNotices.sessionLoadUnconfirmed(agent: "Codex").contains("Codex"))
     }

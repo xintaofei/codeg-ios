@@ -173,7 +173,7 @@ final class ConnectionRunsModel {
                 noteAutonomousTurnSettles(before: before, after: next)
             }
 
-        case .backgroundActivity(let tasks):
+        case .backgroundActivity(let tasks, _):
             assignIfChanged(\.backgroundTasks, tasks)
 
         case .delegationStarted(let info):

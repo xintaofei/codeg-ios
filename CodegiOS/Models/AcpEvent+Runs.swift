@@ -9,7 +9,7 @@ import Foundation
 /// would drop the whole envelope.
 extension AcpEvent {
     private enum RunsKeys: String, CodingKey {
-        case delta, outstandingTasks, childConnectionId, running, result, text
+        case delta, outstandingTasks, childConnectionId, running, result, text, turns, settled
     }
 
     /// `delegation_completed.result` (Rust `DelegationResultSummary`, tagged `kind`).
@@ -35,9 +35,14 @@ extension AcpEvent {
             return .asyncTask(delta)
         case "background_activity":
             // The producer's WHOLE outstanding set; absent on the wire means none.
-            // `turns` / `settled` are not read (the transcript reload covers them).
-            return .backgroundActivity(outstandingTasks:
-                ((try? c.decodeIfPresent([BackgroundOutstandingTask].self, forKey: .outstandingTasks)) ?? nil) ?? [])
+            // The turns are counted, not kept: a transcript re-read brings them
+            // in, already in place.
+            let turns = ((try? c.decodeIfPresent([AnyJSON].self, forKey: .turns)) ?? nil) ?? []
+            let settled = ((try? c.decodeIfPresent([BackgroundSettled].self, forKey: .settled)) ?? nil) ?? []
+            return .backgroundActivity(
+                outstandingTasks: ((try? c.decodeIfPresent([BackgroundOutstandingTask].self,
+                                                             forKey: .outstandingTasks)) ?? nil) ?? [],
+                outOfTurn: BackgroundOutOfTurn(turnCount: turns.count, settled: settled.filter { !$0.taskId.isEmpty }))
         case "delegation_started":
             guard let info = try? DelegationInfo(from: decoder), !info.parentToolUseId.isEmpty else { return nil }
             return .delegationStarted(info)

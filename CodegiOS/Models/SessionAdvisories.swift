@@ -133,6 +133,20 @@ extension SessionNotices {
         return "codex unarchive \(sessionId)"
     }
 
+    /// Background tasks a `<task-notification>` settled, told once per batch
+    /// (web raises an OS notification per entry). Nil when every one is
+    /// interim — those tasks will report again.
+    static func backgroundSettled(_ settled: [BackgroundSettled], agent: String) -> String? {
+        let finished = settled.filter { !$0.interim }
+        guard let first = finished.first else { return nil }
+        if finished.count > 1 {
+            return String(localized: "\(agent): \(finished.count) background tasks finished")
+        }
+        let summary = first.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let what = summary.isEmpty ? String(localized: "Background task finished (\(first.status))") : summary
+        return String(localized: "\(agent): \(what)")
+    }
+
     /// A resumed connection that was gone before its stream could attach,
     /// twice: the server ends a connection whose `session/load` failed for
     /// good, and says why only on that connection's own stream, which nothing

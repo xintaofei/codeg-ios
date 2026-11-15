@@ -2513,6 +2513,16 @@ final class SessionDetailViewModel {
         // by opening a new one after it.
         guard lifetime == lifecycle, liveTurn == nil, !isInFlight, stream == nil else { return }
 
+        openReattachStream(connection: conn, serverSaysLive: serverSaysLive, lifetime: lifetime)
+    }
+
+    /// Follow `conn`'s running turn from its attach snapshot — the screen's
+    /// connection from here on. An idle snapshot lets it go again (and, with
+    /// `serverSaysLive`, reconciles the transcript the turn just ended in).
+    /// `foreign`: the turn started while this screen watched, so the loaded
+    /// transcript predates it (see `consumeReattach`).
+    private func openReattachStream(connection conn: String, serverSaysLive: Bool, lifetime: Int,
+                                    foreign: Bool = false) {
         connectionID = conn
         closeStream()
         streamGeneration &+= 1
@@ -2521,8 +2531,34 @@ final class SessionDetailViewModel {
         stream = newStream
         newStream.start()
         consumerTask = Task { [weak self] in
-            await self?.consumeReattach(stream: newStream, connectionID: conn, generation: generation, serverSaysLive: serverSaysLive, lifetime: lifetime)
+            await self?.consumeReattach(stream: newStream, connectionID: conn, generation: generation,
+                                        serverSaysLive: serverSaysLive, lifetime: lifetime, foreign: foreign)
         }
+    }
+
+    /// A turn started on the watched connection that this screen did not send:
+    /// another client's prompt, or the agent's own turn. Followed live, as
+    /// opening the screen mid-turn would (the web stays attached, so any turn
+    /// streams there). The watch yields to the turn stream; the turn's end
+    /// reconciles and hands back to it. A turn over before the attach lands
+    /// reconciles the transcript instead (`serverSaysLive`).
+    private func followForeignTurn() {
+        guard !isTornDown, conversationID != nil, liveTurn == nil, !isInFlight, stream == nil,
+              !isForking, !isReapplyingConfig, sessionLoadFailure == nil,
+              let conn = watcher.connectionID else { return }
+        openReattachStream(connection: conn, serverSaysLive: true, lifetime: lifecycle, foreign: true)
+    }
+
+    /// What Claude's transcript watcher saw happen out of turn — background
+    /// completions, the agent's work after them, cron and loop turns. None of
+    /// it streams over ACP; the transcript is where it is, so it is re-read
+    /// (once the screen is idle). A batch of finished tasks is told once.
+    private func noteOutOfTurn(_ activity: BackgroundOutOfTurn) {
+        guard !activity.isEmpty else { return }
+        if let text = SessionNotices.backgroundSettled(activity.settled, agent: agentTypeForUI.label) {
+            notice = text
+        }
+        refreshAfterAutonomousTurn()
     }
 
     /// The server reported a live turn at load but we couldn't attach to it (it
@@ -2549,7 +2585,7 @@ final class SessionDetailViewModel {
     /// continuation to release and it BUILDS the live turn from the attach snapshot
     /// rather than being handed one. If the snapshot shows nothing in flight, it
     /// closes the stream (idle connection — leave it alone).
-    private func consumeReattach(stream: EventStream, connectionID conn: String, generation: Int, serverSaysLive: Bool = false, lifetime: Int) async {
+    private func consumeReattach(stream: EventStream, connectionID conn: String, generation: Int, serverSaysLive: Bool = false, lifetime: Int, foreign: Bool = false) async {
         var live: LiveTurn?
         for await frame in stream.frames {
             if Task.isCancelled { return }
@@ -2573,10 +2609,29 @@ final class SessionDetailViewModel {
                     rebuilt.serverTurnStarted = true
                     live = rebuilt
                     liveTurn = rebuilt
-                    // This live turn is the snapshot's complete in-flight reply;
-                    // the transcript must hide any partial copy the agent has
-                    // begun persisting into `turns` so the reply isn't doubled.
-                    liveTurnFromReattach = true
+                    if foreign {
+                        // A turn another client (or the agent) started while
+                        // this screen watched: the loaded transcript predates
+                        // it, so there is no partial copy of it to hide — and
+                        // hiding by the newest loaded prompt would hide the
+                        // reply BEFORE it. Its prompt, which no `user_message`
+                        // will replay, stands as a send's does until the
+                        // turn's end reconciles both.
+                        liveTurnFromReattach = false
+                        // Once: a reconnect mid-turn restates the same prompt.
+                        if let text = snap.pendingUserMessageText,
+                           !pendingUserTurns.contains(where: { $0.id.hasPrefix("foreign-") }) {
+                            pendingUserTurns.append(MessageTurn(
+                                id: "foreign-\(snap.pendingUserMessageId ?? UUID().uuidString)",
+                                role: .user, blocks: [.text(text)], timestamp: Date()))
+                        }
+                    } else {
+                        // This live turn is the snapshot's complete in-flight
+                        // reply; the transcript must hide any partial copy the
+                        // agent has begun persisting into `turns` so the reply
+                        // isn't doubled.
+                        liveTurnFromReattach = true
+                    }
                     replyFolds.arm()
                     isTurnActive = true
                     turnEndUnconfirmed = false
@@ -3029,7 +3084,9 @@ final class SessionDetailViewModel {
         // The connection's running list, predicted prompt, Remote Control and
         // staleness: `runs` takes these straight off the envelope (see
         // `apply(_:to:)`).
-        case .asyncTask, .backgroundActivity, .delegationStarted, .delegationCompleted,
+        case .backgroundActivity(_, let outOfTurn):
+            noteOutOfTurn(outOfTurn)
+        case .asyncTask, .delegationStarted, .delegationCompleted,
              .delegationChildRunning, .promptSuggestion, .sessionConfigStale, .remoteControl:
             break
         case .forkSupported(let supported):
@@ -3275,6 +3332,9 @@ final class SessionDetailViewModel {
         // Captured at ENQUEUE, like every other spawn: the reconnect sleeps for
         // up to 8s, and the consumer it starts outlives even that.
         let lifetime = lifecycle
+        // A followed turn another client started keeps being one: only that
+        // path leaves the live turn not owning a persisted partial copy.
+        let foreign = reattach && !liveTurnFromReattach
         closeStream()              // drop the dead socket (also bumps the generation)
         streamGeneration &+= 1
         let generation = streamGeneration
@@ -3292,7 +3352,8 @@ final class SessionDetailViewModel {
             newStream.start()
             self.consumerTask = Task { [weak self] in
                 if reattach {
-                    await self?.consumeReattach(stream: newStream, connectionID: conn, generation: generation, lifetime: lifetime)
+                    await self?.consumeReattach(stream: newStream, connectionID: conn, generation: generation,
+                                                lifetime: lifetime, foreign: foreign)
                 } else {
                     await self?.consume(stream: newStream, connectionID: conn, live: live, generation: generation)
                 }
@@ -4079,6 +4140,9 @@ extension SessionDetailViewModel {
             case .sessionNotice, .pluginLoadFailures, .configOptionRejected: self.tellAdvisory(event)
             case .sessionLoadFailed(let sessionId, let message, let code):
                 self.adoptSessionLoadFailure(sessionId: sessionId, message: message, code: code)
+            // A turn this screen didn't send: followed as it happens.
+            case .statusChanged(.prompting), .userMessage: self.followForeignTurn()
+            case .backgroundActivity(_, let outOfTurn): self.noteOutOfTurn(outOfTurn)
             default: break
             }
         }

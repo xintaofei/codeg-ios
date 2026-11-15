@@ -6,6 +6,47 @@ import Foundation
 /// `background_activity` accounts it (Rust `BackgroundOutstandingTask`): the
 /// Claude transcript watcher, or OpenCode / Grok live state. Every event and
 /// snapshot carries the WHOLE set — state, not a delta.
+/// What Claude's transcript watcher saw happen OUT of turn in one batch
+/// (`background_activity`): background completions, the agent's work after
+/// them, cron and loop turns. None of it produces ACP wire events — the
+/// transcript is the only place it shows, so a re-read is what brings it in.
+struct BackgroundOutOfTurn: Hashable, Sendable {
+    /// Out-of-turn turns parsed from the transcript tail (re-sent whole as
+    /// they grow).
+    var turnCount = 0
+    /// Background tasks a `<task-notification>` settled in this batch.
+    var settled: [BackgroundSettled] = []
+
+    var isEmpty: Bool { turnCount == 0 && settled.isEmpty }
+}
+
+/// One background task settled by a `<task-notification>` (Rust
+/// `BackgroundSettledInfo`).
+struct BackgroundSettled: Hashable, Sendable, Decodable {
+    var taskId: String
+    /// The notification's status verbatim (`completed` on success).
+    var status: String
+    var summary: String?
+    /// The task will notify again — still alive, so not "finished".
+    var interim: Bool
+
+    init(taskId: String, status: String, summary: String? = nil, interim: Bool = false) {
+        self.taskId = taskId
+        self.status = status
+        self.summary = summary
+        self.interim = interim
+    }
+
+    private enum CodingKeys: String, CodingKey { case taskId, status, summary, interim }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        taskId = ((try? c.decodeIfPresent(String.self, forKey: .taskId)) ?? nil) ?? ""
+        status = ((try? c.decodeIfPresent(String.self, forKey: .status)) ?? nil) ?? ""
+        summary = (try? c.decodeIfPresent(String.self, forKey: .summary)) ?? nil
+        interim = ((try? c.decodeIfPresent(Bool.self, forKey: .interim)) ?? nil) ?? false
+    }
+}
+
 struct BackgroundOutstandingTask: Hashable, Sendable {
     var taskId: String
     /// `agent` or `shell`. A plain string so a future kind can't fail a decode.

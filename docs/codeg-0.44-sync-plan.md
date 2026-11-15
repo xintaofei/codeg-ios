@@ -408,3 +408,20 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
 - 回复头部的「运行中 / N 失败」汇总仍按 memo 里的信息算，不看实时绑定。
 - web 的实时子会话进度（直接订阅子连接）和运行时长时钟没做；步数和当前步骤来自检查报告。
 - 一条之后几轮才出现的检查只在同一条回复内交给委派卡（Android 做了整个会话的索引）。
+
+### 计划跟着修改位置走（2026-11-15）
+
+移植 Android e35e19a（由并行 agent 写，Codex 审查通过，合进来后编译和测试一次通过）：直播计划从回复顶部的固定字段改成回复里的一段，每次 `plan_update` 移到最后（web `PLAN_UPDATE`），被它切开的文字/思考重新接上；回合交接时按 TodoWrite 调用原地保留；历史里的 TodoWrite / Kimi `TodoList` / codex `update_plan`（有清单的）画成同一张计划卡，行 id 一致；ExitPlanMode 的计划文档用计划卡显示，过长「展开」。模拟器验证：回合中计划跟到最新文字下面，回合结束后留在最后一次修改的位置。
+
+没做：失败的计划类调用仍是工具卡；web 的单行「Updated plan」折叠行没做，历史里多次 TodoWrite 是多张卡。
+
+### 非本端发起的回合（2026-11-15）
+
+- **别的客户端发起的回合实时显示**：空闲观察者看到 `status_changed(prompting)` 或 `user_message`，且本屏空闲时，在那条连接上走现成的 reattach 跟随这个回合（`followForeignTurn`）；回合在挂上之前就结束了则重读转录（`serverSaysLive`）。
+  - 这种回合开始时本屏的转录早于它：不能开 `liveTurnFromReattach`（它按最新的已加载用户消息隐藏后面的助手回复，会把上一条回答藏掉），提示词也不会再有 `user_message` 重放。所以从快照的 `pending_user_message`（新解码了 blocks 文本）放一条待定用户消息，和本端发送时一样，回合结束对账后替换。这是 Codex 第一轮指出的。
+  - 回合中断线重连时保持这个模式（`reconnectStream` 按 `!liveTurnFromReattach` 传 `foreign`），待定提示词只放一次。这是 Codex 第二轮指出的。
+- **Claude 的回合外活动**（后台任务完成、之后的工作、cron / loop 回合，这些不走 ACP，只在转录里）：`background_activity` 现在解码这一批的 `turns`（只计数）和 `settled`；非空时在空闲后重读转录（`refreshAfterAutonomousTurn`），已结束（非 interim）的任务提示一次（「Claude Code：Dependency audit finished」/「N 个后台任务已结束」）。
+
+验证：新增解码和提示文案测试，全量 1224 个通过；模拟器对 mock（快照带 `pending_user_message`、新增 `/mock/append` 往转录追加一轮、`/mock/drop` 断开订阅）：空闲时别的客户端发长回合，回合中上一条回答仍在、对方的提示词和直播回复都显示；回合中断线重连后不变、提示词只出现一次；回合结束只对账一次；快回合；回合外活动的提示和重读。反事实：去掉观察者的两个转发 → 五个断言全失败；外来回合改回旧分支 → 回合中两个断言失败；重连不传模式 → 「上一条回答仍在」失败。
+
+没做：Android 的回合外内存叠加层（按时间穿插、按 transcript_watermark 退役），iOS 用重读代替；Android 0cf00e4（智能体自己发起、前面没有提示词的直播回复接到上一条回复上），这种回合现在是单独一条回复，对账后合并。

@@ -13485,6 +13485,36 @@
           }
         }
       }
+    },
+    "%@: %lld background tasks finished" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@：%2$lld 个后台任务已结束"
+          }
+        }
+      }
+    },
+    "Background task finished (%@)" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "后台任务已结束（%@）"
+          }
+        }
+      }
+    },
+    "%@: %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@：%2$@"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
