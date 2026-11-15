@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 
 /// What the reader opened or closed in one screen's transcript — a thought,
@@ -46,8 +47,14 @@ final class DisclosureStore {
         choice(key) ?? fallback
     }
 
+    /// When the reader last made a choice (system uptime, 0 before any): the
+    /// growth that follows is the row they tapped opening in place, which the
+    /// transcript's follow-the-bottom leaves where it is.
+    @ObservationIgnored private(set) var lastChoiceAt: TimeInterval = 0
+
     /// Record the reader's choice; nil hands the row back its default.
     func set(_ open: Bool?, for key: String) {
+        lastChoiceAt = ProcessInfo.processInfo.systemUptime
         if let entry = entries[key] {
             if entry.open != open { entry.open = open }
             return

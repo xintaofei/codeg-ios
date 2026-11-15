@@ -216,9 +216,20 @@ final class SessionDetailViewModel {
     private var jumpToken = 0
 
     /// Optimistic user turns awaiting persistence (spliced out on re-fetch).
-    private(set) var pendingUserTurns: [MessageTurn] = []
+    private(set) var pendingUserTurns: [MessageTurn] = [] {
+        didSet { if pendingUserTurns.count > oldValue.count { pendingArrivals &+= 1 } }
+    }
     /// The assistant reply currently streaming, if any.
-    private(set) var liveTurn: LiveTurn?
+    private(set) var liveTurn: LiveTurn? {
+        didSet { if liveTurn != nil, oldValue == nil { liveArrivals &+= 1 } }
+    }
+    /// Bumped when a message is sent or a live reply begins — what the
+    /// transcript fades in. Never when either gives way to the saved copy:
+    /// those rows are re-keyed in place, and a fade there cross-faded each
+    /// row with its own successor while both slid (the text overlapping
+    /// itself for a moment as a reply settled).
+    private(set) var pendingArrivals = 0
+    private(set) var liveArrivals = 0
     /// Whether `liveTurn` was rebuilt from a reattach snapshot (vs. created by a
     /// local send). On reattach the snapshot's `live_message` is the COMPLETE
     /// in-flight reply, but the agent CLI asynchronously persists a PARTIAL copy

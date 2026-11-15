@@ -411,6 +411,9 @@ struct TranscriptView<Header: View>: View {
             // Publish a scroll capability so a reply's "scroll to question" button
             // (deep inside a row) can move the viewport to the user message.
             .environment(\.transcriptScroll, TranscriptScrollAction { id, anchor in
+                // The reader asked to look elsewhere: the follow lets go, or
+                // the next streamed word would pull them back down.
+                letGoOfBottom()
                 withAnimation(Theme.Motion.scroll) {
                     proxy.scrollTo(id, anchor: anchor)
                 }
@@ -429,23 +432,22 @@ struct TranscriptView<Header: View>: View {
                            visibleBottom: geo.containerSize.height - geo.contentInsets.bottom,
                            contentHeight: geo.contentSize.height)
             } action: { old, new in
-                // The bottom of the visible area moved — the keyboard, the
-                // running chip, a status strip, or a keyboard re-layout that
-                // briefly resizes the list and carries the offset along (the
-                // pinyin keyboard does this as a sent message clears the field).
-                // While following and with the reader's hands off the list,
-                // that is the layout moving the content, not the reader: keep
-                // the newest line in view, and keep following.
                 let readerScrolling = scrollBox.scrollView.map { $0.isTracking || $0.isDecelerating } ?? false
-                if new.visibleBottom != old.visibleBottom, stuckToBottom, !readerScrolling {
-                    if new.hidden > 0.5 { pinBottomEdge() }
-                    return
+                switch BottomFollow.action(old: old, new: new, following: stuckToBottom,
+                                           readerScrolling: readerScrolling,
+                                           readerJustToggled: readerJustToggled,
+                                           threshold: bottomThreshold) {
+                case .none:
+                    break
+                case .pin:
+                    pinBottomEdge()
+                case .glide:
+                    scrollBox.glideToBottom()
+                case .follow(let following):
+                    stuckToBottom = following
+                    if !following { scrollBox.stopGlide() }
+                    onPinnedChange(following)
                 }
-                let wasAtBottom = old.hidden <= bottomThreshold
-                let isAtBottom = new.hidden <= bottomThreshold
-                guard isAtBottom != wasAtBottom else { return }
-                stuckToBottom = isAtBottom
-                onPinnedChange(isAtBottom)
             }
             // Reveal older turns as the user scrolls toward the top. Mapped to a
             // Bool so `action` fires only when crossing into the near-top zone (not
@@ -461,12 +463,12 @@ struct TranscriptView<Header: View>: View {
                     loadEarlier()
                 }
             }
-            // Streamed growth: follow instantly, but ONLY while pinned. A single
-            // move to the bottom edge per tick (no re-assert) — the content is
-            // already moving, so anything heavier stacks and stutters.
+            // Streamed growth is followed off the layout (above); a tick that
+            // changed no height finds the glide already at the end, and one
+            // whose rows are measured by now starts it a frame sooner.
             .onChange(of: scrollTick) { _, _ in
                 guard stuckToBottom else { return }
-                pinBottomEdge()
+                scrollBox.glideToBottom()
             }
             // Force re-pin (user send / initial load / jump-to-latest tap),
             // regardless of scroll state. Routed through `scrollToBottom`, which
@@ -486,13 +488,23 @@ struct TranscriptView<Header: View>: View {
         }
     }
 
-    /// Put the end of the content at the bottom of what is visible of the list.
+    /// Put the end of the content at the bottom of what is visible of the list,
+    /// at once.
     private func pinBottomEdge() {
-        guard let scrollView = scrollBox.scrollView else { return }
-        let inset = scrollView.adjustedContentInset
-        let bottom = max(-inset.top, scrollView.contentSize.height + inset.bottom - scrollView.bounds.height)
-        guard abs(scrollView.contentOffset.y - bottom) > 0.5 else { return }
-        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: bottom), animated: false)
+        scrollBox.snapToBottom()
+    }
+
+    /// The reader turned to something else: stop following the stream.
+    private func letGoOfBottom() {
+        stuckToBottom = false
+        scrollBox.stopGlide()
+    }
+
+    /// The reader opened or closed a row (or a reply) a moment ago: the growth
+    /// that follows is theirs, in place, not the stream's.
+    private var readerJustToggled: Bool {
+        let last = max(disclosures.lastChoiceAt, replyFolds.lastChoiceAt)
+        return last > 0 && ProcessInfo.processInfo.systemUptime - last < 0.6
     }
 
     /// Scroll to the bottom edge, then re-assert once after ~80 ms so a far
@@ -514,10 +526,101 @@ struct TranscriptView<Header: View>: View {
     private let bottomThreshold: CGFloat = 80
 }
 
-/// Holds the transcript list's scroll view once a row has found it.
+/// Holds the transcript list's scroll view once a row has found it, and moves
+/// it to the end of its content.
 @MainActor
 final class TranscriptScrollBox {
     weak var scrollView: UIScrollView?
+
+    /// Drives the glide, one step per frame; nil when it rests.
+    private var link: CADisplayLink?
+    private var lastStep: CFTimeInterval = 0
+
+    /// Time constant of the glide: each frame covers the share of the way
+    /// left that this much time would — ~95% of a step's height in ~0.27 s,
+    /// with no restart when the content grows again on the way (the target is
+    /// read afresh every frame).
+    private static let glideTau: CFTimeInterval = 0.09
+
+    /// The offset that puts the end of the content at the bottom of what is
+    /// visible of the list.
+    private static func bottomOffset(_ scrollView: UIScrollView) -> CGFloat {
+        let inset = scrollView.adjustedContentInset
+        return max(-inset.top, scrollView.contentSize.height + inset.bottom - scrollView.bounds.height)
+    }
+
+    /// To the end, at once.
+    func snapToBottom() {
+        stopGlide()
+        guard let scrollView else { return }
+        let bottom = Self.bottomOffset(scrollView)
+        guard abs(scrollView.contentOffset.y - bottom) > 0.5 else { return }
+        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: bottom), animated: false)
+    }
+
+    /// To the end, gliding: the content grew under a reader parked there.
+    /// A shrink, a distance longer than the screen (laying out every row on
+    /// the way), or Reduce Motion goes at once.
+    func glideToBottom() {
+        guard let scrollView else { return }
+        let distance = Self.bottomOffset(scrollView) - scrollView.contentOffset.y
+        guard abs(distance) > 0.5 else { return }
+        if distance < 0 || distance > scrollView.bounds.height || UIAccessibility.isReduceMotionEnabled {
+            snapToBottom()
+            return
+        }
+        guard link == nil else { return }
+        let link = CADisplayLink(target: GlideStep(box: self), selector: #selector(GlideStep.step(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+        lastStep = 0
+    }
+
+    func stopGlide() {
+        link?.invalidate()
+        link = nil
+    }
+
+    fileprivate func step(_ link: CADisplayLink) {
+        // The reader took hold of the list: theirs now.
+        guard let scrollView, !scrollView.isTracking, !scrollView.isDecelerating else {
+            stopGlide()
+            return
+        }
+        let dt = lastStep == 0 ? link.duration : min(max(link.timestamp - lastStep, 0), 0.05)
+        lastStep = link.timestamp
+        let y = scrollView.contentOffset.y
+        let left = Self.bottomOffset(scrollView) - y
+        // There (or past it: the content shrank on the way).
+        if left <= 0.5 {
+            if left != 0 {
+                scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: y + left), animated: false)
+            }
+            stopGlide()
+            return
+        }
+        // Never crawl the last few points.
+        let move = max(left * (1 - exp(-dt / Self.glideTau)), min(left, 0.75))
+        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: y + move), animated: false)
+    }
+}
+
+/// The display link's target: it holds the link's owner weakly, so a glide
+/// left running when the screen goes away ends itself on its next frame.
+private final class GlideStep: NSObject {
+    weak var box: TranscriptScrollBox?
+
+    init(box: TranscriptScrollBox) {
+        self.box = box
+    }
+
+    @MainActor @objc func step(_ link: CADisplayLink) {
+        guard let box else {
+            link.invalidate()
+            return
+        }
+        box.step(link)
+    }
 }
 
 /// An invisible view in a transcript row that finds the list's scroll view
@@ -556,7 +659,58 @@ private struct TranscriptScrollLocator: UIViewRepresentable {
 }
 
 /// Where the list's content ends against what is visible of it.
-private struct BottomEdge: Equatable {
+/// What the transcript does with one change of its scroll geometry: keep the
+/// end in view, or start or stop following it.
+enum BottomFollow {
+    enum Action: Equatable {
+        case none
+        /// To the end at once: the room for the content moved.
+        case pin
+        /// To the end, gliding: the content grew (or shrank) under the end.
+        case glide
+        /// Following starts (true) or stops (false).
+        case follow(Bool)
+    }
+
+    static func action(old: BottomEdge, new: BottomEdge, following: Bool, readerScrolling: Bool,
+                       readerJustToggled: Bool, threshold: CGFloat) -> Action {
+        // The bottom of the visible area moved — the keyboard, the running
+        // chip, a status strip, or a keyboard re-layout that briefly resizes
+        // the list and carries the offset along (the pinyin keyboard does this
+        // as a sent message clears the field). While following and with the
+        // reader's hands off the list, that is the layout moving the content,
+        // not the reader: keep the newest line in view, and keep following.
+        // At once — the room is already moving with the keyboard.
+        if new.visibleBottom != old.visibleBottom, following, !readerScrolling {
+            return new.hidden > 0.5 ? .pin : .none
+        }
+        // The content grew (or shrank) under a reader parked at the end: a
+        // streamed word, a step, a card that unfolded on its own, the reply
+        // settling. Follow it — off the layout, not off the update that caused
+        // it, which runs before the new rows are measured (following there
+        // always trails one update behind, and a step taller than the slack
+        // unpinned the follow for good). Gliding, so a step slides into view
+        // rather than the whole list jumping by its height. A row the reader
+        // just opened or closed grows where they tapped it instead.
+        if new.contentHeight != old.contentHeight, following, !readerScrolling, !readerJustToggled {
+            return .glide
+        }
+        let isAtBottom = new.hidden <= threshold
+        // The reader's hand on the list decides by where it leaves them, not
+        // by a crossing: one taking hold mid-glide, with more than the slack
+        // still below, never crosses it — and must not be pulled back down
+        // by the next streamed word.
+        if readerScrolling {
+            return isAtBottom == following ? .none : .follow(isAtBottom)
+        }
+        // A scroll of the program's own (a glide's frames, a jump to a
+        // message): only a crossing of the slack changes anything.
+        let wasAtBottom = old.hidden <= threshold
+        return isAtBottom == wasAtBottom ? .none : .follow(isAtBottom)
+    }
+}
+
+struct BottomEdge: Equatable {
     var offset: CGFloat
     /// The bottom of the visible area, above the composer and anything over it.
     var visibleBottom: CGFloat
@@ -609,7 +763,7 @@ extension TranscriptView {
             windowStartTurn = snappedStart(index)
             widened = true
         }
-        stuckToBottom = false
+        letGoOfBottom()
         onPinnedChange(false)
         let id = request.turnID
         Task { @MainActor in

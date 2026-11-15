@@ -364,8 +364,8 @@ struct SessionDetailView: View {
             onControl: model.runs.connectionID == nil ? nil : { model.goalControl($0, goalID: $1) },
             actions: model.runs.goalActions ?? [], currentGoalID: nil,
             pendingGoalID: model.pendingGoalControl))
-        .animation(.snappy(duration: 0.28), value: model.pendingUserTurns)
-        .animation(.snappy(duration: 0.28), value: model.liveTurn?.id)
+        .animation(.snappy(duration: 0.28), value: model.pendingArrivals)
+        .animation(.snappy(duration: 0.28), value: model.liveArrivals)
         .safeAreaInset(edge: .bottom) {
             // The "jump to latest" affordance sits in the compose-bar inset — not
             // as a `List` overlay — so it is reliably above the bar and tappable

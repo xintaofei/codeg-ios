@@ -445,16 +445,17 @@ enum TranscriptTimeline {
             ownerID = "\(live.id)~\(message.id)"
         }
         // Nothing streamed yet (or nothing since a note was steered in): the
-        // agent is working on it — under the reply it joined, if any, which
-        // is already on screen above.
+        // agent is working on it — under the reply's header (the one it
+        // joined, if any, already on screen above), where its first words or
+        // step will land, so they take the dots' place instead of the header
+        // moving up as the dots go.
         let thinking = start == segments.count && live.isStreaming && live.errorMessage == nil
             ? TimelineNode(id: "\(ownerID)#thinking", content: .thinking, agent: agent) : nil
-        if let thinking, lead.isEmpty { out.append(thinking) }
         out.append(contentsOf: liveReplyNodes(
             parts: lead + MessageRender.adaptLive(live, range: start..<segments.count),
             ownerID: ownerID, completed: !live.isStreaming, agent: agent,
             keepAnswer: live.isStreaming && replyOpen))
-        if let thinking, !lead.isEmpty { out.append(thinking) }
+        if let thinking { out.append(thinking) }
         if let error = live.errorMessage {
             out.append(TimelineNode(id: "\(live.id)#error",
                                     content: .error(error, details: live.errorDetails), agent: agent))
@@ -619,10 +620,13 @@ enum TranscriptTimeline {
                               recovered: Set<String>) -> [TimelineNode] {
         switch item {
         case .group(_, let kind, let steps, let status):
-            // Keyed like the older tool group (its first call), so the row keeps
-            // its identity while the run grows and across the live → history
-            // hand-over.
-            let gid = steps.first.map { "toolgroup-\($0.call.id)" } ?? "\(ownerID)#group"
+            // Keyed as its first call's own row (Android e6af28a): while the
+            // reply is written that call stands alone until the next one of
+            // its kind joins it, and the row has to stay the same row as it
+            // becomes their group — a new key would drop the card and draw
+            // another in its place. The key also holds while the run grows and
+            // across the live → history hand-over.
+            let gid = steps.first.map { "tool-\($0.call.id)" } ?? "\(ownerID)#group"
             return [TimelineNode(id: gid, content: .activityGroup(
                 kind: kind, steps: steps, status: status,
                 recoveredKeys: recovered.intersection(steps.map(\.key))), agent: agent)]

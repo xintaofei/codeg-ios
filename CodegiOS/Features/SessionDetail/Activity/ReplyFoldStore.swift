@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 
 /// Fold state for a transcript's replies — port of the web's `ReplyFoldState`
@@ -48,7 +49,12 @@ final class ReplyFoldStore {
         return !completed
     }
 
+    /// When the reader last folded or unfolded a reply (system uptime, 0
+    /// before any) — see ``DisclosureStore/lastChoiceAt``.
+    @ObservationIgnored private(set) var lastChoiceAt: TimeInterval = 0
+
     func setOpen(_ open: Bool, key: String, isCurrent: Bool) {
+        lastChoiceAt = ProcessInfo.processInfo.systemUptime
         if isCurrent && armed {
             roundOpen = open
         } else {
