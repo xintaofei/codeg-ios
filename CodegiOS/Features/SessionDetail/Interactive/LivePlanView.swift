@@ -40,7 +40,8 @@ struct LivePlanView: View {
             VStack(alignment: .leading, spacing: 6) {
                 header
                 if isExpanded {
-                    PlanChecklist(items: entries.map(\.checklistItem), isStreaming: isStreaming)
+                    PlanChecklist(items: entries.map(\.checklistItem), isStreaming: isStreaming,
+                                  ink: Theme.Step.label)
                         .padding(.vertical, 2)
                         .transition(.opacity)
                 }
@@ -53,12 +54,12 @@ struct LivePlanView: View {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text("Updated plan", comment: "Activity row: the agent wrote or revised its plan; followed by the step under way")
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Theme.textPrimary)
+                    .foregroundStyle(Theme.Step.label)
                     .fixedSize()
                 if let current {
                     Text(verbatim: current.content)
                         .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
+                        .foregroundStyle(Theme.Step.subject)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .layoutPriority(1)

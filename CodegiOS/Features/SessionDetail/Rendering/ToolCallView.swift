@@ -61,7 +61,7 @@ struct ToolCallCard: View {
         HStack(spacing: 8) {
             Text(LocalizedStringKey(stringLiteral: vm.displayTitle))
                 .font(Theme.Typography.cardTitle)
-                .foregroundStyle(Theme.textPrimary)
+                .foregroundStyle(Theme.Step.label)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .minimumScaleFactor(0.85)

@@ -2,8 +2,9 @@ import SwiftUI
 
 /// The visual shape one plan row renders from — the shared model every "Agent
 /// Plan" surface maps its entries into, so the live checklist (`LivePlanView`)
-/// and the ExitPlanMode confirmation (`PermissionRequestCard`) stay pixel-for-
-/// pixel identical. Mirrors codeg web's shared `PlanEntriesList`.
+/// and the ExitPlanMode confirmation (`PermissionRequestCard`) keep one shape
+/// (only the open rows' ink differs; see `PlanChecklist.ink`). Mirrors codeg
+/// web's shared `PlanEntriesList`.
 struct PlanChecklistItem {
     let content: String
     let status: PlanEntry.Status
@@ -34,14 +35,18 @@ extension PermissionPlanEntry {
 /// Body only — callers wrap it in their own header / container (the live card's
 /// collapsible shell, the confirmation card's "Plan" section), exactly as the web
 /// shares `PlanEntriesList` between `<PlanCard>` and `<AgentPlanOverlay>`.
+/// `ink` is the open rows' text: the live plan is one of a reply's steps and
+/// reads in their quieter ink; the confirmation card asks the user to decide,
+/// in the primary one.
 struct PlanChecklist: View {
     let items: [PlanChecklistItem]
     var isStreaming: Bool = false
+    var ink: Color = Theme.textPrimary
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                PlanChecklistRow(item: item, isStreaming: isStreaming)
+                PlanChecklistRow(item: item, isStreaming: isStreaming, ink: ink)
             }
         }
     }
@@ -50,6 +55,7 @@ struct PlanChecklist: View {
 private struct PlanChecklistRow: View {
     let item: PlanChecklistItem
     let isStreaming: Bool
+    let ink: Color
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
@@ -58,7 +64,7 @@ private struct PlanChecklistRow: View {
                 .padding(.top, 1.5)
             Text(item.content)
                 .font(.subheadline)
-                .foregroundStyle(item.status == .completed ? Theme.textTertiary : Theme.textPrimary)
+                .foregroundStyle(item.status == .completed ? Theme.textTertiary : ink)
                 .strikethrough(item.status == .completed, color: Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)

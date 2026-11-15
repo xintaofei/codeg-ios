@@ -232,7 +232,7 @@ struct DelegationTaskCard: View {
         HStack(spacing: 6) {
             Text(verbatim: card.assistantName ?? card.agentType?.label ?? String(localized: "Sub-agent"))
                 .font(Theme.Typography.cardTitle)
-                .foregroundStyle(Theme.textPrimary)
+                .foregroundStyle(Theme.Step.label)
                 .lineLimit(1)
             if card.assistantName != nil, let agent = card.agentType {
                 Text(verbatim: "· \(agent.label)")
@@ -486,7 +486,7 @@ struct RefusedResumeCard: View {
             HStack(spacing: 6) {
                 Text(title)
                     .font(Theme.Typography.cardTitle)
-                    .foregroundStyle(Theme.textPrimary)
+                    .foregroundStyle(Theme.Step.label)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 4)
@@ -618,7 +618,7 @@ struct DelegationStatusRow: View {
                 .frame(width: 16)
             Text(labelKey(shortId: shortId))
                 .font(Theme.Typography.cardTitle)
-                .foregroundStyle(Theme.textPrimary)
+                .foregroundStyle(Theme.Step.label)
                 .lineLimit(1).truncationMode(.tail)
             if count > 1 {
                 Text(verbatim: "×\(count)")

@@ -142,7 +142,7 @@ struct GoalRunRow: View {
 
     // MARK: Header
 
-    private var tint: Color { goal.isError ? Theme.danger : Theme.textPrimary }
+    private var tint: Color { goal.isError ? Theme.danger : Theme.Step.label }
 
     /// `5.2K tokens · 19s`.
     private var usage: String? {
@@ -165,7 +165,7 @@ struct GoalRunRow: View {
                     if let objective = facts.objective {
                         Text(verbatim: objective)
                             .font(.subheadline)
-                            .foregroundStyle(goal.isError ? Theme.danger : Theme.textSecondary)
+                            .foregroundStyle(goal.isError ? Theme.danger : Theme.Step.subject)
                             .lineLimit(1)
                             .layoutPriority(1)
                     }
@@ -251,7 +251,7 @@ struct GoalRunRow: View {
                         .foregroundStyle(Theme.textTertiary)
                     Text(verbatim: objective)
                         .font(.subheadline)
-                        .foregroundStyle(Theme.textPrimary)
+                        .foregroundStyle(Theme.Step.label)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }

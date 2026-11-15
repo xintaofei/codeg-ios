@@ -75,7 +75,7 @@ struct TaskListCard: View {
         HStack(spacing: 8) {
             summaryLabel(rowCount: rowCount)
                 .font(Theme.Typography.cardTitle)
-                .foregroundStyle(Theme.textPrimary)
+                .foregroundStyle(Theme.Step.label)
                 .lineLimit(1)
                 .truncationMode(.tail)
             if isRunning { LivePulse() }
@@ -112,7 +112,7 @@ private struct TaskRow: View {
     let row: TaskChecklistRow
 
     private var struck: Bool { row.status == .completed || row.status == .deleted }
-    private var titleColor: Color { struck ? Theme.textTertiary : Theme.textPrimary }
+    private var titleColor: Color { struck ? Theme.Step.meta : Theme.Step.label }
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {

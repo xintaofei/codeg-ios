@@ -50,6 +50,22 @@ enum Theme {
     static let textSecondary = Color(light: Color(white: 0.38), dark: Color(white: 0.64))
     static let textTertiary = Color(light: Color(white: 0.55), dark: Color(white: 0.44))
 
+    /// The text of a reply's steps — every line of it that isn't the agent's
+    /// answer: the reply's header, thoughts, tool and group rows, the plan,
+    /// task lists, delegations, goals. One scale for all of them, a tone below
+    /// the answer, so the process recedes behind what the agent says and no
+    /// kind of step reads louder than another.
+    enum Step {
+        /// What the step is: `Read`, `Explored`, `Thought`, `Updated plan`, a
+        /// card's title.
+        static let label = Theme.textSecondary
+        /// What it is about: the file, the search, the thought's heading, the
+        /// header's step count.
+        static let subject = Color(light: Color(white: 0.47), dark: Color(white: 0.54))
+        /// Counts, durations, chevrons.
+        static let meta = Theme.textTertiary
+    }
+
     static let danger = Color(
         light: Color(red: 0.80, green: 0.18, blue: 0.18),
         dark: Color(red: 0.96, green: 0.46, blue: 0.46)

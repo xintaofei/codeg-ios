@@ -74,7 +74,6 @@ struct NodeBody: View {
             LivePlanView(entries: entries, isStreaming: streaming)
         case .thinking:
             ThinkingShimmer()
-                .railHead(.top(10))
         case .error(let message, let details):
             InlineTurnError(message: message, details: details)
         case .unsupported(let type):
@@ -297,27 +296,38 @@ private struct JumpToQuestionButton: View {
 
 // MARK: - Live affordances (migrated from the old LiveTurnView)
 
-/// A subtle three-dot shimmer shown before the first token lands. Static under
-/// Reduce Motion.
+/// A subtle three-dot shimmer holding the place of a reply's first step until
+/// it lands. It sits under the reply's header in a capsule like the header's,
+/// so the dots line up under the header's label — bare at the column's edge,
+/// they stood out to the left of it. Static under Reduce Motion.
 struct ThinkingShimmer: View {
     @State private var phase = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<3, id: \.self) { i in
-                Circle()
-                    .fill(Theme.textTertiary)
-                    .frame(width: 6, height: 6)
-                    .opacity(reduceMotion ? 0.6 : (phase ? 1 : 0.3))
-                    .animation(
-                        reduceMotion ? nil :
-                            .easeInOut(duration: 0.6).repeatForever().delay(Double(i) * 0.18),
-                        value: phase
-                    )
+        ZStack(alignment: .leading) {
+            // An unseen line of the header's type gives the capsule the
+            // header's height and a first baseline, which the rail marker
+            // lines up with as it does with the header's.
+            Text(verbatim: "\u{200B}")
+                .font(ReplyHeaderView.labelFont)
+                .accessibilityHidden(true)
+            HStack(spacing: 5) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(Theme.textTertiary)
+                        .frame(width: 6, height: 6)
+                        .opacity(reduceMotion ? 0.6 : (phase ? 1 : 0.3))
+                        .animation(
+                            reduceMotion ? nil :
+                                .easeInOut(duration: 0.6).repeatForever().delay(Double(i) * 0.18),
+                            value: phase
+                        )
+                }
             }
         }
-        .padding(.vertical, 4)
+        .padding(ReplyHeaderView.capsuleInsets)
+        .background(Theme.surfaceNested, in: Capsule())
         .onAppear { if !reduceMotion { phase = true } }
     }
 }

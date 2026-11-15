@@ -58,6 +58,12 @@ struct ReplyHeaderView: View {
         !header.completed ? "Working" : (header.hasSteps ? "Activity" : "Reply")
     }
 
+    /// The capsule's type and insets — shared with the dots that hold the
+    /// place of the reply's first step under it (``ThinkingShimmer``), so they
+    /// sit in a capsule like this one, lined up under its label.
+    static let labelFont = Font.caption.weight(.semibold)
+    static let capsuleInsets = EdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 10)
+
     var body: some View {
         let toggles = header.foldable && store != nil
         Button {
@@ -68,12 +74,12 @@ struct ReplyHeaderView: View {
         } label: {
             HStack(spacing: 6) {
                 Text(label)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(header.completed ? Theme.textPrimary : Theme.textSecondary)
+                    .font(Self.labelFont)
+                    .foregroundStyle(Theme.Step.label)
                 ForEach(Array(ReplyActivityText.summaryLine(live.summary(of: header)).enumerated()), id: \.offset) { _, piece in
                     Text(verbatim: piece.text)
                         .font(.caption)
-                        .foregroundStyle(piece.danger ? Theme.danger : Theme.textSecondary)
+                        .foregroundStyle(piece.danger ? Theme.danger : Theme.Step.subject)
                         .lineLimit(1)
                 }
                 if header.completed, let ms = header.durationMs, ms > 0 {
@@ -88,8 +94,7 @@ struct ReplyHeaderView: View {
                         .rotationEffect(.degrees(open ? 90 : 0))
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(Self.capsuleInsets)
             .background(Theme.surfaceNested, in: Capsule())
             .contentShape(Capsule())
         }
@@ -183,11 +188,11 @@ private struct ThoughtRow: View {
                      ? String(localized: "activity.thinking", defaultValue: "Thinking", comment: "Thought row: a thought still being written")
                      : String(localized: "Thought"))
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Theme.textSecondary)
+                    .foregroundStyle(Theme.Step.label)
                 if let title {
                     Text(verbatim: title)
                         .font(.subheadline)
-                        .foregroundStyle(Theme.textTertiary)
+                        .foregroundStyle(Theme.Step.subject)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 6)

@@ -54,25 +54,25 @@ struct BackgroundTaskRowView: View {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(verbatim: label)
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Theme.textSecondary)
+                    .foregroundStyle(Theme.Step.label)
                     .fixedSize()
                 if let shortId = BackgroundTask.shortId(row) {
                     Text(verbatim: "#\(shortId)")
                         .font(.mono(13))
-                        .foregroundStyle(Theme.textSecondary)
+                        .foregroundStyle(Theme.Step.label)
                         .fixedSize()
                 }
                 if row.pollCount > 1 {
                     // How often it was polled — the delegation-poll row's hint.
                     Text(verbatim: "×\(row.pollCount)")
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(Theme.textTertiary)
+                        .foregroundStyle(Theme.Step.meta)
                         .fixedSize()
                 }
                 if let detail = BackgroundTask.rowDetail(row, launch: launch) {
                     Text(verbatim: detail)
                         .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
+                        .foregroundStyle(Theme.Step.label)
                         .lineLimit(1)
                 }
             }

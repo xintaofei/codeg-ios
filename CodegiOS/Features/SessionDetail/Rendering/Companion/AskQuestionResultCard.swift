@@ -157,7 +157,7 @@ struct AskQuestionResultCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Question")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Theme.textPrimary)
+                        .foregroundStyle(Theme.Step.label)
                     if let subtitle {
                         Text(subtitle).font(.caption).foregroundStyle(Theme.textSecondary)
                     }

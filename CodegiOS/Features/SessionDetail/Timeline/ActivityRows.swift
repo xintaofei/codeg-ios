@@ -339,13 +339,13 @@ struct ActivityToolRow: View {
                 if let verb = label.verb {
                     Text(verbatim: verb)
                         .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Theme.textPrimary)
+                        .foregroundStyle(Theme.Step.label)
                         .fixedSize()
                 }
                 if let target = label.target {
                     Text(verbatim: target)
                         .font(label.monoTarget ? .mono(13) : .subheadline)
-                        .foregroundStyle(label.verb == nil ? Theme.textPrimary : Theme.textSecondary)
+                        .foregroundStyle(label.verb == nil ? Theme.Step.label : Theme.Step.subject)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .layoutPriority(1)
@@ -353,7 +353,7 @@ struct ActivityToolRow: View {
                 if let detail = label.detail {
                     Text(verbatim: detail)
                         .font(.caption)
-                        .foregroundStyle(Theme.textTertiary)
+                        .foregroundStyle(Theme.Step.meta)
                         .lineLimit(1)
                 }
             }
@@ -455,11 +455,11 @@ struct ActivityGroupRow: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(verbatim: title)
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Theme.textPrimary)
+                    .foregroundStyle(Theme.Step.label)
                 if let summary = exploreSummary {
                     Text(verbatim: summary)
                         .font(.subheadline)
-                        .foregroundStyle(Theme.textSecondary)
+                        .foregroundStyle(Theme.Step.subject)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 6)
