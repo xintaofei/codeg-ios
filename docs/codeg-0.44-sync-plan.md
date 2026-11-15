@@ -289,3 +289,27 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
   - XCUITest 的 `typeKey` 在软键盘开着的模拟器里不像真实的硬件键盘：回车、Esc 到不了 SwiftUI 的 `onKeyPress`，组字中的 ↓、Tab 也会被输入法清掉。
   - 所以「硬件键盘回车选中菜单项」和「组字中回车提交拼音字母」仍需在真机或 iPad 外接键盘上确认。
 - **仍未验证**：VoiceOver；HTML 冷启动时的拦截和渲染超时恢复；真机。
+
+### 对照 Android 客户端后的修复（2026-11-15）
+
+对照本地 codeg-android 的 63 个 0.44 同步提交，先修了一批小而确定的问题。每项一个提交：
+
+- **MCP 编辑丢分配**（aab197b）：`McpAppType` 原来只有 7 个 app，解码时丢掉其余的；服务端保存的语义是「只挂在列出的 app 上」，所以一次编辑就会把服务器从另外 13 个智能体上摘掉。现在保留原始字符串，可勾选列表照 web 的 18 个，保存时把界面没提供的已有分配（OpenClaw、pi、未知 app）原样带回。
+- **MCP 页在 0.30.2 起的服务端上加载失败**（3dae3ea）：`mcp_scan_local` 改成返回 `{servers, warnings}`，iOS 一直按数组解码。现在两种都认，并照 web 显示读不了的配置来源。（所以上一条只在 0.30.2 以前的服务端上会触发。）
+  - 扫描不完整时禁止保存（f8f92e5，Codex 抓的）：读不到的智能体在编辑器里显示为未勾选，修好文件后再保存就会把服务器从它身上摘掉。照 web，新建和编辑都置灰，要重新读一次完整列表才能保存。
+- **Kimi 保存 API Key 清掉推理设置**（1b3d0aa）：apikey 模式会重建模型表，缺省即「不开推理」。保存前重读 `acp_list_agents`，把 `reasoningEnabled / alwaysThinking / supportEfforts / defaultEffort` 原样带回；读失败就不写。最大上下文预填 262144。
+- **Grok 自发回合被抢占**（6330bfe）：服务端先用 `turn_complete(cancelled)` 结束 Grok 自己的回合，再开始新 prompt。现在发送的回复只在服务端开始本轮后（`prompting`、带本次 clientMessageId 的 `user_message`、或重连 snapshot 的 `pending_user_message` 就是这条）才接收内容、失败判定和回合结束；reattach 的回合一开始就算已开始。
+- **重新挂上回合时的隐藏锚点**（c2ce115）：改为以 `in_flight_user_turn_id` 为锚点，不在窗口内时才退回「最后一条用户消息」。
+- **新版压缩标记**（e303d84、6b23235）：认 `{version: ≥1 的整数}`，分隔线显示 token 数、耗时、失败和服务端声明的摘要；失败的压缩计入回复头部的「N 失败」；放不下时「Summary」换行，不截断 token 数。
+- **Codex 直播无匹配搜索**（f0a899a）：直播 `failed`、无输出、带 `codeg.codexSearchAction` 的搜索按成功（no matches）显示。
+- **思考行重复标题**（825fc84）：展开后去掉已作为标题的那行；去掉后为空则不可展开。
+
+验证：
+- 全量 1109 个单元测试通过。
+- Codex 审查：前四轮 APPROVED；MCP 扫描那条第一轮 CHANGES_REQUESTED（上面的禁止保存），修后复审。
+- 模拟器对 mock：
+  - Grok 抢占：撤掉修复跑反事实能复现「回复混入残余、真正回复丢失」，恢复后通过。注意短回复会被回合后的转录重读掩盖，反事实要用长于约 2.5 秒的回复。
+  - 压缩、无匹配搜索、思考行：历史和直播各看了一遍。直播 mock 必须照真实线格式只给标题、不给 `raw_input`，否则会按输入形状推断成 Read。
+  - MCP 和 Kimi：在 app 里保存，检查发出的请求体。
+
+刻意未做、留待后续：压缩的提升 / 去重 / 空回合（`hoistedCompaction`、`dedupeCompactionItems`、`isEmptyTurnItem`）；思考行和摘要的展开状态在 cell 回收后会丢（没有按 step 的展开状态存储）；Kimi 推理设置的编辑器（web 有）。对照中发现的其余缺口见 memory `android-parity-gaps-2026-11`。
