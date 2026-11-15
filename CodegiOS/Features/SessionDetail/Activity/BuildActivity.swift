@@ -121,8 +121,8 @@ enum BuildActivity {
         case .proposedPlan(let markdown, let streaming): return "proposed-plan:\(markdown):\(streaming)"
         case .image(let image, let caption):
             return "image:\(caption ?? ""):\(image.uri ?? ""):\(image.data.prefix(160))"
-        case .compaction(let before, let after, _):
-            return "compaction:\(before.map(String.init) ?? ""):\(after.map(String.init) ?? "")"
+        case .compaction(let info):
+            return "compaction:\(info.before.map(String.init) ?? ""):\(info.after.map(String.init) ?? "")"
         case .unknown(let type): return "unknown:\(type)"
         case .liveText(let run, _), .liveReasoning(let run, _): return "run:\(run.id)"
         case .tool(let vm): return "tool:\(vm.id)"
@@ -181,8 +181,8 @@ enum BuildActivity {
                 steps.append(.taskList(key: "tasks:\(first.id)", ops: ops))
             case .image(let image, let caption):
                 steps.append(.image(key: key("image"), image, caption: caption))
-            case .compaction(let before, let after, let running):
-                steps.append(.compaction(key: key("compaction"), before: before, after: after, running: running))
+            case .compaction(let info):
+                steps.append(.compaction(key: key("compaction"), info))
             case .unknown(let type):
                 steps.append(.unsupported(key: key("unsupported"), type: type))
             case .goalRun(let run):

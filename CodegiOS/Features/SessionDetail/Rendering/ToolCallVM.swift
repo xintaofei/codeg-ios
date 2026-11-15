@@ -257,10 +257,10 @@ enum RenderPart {
     /// `TaskList`/`TaskGet`), merged into one evolving checklist card.
     case taskGroup([ToolCallVM])
     case image(ImageData, caption: String?)
-    /// A context compaction (`_meta.contextCompaction`) — a conversation boundary
-    /// marker, not a tool call. Rendered as a chrome-less centered divider; the
-    /// token counts are Grok-only (codex sends none).
-    case compaction(before: Int?, after: Int?, running: Bool)
+    /// A context compaction (`_meta.contextCompaction`, either shape) — a
+    /// conversation boundary marker, not a tool call. Rendered as a chrome-less
+    /// centered divider.
+    case compaction(CompactionInfo)
     /// A `turn_error` block. Normally alone in a `system` turn (drawn by the
     /// timeline builder directly); this covers one found inside a reply.
     case turnError(String)
@@ -332,9 +332,8 @@ enum MessageRender {
                 // divider between turns, so it never becomes a `ToolCallVM` (and so
                 // can't be swept into a tool group).
                 if ContextCompaction.matches(meta) {
-                    let counts = ContextCompaction.tokens(meta)
-                    parts.append(.compaction(before: counts.before, after: counts.after,
-                                             running: state == .running))
+                    parts.append(.compaction(ContextCompaction.info(
+                        meta: meta, output: output, running: state == .running, failed: state == .error)))
                     continue
                 }
                 parts.append(.tool(ToolCallVM(
@@ -433,9 +432,9 @@ enum MessageRender {
                 // the `Context compacting` → `Context compacted` pair on one id, so
                 // the divider flips from running to settled in place.
                 if ContextCompaction.matches(call.meta) {
-                    let counts = ContextCompaction.tokens(call.meta)
-                    parts.append(.compaction(before: counts.before, after: counts.after,
-                                             running: state == .running))
+                    parts.append(.compaction(ContextCompaction.info(
+                        meta: call.meta, output: call.rawOutput, running: state == .running,
+                        failed: state == .error)))
                     continue
                 }
                 parts.append(.tool(ToolCallVM(

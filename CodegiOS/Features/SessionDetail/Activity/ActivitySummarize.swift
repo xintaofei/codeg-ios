@@ -87,8 +87,8 @@ enum ActivitySummarize {
                 // op still means the reply is working.
                 if ops.contains(where: { ActivityStatus.of($0).isLive }) { summary.running = true }
                 continue
-            case .compaction(_, _, _, let running):
-                if running { summary.running = true }
+            case .compaction(_, let info):
+                if info.running { summary.running = true }
                 continue
             case .note, .image, .plan, .unsupported:
                 continue

@@ -3185,6 +3185,17 @@
         }
       }
     },
+    "Automatically triggered" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动触发"
+          }
+        }
+      }
+    },
     "Background" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3985,6 +3996,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上下文已压缩 · %1$@ → %2$@ tokens"
+          }
+        }
+      }
+    },
+    "Context compaction failed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文压缩失败"
           }
         }
       }
@@ -6675,6 +6697,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "手动"
+          }
+        }
+      }
+    },
+    "Manually triggered" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "手动触发"
           }
         }
       }
@@ -10350,6 +10383,17 @@
         }
       }
     },
+    "Summary" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "摘要"
+          }
+        }
+      }
+    },
     "Supports MCP servers" : {
       "localizations" : {
         "zh-Hans" : {
@@ -11081,6 +11125,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工具"
+          }
+        }
+      }
+    },
+    "Triggered while idle, before the prompt cache expired" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空闲时触发，在提示缓存过期前"
           }
         }
       }

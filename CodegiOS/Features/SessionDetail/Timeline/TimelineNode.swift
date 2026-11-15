@@ -72,8 +72,8 @@ struct TimelineNode: Identifiable {
         case taskGroup([ToolCallVM])
         case image(ImageData, caption: String?)
         /// A context-compaction boundary — rendered as a chrome-less divider, not
-        /// a card. Token counts are Grok-only (codex sends none).
-        case compaction(before: Int?, after: Int?, running: Bool)
+        /// a card.
+        case compaction(CompactionInfo)
         case footer(MessageTurn, questionID: String?)
         case plan([PlanEntry], streaming: Bool)
         case thinking
@@ -560,8 +560,8 @@ enum TranscriptTimeline {
         case .taskList(_, let ops):
             let gid = ops.first.map { "taskgroup-\($0.id)" } ?? base
             return TimelineNode(id: gid, content: .taskGroup(ops), agent: agent)
-        case .compaction(_, let before, let after, let running):
-            return TimelineNode(id: base, content: .compaction(before: before, after: after, running: running), agent: agent)
+        case .compaction(_, let info):
+            return TimelineNode(id: base, content: .compaction(info), agent: agent)
         case .unsupported(_, let type):
             return TimelineNode(id: base, content: .unsupported(type), agent: agent)
         case .goal(let goal):
@@ -623,10 +623,8 @@ enum TranscriptTimeline {
             return [TimelineNode(id: gid, content: .taskGroup(ops), agent: agent)]
         case .image(let img, let cap):
             return [TimelineNode(id: base, content: .image(img, caption: cap), agent: agent)]
-        case .compaction(let before, let after, let running):
-            return [TimelineNode(id: base,
-                                 content: .compaction(before: before, after: after, running: running),
-                                 agent: agent)]
+        case .compaction(let info):
+            return [TimelineNode(id: base, content: .compaction(info), agent: agent)]
         case .proposedPlan(let markdown, let streaming):
             return [TimelineNode(id: base, content: .proposedPlan(markdown: markdown, streaming: streaming), agent: agent)]
         case .turnError(let message):

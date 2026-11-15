@@ -179,8 +179,8 @@ enum ActivityStep {
     /// A run of TaskCreate/TaskUpdate/… calls — iOS's evolving checklist,
     /// which the web draws as plain todo rows. Kept: see the sync plan §2.4.
     case taskList(key: String, ops: [ToolCallVM])
-    /// A context-compaction boundary (`_meta.contextCompaction`).
-    case compaction(key: String, before: Int?, after: Int?, running: Bool)
+    /// A context-compaction boundary (`_meta.contextCompaction`, either shape).
+    case compaction(key: String, CompactionInfo)
     case unsupported(key: String, type: String)
     /// A Codex `/goal` run, drawn as one row whose body is its own timeline.
     case goal(ActivityGoalStep)
@@ -191,7 +191,7 @@ enum ActivityStep {
         case .backgroundTasks(let step): return step.key
         case .thought(let key, _, _), .note(let key, _), .image(let key, _, _),
              .plan(let key, _, _), .delegationPolls(let key, _, _), .taskList(let key, _),
-             .compaction(let key, _, _, _), .unsupported(let key, _):
+             .compaction(let key, _), .unsupported(let key, _):
             return key
         case .goal(let step): return step.key
         }

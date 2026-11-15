@@ -52,8 +52,8 @@ struct NodeBody: View {
         case .image(let img, let cap):
             InlineImageView(image: img, caption: cap)
                 .railHead(.top(14))
-        case .compaction(let before, let after, let running):
-            ContextCompactionDivider(before: before, after: after, running: running)
+        case .compaction(let info):
+            ContextCompactionDivider(info: info)
         case .footer(let turn, let questionID):
             TurnFooter(turn: turn, questionID: questionID, forkPoint: node.forkPoint)
         case .plan(let entries, let streaming):
@@ -287,19 +287,22 @@ struct ThinkingShimmer: View {
     }
 }
 
-/// Inline error banner shown at the tail of a turn that errored or was cancelled.
-/// The context-compaction boundary: a hairline running the content width with a
-/// small archive glyph + label centered on it. Deliberately chrome-less (no card,
-/// no border) — it marks "the conversation's context was compacted here", it is
-/// not something the agent *did*.
+/// The context-compaction boundary (web `ContextCompactionCard`): a hairline
+/// running the content width with a small archive glyph + label centered on it.
+/// Deliberately chrome-less (no card, no border) — it marks "the conversation's
+/// context was compacted here", it is not something the agent *did*.
 ///
-/// Grok stamps the before/after token counts on its compaction; codex sends none,
-/// and a no-op delta (before == after) would read as a bug, so both fall back to
-/// the plain label.
+/// The before/after token counts show only for a real reduction (a no-op delta
+/// would read as a bug; codex sends none), the time it took once it is done. A
+/// failure — the call's own, or an `error` in the versioned payload — says so
+/// in the danger tint. What the web keeps for a tooltip (the adapter's error
+/// text, else the trigger) is the accessibility hint and a pointer tooltip. A
+/// summary the server claims for the call opens beneath the rule, collapsed by
+/// default so the boundary stays one line.
 struct ContextCompactionDivider: View {
-    let before: Int?
-    let after: Int?
-    let running: Bool
+    let info: CompactionInfo
+
+    @State private var summaryOpen = false
 
     private static let formatter: NumberFormatter = {
         let f = NumberFormatter()
@@ -312,30 +315,98 @@ struct ContextCompactionDivider: View {
     }
 
     private var label: Text {
-        if running { return Text("Compacting context…") }
-        if let before, let after, before != after {
+        if info.failed { return Text("Context compaction failed") }
+        if info.running { return Text("Compacting context…") }
+        if let before = info.before, let after = info.after, before != after {
             return Text("Context compacted · \(format(before)) → \(format(after)) tokens")
         }
         return Text("Context compacted")
     }
 
-    var body: some View {
-        HStack(spacing: 10) {
-            hairline
-            HStack(spacing: 5) {
-                Image(systemName: "archivebox")
-                    .font(.system(size: 11, weight: .medium))
-                label
-                    .font(Theme.Typography.metaLabel)
-            }
-            .foregroundStyle(Theme.textTertiary)
-            .opacity(running ? 0.65 : 1)
-            .fixedSize()
-            hairline
+    /// Only once it is done, and never for a failure.
+    private var duration: String? {
+        info.failed || info.running ? nil : ContextCompaction.formatDuration(info.durationMs)
+    }
+
+    /// Why it happened — the web's tooltip: the error text, else the trigger
+    /// (translated when it is one of the known ones, verbatim otherwise).
+    private var hint: String? {
+        if let error = info.error { return error }
+        guard let trigger = info.trigger else { return nil }
+        switch ContextCompaction.Trigger(trigger) {
+        case .manual:
+            return String(localized: "Manually triggered", comment: "Context compaction: the user ran it")
+        case .automatic:
+            return String(localized: "Automatically triggered", comment: "Context compaction: the agent ran it on its own")
+        case .idle:
+            return String(localized: "Triggered while idle, before the prompt cache expired",
+                          comment: "Context compaction: run on an idle session before its prompt cache expired")
+        case .other(let raw):
+            return raw
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 2)
+    }
+
+    var body: some View {
+        let summary = info.summary
+        VStack(spacing: 4) {
+            HStack(spacing: 10) {
+                hairline
+                marker
+                if summary != nil { summaryToggle }
+                hairline
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 2)
+
+            if let summary, summaryOpen {
+                CompactionSummaryPanel(summary: summary, streaming: info.running)
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    private var marker: some View {
+        let hint = self.hint ?? ""
+        return HStack(spacing: 5) {
+            Image(systemName: "archivebox")
+                .font(.system(size: 11, weight: .medium))
+            label
+                .font(Theme.Typography.metaLabel)
+            if let duration {
+                Text(verbatim: "· \(duration)")
+                    .font(Theme.Typography.metaLabel.monospacedDigit())
+                    .opacity(0.75)
+            }
+        }
+        .foregroundStyle(info.failed ? Theme.danger : Theme.textTertiary)
+        .opacity(info.running ? 0.65 : 1)
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .layoutPriority(1)
         .accessibilityElement(children: .combine)
+        .accessibilityHint(Text(verbatim: hint))
+        .help(Text(verbatim: hint))
+    }
+
+    private var summaryToggle: some View {
+        Button {
+            withAnimation(Theme.Motion.expand) { summaryOpen.toggle() }
+        } label: {
+            HStack(spacing: 2) {
+                Text("Summary")
+                Image(systemName: summaryOpen ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .font(Theme.Typography.metaLabel)
+            .foregroundStyle(Theme.textSecondary)
+            .lineLimit(1)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .layoutPriority(1)
+        .accessibilityValue(summaryOpen ? Text("Expanded") : Text("Collapsed"))
     }
 
     private var hairline: some View {
@@ -346,6 +417,70 @@ struct ContextCompactionDivider: View {
     }
 }
 
+/// A compaction's retained summary, opened under its divider: markdown on a
+/// faint panel, clamped like the other long transcript bodies (web `max-h-72`
+/// + `useCollapsibleOverflow`), with a Show more / Show less footer once it is
+/// actually clipped.
+private struct CompactionSummaryPanel: View {
+    let summary: String
+    /// The compaction is still running: the summary may still be arriving.
+    let streaming: Bool
+
+    @State private var expanded = false
+    /// The body's natural height, measured unclamped.
+    @State private var contentHeight: CGFloat = 0
+
+    /// web `max-h-72`: 18rem.
+    private static let clampHeight: CGFloat = 288
+
+    private var overflowing: Bool { contentHeight > Self.clampHeight }
+    private var clipped: Bool { overflowing && !expanded }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            MarkdownContent(raw: summary, streaming: streaming)
+                // Measured at its natural height whatever the clamp offers it,
+                // so "is it clipped" never depends on whether it is clipped.
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+                .frame(maxHeight: clipped ? Self.clampHeight : nil, alignment: .top)
+                .clipped()
+                .overlay(alignment: .bottom) {
+                    if clipped {
+                        LinearGradient(colors: [Theme.surfaceNested.opacity(0), Theme.surfaceNested],
+                                       startPoint: .top, endPoint: .bottom)
+                            .frame(height: 44)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+            if overflowing {
+                Divider().overlay(Theme.hairline)
+                Button {
+                    withAnimation(Theme.Motion.expand) { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        expanded ? Text("Show less") : Text("Show more")
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surfaceNested, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        .hairlineBorder(Theme.Radius.sm)
+    }
+}
+
+/// Inline error banner shown at the tail of a turn that errored or was cancelled.
 struct InlineTurnError: View {
     let message: String
     /// Server-supplied diagnostic evidence (agent stderr tail, unparsed-update
