@@ -265,28 +265,99 @@ final class SessionListViewModel {
     /// optimistic: the server decides — a busy conversation is skipped — and
     /// the refetch after it shows where everything landed.
     func move(_ conversation: ConversationSummary, to folder: FolderDetail, label: String) async {
-        let result: MoveConversationsResult
+        let client = self.client
+        guard let result = await requestMove([conversation.id], to: folder, on: client) else { return }
+        notice = ConversationMove.message(for: result, conversationID: conversation.id, folderName: label)
+        await followMove(result, requested: [conversation.id], to: folder, on: client)
+    }
+
+    /// Ask `client`'s server to move `ids`; nil (and the failure told) when the
+    /// request itself failed — nothing moved then.
+    private func requestMove(_ ids: [Int], to folder: FolderDetail, on client: CodegClient) async -> MoveConversationsResult? {
         do {
-            result = try await client.moveConversations(conversationIds: [conversation.id], targetFolderId: folder.id)
+            return try await client.moveConversations(conversationIds: ids, targetFolderId: folder.id)
         } catch {
             notice = ConversationMove.failure(error)
-            return
+            return nil
         }
-        notice = ConversationMove.message(for: result, conversationID: conversation.id, folderName: label)
-        guard !result.moved.isEmpty else { return }
-        if result.moved.contains(conversation.id) {
-            // A session screen open on it lets go of the old folder's connection.
+    }
+
+    /// Tell the app what moved, then show where everything landed.
+    private func followMove(_ result: MoveConversationsResult, requested: [Int], to folder: FolderDetail,
+                            on client: CodegClient) async {
+        let moved = ConversationMove.batchOutcome(of: result, requested: requested).moved
+        guard !moved.isEmpty else { return }
+        // A session screen open on one of them lets go of the old folder's
+        // connection — each moved conversation is told on its own.
+        let endpoint = client.baseURL.absoluteString
+        for id in moved {
             NotificationCenter.default.post(
                 name: .conversationDidMove,
-                object: ConversationMovedChange(endpoint: client.baseURL.absoluteString,
-                                                conversationID: conversation.id, folderID: folder.id)
+                object: ConversationMovedChange(endpoint: endpoint, conversationID: id, folderID: folder.id)
             )
         }
-        // Other screens holding the row (Activity, the folder lists) refetch.
+        // Other screens holding the rows (Activity, the folder lists) refetch.
         NotificationCenter.default.post(name: .conversationsDidChange, object: nil)
         // Not `refresh()`: one already running may predate the move, and this
         // one supersedes it.
         await fetch(isInitial: false)
+    }
+
+    // MARK: - Selecting (move several at once)
+
+    /// The list is picking conversations for one "Move to…" (web Manage
+    /// conversations): its rows pick rather than open.
+    private(set) var isSelecting = false
+    private(set) var selection = ConversationSelection()
+    /// A move of the picked conversations is out.
+    private(set) var isMovingSelection = false
+
+    /// Whether anything listed could be picked (the toolbar's Select).
+    var canSelect: Bool { conversations.contains(where: ConversationSelection.canPick) }
+
+    func beginSelecting() {
+        selection = ConversationSelection()
+        isSelecting = true
+    }
+
+    func endSelecting() {
+        isSelecting = false
+        selection = ConversationSelection()
+    }
+
+    /// What the list's selection hands back.
+    func setSelection(_ ids: Set<Int>) {
+        selection.set(ids, among: conversations)
+    }
+
+    /// Select All / Deselect All over the rows on screen.
+    func toggleSelectAll(_ visible: [ConversationSummary]) {
+        selection.toggleAll(visible)
+    }
+
+    /// The picked conversations, in list order.
+    var selectedConversations: [ConversationSummary] { selection.picked(from: conversations) }
+
+    /// Move `picked` — the selection as "Move to…" opened on it — to `folder`
+    /// (named `label` in the outcome). One request; the server judges each
+    /// conversation on its own and says which moved. Those leave the
+    /// selection; the ones it left behind stay picked for another go, and the
+    /// list stays in selection mode for them. Every one moved: selection mode
+    /// ends.
+    func moveSelection(_ picked: [ConversationSummary], to folder: FolderDetail, label: String) async {
+        let ids = picked.map(\.id)
+        guard !ids.isEmpty, !isMovingSelection else { return }
+        let client = self.client
+        isMovingSelection = true
+        defer { isMovingSelection = false }
+        guard let result = await requestMove(ids, to: folder, on: client) else { return }
+        // Switched servers meanwhile: this selection is the other server's.
+        if client.baseURL == self.client.baseURL {
+            notice = ConversationMove.batchMessage(for: result, requested: ids, folderName: label)
+            selection.settle(result)
+            if ConversationMove.batchOutcome(of: result, requested: ids).movedAll { endSelecting() }
+        }
+        await followMove(result, requested: ids, to: folder, on: client)
     }
 
     // MARK: - Loading
@@ -340,6 +411,8 @@ final class SessionListViewModel {
             conversations = []
             tags = []
             branchTag = BranchTagSetting()
+            // Picks are the old server's conversations.
+            endSelecting()
         }
         if isInitial { isLoading = true } else { isRefreshing = true }
         error = nil
@@ -394,7 +467,12 @@ final class SessionListViewModel {
                tags: [ConversationTag]? = nil, branchTag: BranchTagSetting? = nil) {
         if let folders { self.folders = folders }
         if let openFolders { self.openFolders = openFolders; openFoldersLoaded = true }
-        if let conversations { self.conversations = conversations }
+        if let conversations {
+            self.conversations = conversations
+            // A picked conversation deleted (or turned unmovable) elsewhere
+            // is no longer picked.
+            selection.prune(to: conversations)
+        }
         if let tags { self.tags = tags }
         if let branchTag { self.branchTag = branchTag }
     }

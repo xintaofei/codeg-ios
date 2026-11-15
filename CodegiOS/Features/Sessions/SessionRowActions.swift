@@ -36,6 +36,15 @@ struct SessionRowSheets: ViewModifier {
     }
 }
 
+/// How long a ``SwiftUI/View/transientNotice(_:dismiss:)`` stays up.
+enum TransientNotice {
+    /// A few seconds; longer for one with more to read — a move of several
+    /// that left some behind says how many and why, on a second line.
+    static func duration(for message: String) -> Duration {
+        message.contains("\n") || message.count > 80 ? .seconds(7) : .seconds(4)
+    }
+}
+
 extension View {
     func sessionRowSheets(_ actions: SessionRowActions?, tagging: Binding<ConversationSummary?>,
                           moving: Binding<ConversationSummary?>) -> some View {
@@ -59,7 +68,7 @@ extension View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .onTapGesture(perform: dismiss)
                     .task(id: message) {
-                        try? await Task.sleep(for: .seconds(4))
+                        try? await Task.sleep(for: TransientNotice.duration(for: message))
                         if !Task.isCancelled { dismiss() }
                     }
             }

@@ -1,15 +1,30 @@
 import SwiftUI
 
-/// "Move to…" for one conversation (web `MoveToFolderMenu` +
-/// `MoveConversationDialog`): the server's OPEN folders, read afresh (one closed
-/// since the list loaded is no destination), less the current one; picking one
-/// asks to confirm with what changes. `onConfirm` gets the folder and the name
-/// to say it by; the host runs the move and tells its outcome — nothing is
-/// optimistic, the server judges each conversation.
+/// "Move to…" for one conversation or several (web `MoveToFolderMenu` /
+/// `MoveToFolderButton` + `MoveConversationDialog`): the server's OPEN folders,
+/// read afresh (one closed since the list loaded is no destination), less the
+/// one they are in when they share one; picking one asks to confirm with what
+/// changes. `onConfirm` gets the folder and the name to say it by; the host
+/// runs the move and tells its outcome — nothing is optimistic, the server
+/// judges each conversation.
 struct MoveConversationSheet: View {
-    let conversation: ConversationSummary
+    /// One (a row's or the session screen's menu) or several (the Chats
+    /// list's selection); never empty.
+    let conversations: [ConversationSummary]
     let client: CodegClient
     let onConfirm: (FolderDetail, String) -> Void
+
+    init(conversation: ConversationSummary, client: CodegClient,
+         onConfirm: @escaping (FolderDetail, String) -> Void) {
+        self.init(conversations: [conversation], client: client, onConfirm: onConfirm)
+    }
+
+    init(conversations: [ConversationSummary], client: CodegClient,
+         onConfirm: @escaping (FolderDetail, String) -> Void) {
+        self.conversations = conversations
+        self.client = client
+        self.onConfirm = onConfirm
+    }
 
     @State private var targets: [FolderDetail]?
     /// Every folder, to name a worktree by its repo and find a chat's scratch
@@ -35,7 +50,7 @@ struct MoveConversationSheet: View {
             }
             .navigationDestination(item: $confirming) { folder in
                 MoveConfirmationView(
-                    conversation: conversation,
+                    conversations: conversations,
                     folder: folder,
                     label: ConversationMove.label(for: folder, in: allFolders),
                     chatFilesPath: chatFilesPath,
@@ -51,10 +66,11 @@ struct MoveConversationSheet: View {
         .task { await load() }
     }
 
-    /// A chat's files stay in its scratch directory: said in the confirmation.
+    /// A chat's files stay in its scratch directory: said in the confirmation
+    /// (by path for a lone chat).
     private var chatFilesPath: String? {
-        guard conversation.kind == .chat else { return nil }
-        return allFolders.first { $0.id == conversation.folderId }?.path
+        guard conversations.count == 1, let only = conversations.first, only.kind == .chat else { return nil }
+        return allFolders.first { $0.id == only.folderId }?.path
     }
 
     private func load() async {
@@ -63,7 +79,8 @@ struct MoveConversationSheet: View {
         do {
             let open = try await openRequest
             allFolders = (try? await allRequest) ?? open
-            targets = ConversationMove.targets(open: open, currentFolderID: conversation.folderId)
+            targets = ConversationMove.targets(open: open,
+                                               currentFolderID: ConversationMove.sharedFolderID(conversations))
         } catch {
             guard !Task.isCancelled else { return }
             loadError = ConversationMove.failure(error)
@@ -76,7 +93,7 @@ struct MoveConversationSheet: View {
         if let targets {
             List {
                 Section {
-                    (conversation.trimmedTitle.map { Text(verbatim: $0) } ?? Text("Untitled conversation"))
+                    subject
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -104,6 +121,14 @@ struct MoveConversationSheet: View {
         } else {
             ProgressView().tint(Theme.accent)
         }
+    }
+
+    /// What is being moved: the conversation's title, or how many.
+    private var subject: Text {
+        if conversations.count == 1, let only = conversations.first {
+            return only.trimmedTitle.map { Text(verbatim: $0) } ?? Text("Untitled conversation")
+        }
+        return Text("\(conversations.count) conversations")
     }
 
     private func targetRow(_ folder: FolderDetail) -> some View {
@@ -139,9 +164,9 @@ struct MoveConversationSheet: View {
 }
 
 /// The confirmation the web's dialog gives: which folder, what changes from
-/// the next message on, and — for a chat — that its files stay behind.
+/// the next message on, and — for chats — that their files stay behind.
 private struct MoveConfirmationView: View {
-    let conversation: ConversationSummary
+    let conversations: [ConversationSummary]
     let folder: FolderDetail
     let label: String
     let chatFilesPath: String?
@@ -184,6 +209,8 @@ private struct MoveConfirmationView: View {
                     }
                     if let chatFilesPath {
                         Text("Files created during the chat stay in its scratch directory \(chatFilesPath); they are not moved into the folder.")
+                    } else if isMany, conversations.contains(where: { $0.kind == .chat }) {
+                        Text("Files created during these chats stay in their scratch directories; they are not moved into the folder.")
                     }
                 }
                 .font(.caption)
@@ -197,12 +224,17 @@ private struct MoveConfirmationView: View {
             .padding(16)
         }
         .background(CodegBackground())
-        .navigationTitle("Move conversation")
+        .navigationTitle(isMany ? Text("Move \(conversations.count) conversations") : Text("Move conversation"))
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    private var isMany: Bool { conversations.count > 1 }
+
     private var intro: Text {
-        if let title = conversation.trimmedTitle {
+        if isMany {
+            return Text("The selected \(conversations.count) conversations will be moved to this folder:")
+        }
+        if let title = conversations.first?.trimmedTitle {
             return Text("“\(title)” will be moved to this folder:")
         }
         return Text("“\(String(localized: "Untitled conversation"))” will be moved to this folder:")
