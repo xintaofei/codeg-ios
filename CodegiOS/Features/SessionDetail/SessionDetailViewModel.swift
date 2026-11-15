@@ -2639,7 +2639,7 @@ final class SessionDetailViewModel {
     /// reconciles the transcript instead (`serverSaysLive`).
     private func followForeignTurn() {
         guard !isTornDown, conversationID != nil, liveTurn == nil, !isInFlight, stream == nil,
-              !isForking, !isReapplyingConfig, sessionLoadFailure == nil,
+              !isForking, !isReapplyingConfig, !isMoving, sessionLoadFailure == nil,
               let conn = watcher.connectionID else { return }
         openReattachStream(connection: conn, serverSaysLive: true, lifetime: lifecycle, foreign: true)
     }

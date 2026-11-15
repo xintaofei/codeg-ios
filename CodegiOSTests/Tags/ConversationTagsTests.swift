@@ -20,7 +20,7 @@ import Testing
     }
 
     @Test func theBranchTagSettingDecodes() throws {
-        let setting = try CodegJSON.decoder.decode(BranchTagSetting.self, from: Data(#"{"enabled":true,"color":"#6e7781"}"#.utf8))
+        let setting = try CodegJSON.decoder.decode(BranchTagSetting.self, from: Data(##"{"enabled":true,"color":"#6e7781"}"##.utf8))
         #expect(setting == BranchTagSetting(enabled: true, color: "#6e7781"))
         #expect(BranchTagSetting().color == BranchTagSetting.defaultColor)
     }
