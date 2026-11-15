@@ -12,6 +12,14 @@ the text as the git tag message and the GitHub Release notes.
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [1.1.0] - 2026-11-15
+
+### Added
+
 - **codeg 0.44 support** — replies ride out 0.44's non-fatal errors and
   reconnects (resume from the last event, replay, de-duplicate), and the
   agent's own retries and reconnects show above the composer.
