@@ -103,21 +103,38 @@ final class TagsManagerModel {
     /// Move `tag` one place up (`by` -1) or down (+1) in its scope, sending
     /// the scope's whole order. Shown at once; the server's order replaces it.
     func move(_ tag: ConversationTag, by offset: Int) async {
-        var scoped = scopeTags(tag.folderId)
-        guard let from = scoped.firstIndex(where: { $0.id == tag.id }) else { return }
-        let to = from + offset
-        guard scoped.indices.contains(to), !isSaving else { return }
-        scoped.insert(scoped.remove(at: from), at: to)
-        let order = Dictionary(uniqueKeysWithValues: scoped.enumerated().map { ($1.id, $0 + 1) })
+        guard let ids = TagOrder.shifting(scopeTags(tag.folderId).map(\.id), tag.id, by: offset) else { return }
+        await saveOrder(ids)?.value
+    }
+
+    /// A drag in `scope`'s rows (`.onMove`'s offsets, over ``scopeTags(_:)``),
+    /// sending the scope's whole order. The new order is in place before this
+    /// returns — synchronously, so the list doesn't draw the row back where it
+    /// was first — and the server's order replaces it once saved. Nothing while
+    /// another change is out: the row goes back.
+    @discardableResult
+    func reorder(scope: Int?, fromOffsets source: IndexSet, toOffset destination: Int) -> Task<Void, Never>? {
+        guard let ids = TagOrder.moving(scopeTags(scope).map(\.id), fromOffsets: source, toOffset: destination)
+        else { return nil }
+        return saveOrder(ids)
+    }
+
+    /// Claim the one change slot now, show `ids` as their scope's order, and
+    /// send it. Nil (nothing shown) while another change is out.
+    private func saveOrder(_ ids: [Int]) -> Task<Void, Never>? {
+        guard claim() else { return nil }
+        let order = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($1, $0 + 1) })
         tags = tags.map { tag in
             guard let position = order[tag.id] else { return tag }
             var moved = tag
             moved.sortOrder = position
             return moved
         }
-        let ids = scoped.map(\.id)
-        _ = await mutate(failure: { String(localized: "Couldn't save the tag order: \($0)") }, refetchAfter: true) {
-            try await self.client.reorderConversationTags(tagIds: ids)
+        return Task {
+            _ = await self.perform(failure: { String(localized: "Couldn't save the tag order: \($0)") },
+                                   refetchAfter: true) {
+                try await self.client.reorderConversationTags(tagIds: ids)
+            }
         }
     }
 
@@ -139,10 +156,27 @@ final class TagsManagerModel {
         onFailure: () -> Void = {},
         _ body: () async throws -> Void
     ) async -> Bool {
+        guard claim() else { return false }
+        return await perform(failure: failure, refetchAfter: refetchAfter, onFailure: onFailure, body)
+    }
+
+    /// Take the one change slot, or false while another change holds it. From
+    /// here a read started earlier can't land over what this change shows.
+    private func claim() -> Bool {
         guard !isSaving else { return false }
         generation += 1
         isSaving = true
         error = nil
+        return true
+    }
+
+    /// Run a change that holds the slot (``claim()``), and free it after.
+    private func perform(
+        failure: (String) -> String,
+        refetchAfter: Bool = false,
+        onFailure: () -> Void = {},
+        _ body: () async throws -> Void
+    ) async -> Bool {
         defer { isSaving = false }
         do {
             try await body()

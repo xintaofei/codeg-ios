@@ -1,10 +1,10 @@
 import SwiftUI
 
 /// Manage tags (web `ConversationTagsManager`): the branch tag, the global
-/// tags, and one folder's tags at a time. Tap a tag to edit it; long-press for
-/// Move Up / Move Down in place of the web's drag; swipe to delete (always
-/// confirmed). Pushed from the tag picker and the tag filter, inside their
-/// sheets.
+/// tags, and one folder's tags at a time. Tap a tag to edit it; Edit, then drag
+/// a tag's handle to reorder its scope, as the web drags (a long-press offers
+/// Move Up / Move Down too); swipe to delete (always confirmed). Pushed from the
+/// tag picker and the tag filter, inside their sheets.
 struct TagsManagerView: View {
     @State private var model: TagsManagerModel
     /// The tag being created (in a scope) or edited.
@@ -22,6 +22,15 @@ struct TagsManagerView: View {
         }
         .navigationTitle("Manage tags")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // Drag handles only while editing: outside it a long-press is the
+            // row's menu, which a drag would fight.
+            if canReorder {
+                ToolbarItem(placement: .topBarTrailing) {
+                    EditButton().tint(Theme.accent)
+                }
+            }
+        }
         .task { await model.load() }
         .sheet(item: $form) { form in
             TagFormSheet(form: form, model: model)
@@ -35,6 +44,13 @@ struct TagsManagerView: View {
         } message: { tag in
             Text("“\(tag.name)” will be taken off every conversation that has it. This can't be undone.")
         }
+    }
+
+    /// A scope on screen has two tags or more to put in order.
+    private var canReorder: Bool {
+        if model.scopeTags(nil).count > 1 { return true }
+        guard let folderID = model.selectedFolderID else { return false }
+        return model.scopeTags(folderID).count > 1
     }
 
     private var deleteBinding: Binding<Bool> {
@@ -74,7 +90,7 @@ struct TagsManagerView: View {
             }
 
             Section {
-                tagRows(model.scopeTags(nil))
+                tagRows(scope: nil)
                 addButton(scope: nil)
             } header: {
                 Text("Global tags")
@@ -97,7 +113,7 @@ struct TagsManagerView: View {
                     }
                     .pickerStyle(.menu)
                     if let folderID = model.selectedFolderID {
-                        tagRows(model.scopeTags(folderID))
+                        tagRows(scope: folderID)
                         addButton(scope: folderID)
                     }
                 }
@@ -139,8 +155,12 @@ struct TagsManagerView: View {
 
     // MARK: - Tags
 
+    /// One scope's tags, in its order. In edit mode each row has a drag
+    /// handle; a drop sends the scope's new order. A drag never leaves its
+    /// scope — each scope is its own `ForEach`.
     @ViewBuilder
-    private func tagRows(_ tags: [ConversationTag]) -> some View {
+    private func tagRows(scope: Int?) -> some View {
+        let tags = model.scopeTags(scope)
         if tags.isEmpty {
             Text("No tags here yet.")
                 .font(.subheadline)
@@ -148,6 +168,11 @@ struct TagsManagerView: View {
         } else {
             ForEach(Array(tags.enumerated()), id: \.element.id) { index, tag in
                 tagRow(tag, canMoveUp: index > 0, canMoveDown: index < tags.count - 1)
+            }
+            .onMove { source, destination in
+                // The handles stay put while a change is out (the list is
+                // disabled then); a drop that slips in meanwhile goes back.
+                _ = model.reorder(scope: scope, fromOffsets: source, toOffset: destination)
             }
         }
     }

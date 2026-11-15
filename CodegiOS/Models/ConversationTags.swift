@@ -166,6 +166,39 @@ enum ConversationTags {
     }
 }
 
+/// Re-ordering one scope's tags in the manager: a drag (`.onMove`) or a
+/// Move Up / Move Down. Either way the scope's complete new order is what goes
+/// to the server. Pure, for tests.
+enum TagOrder {
+    /// `items` after a drag: the ones at `source` (offsets into `items`) land,
+    /// in their order, just before the one that was at `destination` —
+    /// `items.count` being the end — which is how `.onMove` reports a drop
+    /// (SwiftUI's `move(fromOffsets:toOffset:)`). Offsets out of range are
+    /// ignored and the destination is clamped. Nil when the order comes out
+    /// unchanged (a drop in place), so nothing is sent.
+    static func moving<T: Equatable>(_ items: [T], fromOffsets source: IndexSet, toOffset destination: Int) -> [T]? {
+        let picked = source.filter { items.indices.contains($0) }
+        guard !picked.isEmpty else { return nil }
+        let moved = picked.map { items[$0] }
+        var rest = items.indices.filter { !source.contains($0) }.map { items[$0] }
+        let clamped = min(max(destination, 0), items.count)
+        let insertAt = clamped - picked.filter { $0 < clamped }.count
+        rest.insert(contentsOf: moved, at: insertAt)
+        return rest == items ? nil : rest
+    }
+
+    /// `items` with `item` one place up (`offset` -1) or down (+1). Nil at
+    /// the edge it would leave, or for an item not in `items`.
+    static func shifting<T: Equatable>(_ items: [T], _ item: T, by offset: Int) -> [T]? {
+        guard let from = items.firstIndex(of: item) else { return nil }
+        let to = from + offset
+        guard to != from, items.indices.contains(to) else { return nil }
+        var next = items
+        next.insert(next.remove(at: from), at: to)
+        return next
+    }
+}
+
 /// `any`: a conversation matches with at least one selected tag; `all`: only
 /// with every one.
 enum TagFilterMode: String, Codable, CaseIterable, Hashable, Sendable {
