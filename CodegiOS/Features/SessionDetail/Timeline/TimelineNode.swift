@@ -589,6 +589,16 @@ enum TranscriptTimeline {
         }
     }
 
+    /// The thread's latest goal (its opening call's id) among `nodes` — the
+    /// one the session's goal controls act on. Read from the nodes BEFORE
+    /// folding: a folded reply's goal is still the session's goal.
+    static func latestGoalID(_ nodes: [TimelineNode]) -> String? {
+        for node in nodes.reversed() {
+            if case .goal(let goal) = node.content { return goal.run.start.id }
+        }
+        return nil
+    }
+
     /// A goal run's own steps as rail nodes, for its row to draw under its
     /// header (the web's nested activity timeline): the run's items mapped as
     /// a reply's are, its rail ending at its first and last node.

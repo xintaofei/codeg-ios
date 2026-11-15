@@ -359,6 +359,21 @@ struct CodegClient: Sendable {
         return try Self.decodeSnapshot(data)
     }
 
+    /// The goal-control vocabulary `connectionId`'s adapter advertises, read
+    /// off its live snapshot: nil while still undecided (or the connection is
+    /// gone). See ``GoalActions``.
+    func goalActions(connectionId: String) async throws -> [String]? {
+        let data = try await send("acp_get_session_snapshot", body: ConnectionIdBody(connectionId: connectionId))
+        if Self.isJSONNull(data) { return nil }
+        return GoalActions.decode(data)
+    }
+
+    /// Pause or clear the session's active goal (codex `/goal`, claude's goal).
+    /// Its new state arrives on the connection's stream.
+    func goalControl(connectionId: String, action: String) async throws {
+        _ = try await send("acp_goal_control", body: GoalControlBody(connectionId: connectionId, action: action))
+    }
+
     private static func decodeSnapshot(_ data: Data) throws -> SessionSnapshot? {
         if isJSONNull(data) { return nil }
         do { return try CodegJSON.decoder.decode(SessionSnapshot.self, from: data) }

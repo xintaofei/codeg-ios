@@ -221,6 +221,11 @@ final class SessionDetailViewModel {
     private(set) var sessionLoadFailure: SessionLoadFailure?
     /// "Reconnect to apply" is ending the agent and starting it again.
     private(set) var isReapplyingConfig = false
+    /// A goal control sent and not yet answered, by the goal's id.
+    private(set) var pendingGoalControl: String?
+    /// The re-read of a connection's undecided goal vocabulary, and which.
+    @ObservationIgnored private var goalActionsTask: Task<Void, Never>?
+    @ObservationIgnored private var goalActionsConnection: String?
     /// A move to another folder is on its way (`move(to:label:)`). Like a fork,
     /// it re-points the session: sends — and the queue — wait for it, since one
     /// going out meanwhile would connect in whichever folder it caught, and the
@@ -2644,6 +2649,67 @@ final class SessionDetailViewModel {
         openReattachStream(connection: conn, serverSaysLive: true, lifetime: lifecycle, foreign: true)
     }
 
+    // MARK: Goal controls
+
+    /// Read `conn`'s goal vocabulary again, backing off (0.4, 0.8, 1.6, 3.2 s),
+    /// until it is decided (web `useAdvertisedGoalActions`: a few tries, then
+    /// the controls just stay away).
+    private func rereadGoalActions(connection conn: String) {
+        guard goalActionsTask == nil || goalActionsConnection != conn else { return }
+        goalActionsTask?.cancel()
+        goalActionsConnection = conn
+        let lifetime = lifecycle
+        goalActionsTask = Task { [weak self] in
+            defer { if self?.goalActionsConnection == conn { self?.goalActionsTask = nil } }
+            for attempt in 0..<4 {
+                try? await Task.sleep(for: .milliseconds(400 << attempt))
+                guard !Task.isCancelled, let self, self.lifecycle == lifetime,
+                      self.runs.connectionID == conn, self.runs.goalActions == nil else { return }
+                if let actions = try? await self.client.goalActions(connectionId: conn) {
+                    self.runs.adoptGoalActions(actions, connection: conn)
+                    return
+                }
+            }
+        }
+    }
+
+    /// Pause or clear the session's goal (`goalID`, its row). Its controls
+    /// step aside until it is answered. The server queues the control and
+    /// answers at once; the adapter's verdict comes after — a refusal as a
+    /// `goal_control_failed` error (told, and the controls come back), a
+    /// change as the goal's update. Mid-turn that update streams into the
+    /// reply; between turns nothing draws it live, so the transcript, where
+    /// the agent records it too, is read again.
+    func goalControl(_ action: String, goalID: String) {
+        guard let conn = runs.connectionID, pendingGoalControl == nil else { return }
+        pendingGoalControl = goalID
+        let lifetime = lifecycle
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.client.goalControl(connectionId: conn, action: action)
+            } catch {
+                guard self.lifecycle == lifetime else { return }
+                if self.pendingGoalControl == goalID { self.pendingGoalControl = nil }
+                guard !(error is CancellationError), self.runs.connectionID == conn else { return }
+                self.notice = Self.describe(error)
+                return
+            }
+            guard self.lifecycle == lifetime else { return }
+            self.refreshAfterAutonomousTurn()
+            // Its new state has had its chance to land by now; offer the
+            // controls again whatever the goal says then.
+            try? await Task.sleep(for: .seconds(4))
+            if self.lifecycle == lifetime, self.pendingGoalControl == goalID { self.pendingGoalControl = nil }
+        }
+    }
+
+    /// An error event the connection sent: a refused goal control gives the
+    /// controls back. (Its words are told where the error lands.)
+    private func noteGoalControlRefusal(code: String?) {
+        if code == "goal_control_failed" { pendingGoalControl = nil }
+    }
+
     /// What Claude's transcript watcher saw happen out of turn — background
     /// completions, the agent's work after them, cron and loop turns. None of
     /// it streams over ACP; the transcript is where it is, so it is re-read
@@ -3079,6 +3145,7 @@ final class SessionDetailViewModel {
             case .silent:
                 break
             }
+            noteGoalControlRefusal(code: code)
 
         case .conversationLinked(let linkedID, _):
             adoptLinkedConversation(linkedID)
@@ -4049,6 +4116,12 @@ final class SessionDetailViewModel {
     func teardown() {
         isTornDown = true
         lifecycle &+= 1
+        // A goal control still awaiting its answer is this lifetime's: the
+        // screen that comes back reads the goal afresh and offers it again.
+        pendingGoalControl = nil
+        goalActionsTask?.cancel()
+        goalActionsTask = nil
+        goalActionsConnection = nil
         loadTask?.cancel()
         loadTask = nil
         olderTurnsTask?.cancel()
@@ -4226,6 +4299,9 @@ extension SessionDetailViewModel {
         runs.onAutonomousTurnSettled = { [weak self] in
             self?.refreshAfterAutonomousTurn()
         }
+        runs.onGoalActionsUndecided = { [weak self] conn in
+            self?.rereadGoalActions(connection: conn)
+        }
         // Between turns the watch is the only stream: the commands the agent
         // re-advertises and its fork support arrive on it too.
         watcher.onSnapshot = { [weak self] snap in
@@ -4250,6 +4326,11 @@ extension SessionDetailViewModel {
             // A turn this screen didn't send: followed as it happens.
             case .statusChanged(.prompting), .userMessage: self.followForeignTurn()
             case .backgroundActivity(_, let outOfTurn): self.noteOutOfTurn(outOfTurn)
+            // Between turns an error is the verdict on something the user just
+            // did (a goal control, a mode or option change): told.
+            case .error(let message, let code, _):
+                if case .notice(let text) = AcpErrorRoute.route(code: code, message: message) { self.notice = text }
+                self.noteGoalControlRefusal(code: code)
             default: break
             }
         }

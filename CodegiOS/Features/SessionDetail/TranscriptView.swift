@@ -225,7 +225,10 @@ struct TranscriptView<Header: View>: View {
     /// pass (cheap; keeps live tool / plan cards updating). Rail endpoints are
     /// terminated on the *combined* list so the tail's `connectBottom` lands on the
     /// live node while a reply streams.
-    private var nodes: [TimelineNode] {
+    /// The rows to draw, and the thread's latest goal — found BEFORE folding:
+    /// a folded reply hides its goal row, but that goal is still the
+    /// session's, and an earlier one must not pass for it.
+    private var timeline: (nodes: [TimelineNode], currentGoalID: String?) {
         let start = effectiveStart
         let suppressInFlight = liveTurn != nil && liveOwnsInFlightReply
         let key = PersistedKey(
@@ -258,6 +261,7 @@ struct TranscriptView<Header: View>: View {
             let open = replyFolds.isOpen(liveTurn.id, isCurrent: true, completed: !liveTurn.isStreaming)
             all.append(contentsOf: TranscriptTimeline.buildLive(liveTurn, agent: agent, replyOpen: open))
         }
+        let currentGoalID = TranscriptTimeline.latestGoalID(all)
         all = ReplyFolding.apply(all, store: replyFolds, live: activityLive)
         // Terminate the rail at its endpoints, on the *combined* list. The top
         // terminates only when the window starts at the true beginning of the
@@ -267,7 +271,7 @@ struct TranscriptView<Header: View>: View {
             if headLoaded { all[0].connectTop = false }
             all[all.count - 1].connectBottom = false
         }
-        return all
+        return (all, currentGoalID)
     }
 
     /// Reveal an older page of turns. Cheap (build + layout are O(window)); the
@@ -299,7 +303,7 @@ struct TranscriptView<Header: View>: View {
     }
 
     var body: some View {
-        let built = nodes
+        let (built, currentGoalID) = timeline
         let firstID = built.first?.id
         ScrollViewReader { proxy in
             List {
@@ -360,6 +364,7 @@ struct TranscriptView<Header: View>: View {
             .environment(\.defaultMinListRowHeight, 1)
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            .transformEnvironment(\.goalControl) { $0.currentGoalID = currentGoalID }
             // Publish a scroll capability so a reply's "scroll to question" button
             // (deep inside a row) can move the viewport to the user message.
             .environment(\.transcriptScroll, TranscriptScrollAction { id, anchor in

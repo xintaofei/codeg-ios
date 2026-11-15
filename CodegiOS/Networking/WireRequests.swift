@@ -125,6 +125,12 @@ struct ConnectionIdBody: Encodable, Sendable {
     let connectionId: String
 }
 
+/// Body for `acp_goal_control`: pause or clear the session's active goal.
+struct GoalControlBody: Encodable, Sendable {
+    let connectionId: String
+    let action: String
+}
+
 /// Body for `submit_session_feedback` — a text-only note (blocks ride only the
 /// native channel, and iOS steers text alone).
 struct SubmitFeedbackBody: Encodable, Sendable {

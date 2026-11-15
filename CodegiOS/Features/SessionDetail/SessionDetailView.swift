@@ -318,6 +318,12 @@ struct SessionDetailView: View {
         .environment(\.activityLive, ActivityLive(awaitingToolCallId: model.pendingPermission?.toolCallId,
                                                   approvals: model.toolApprovals,
                                                   delegations: model.runs.delegationBindings))
+        // A goal's Pause / Clear, sent on the live connection with the
+        // adapter's own vocabulary (the transcript names the current goal).
+        .environment(\.goalControl, GoalControl(
+            onControl: model.runs.connectionID == nil ? nil : { model.goalControl($0, goalID: $1) },
+            actions: model.runs.goalActions ?? [], currentGoalID: nil,
+            pendingGoalID: model.pendingGoalControl))
         .animation(.snappy(duration: 0.28), value: model.pendingUserTurns)
         .animation(.snappy(duration: 0.28), value: model.liveTurn?.id)
         .safeAreaInset(edge: .bottom) {

@@ -18,6 +18,51 @@ enum GoalRowStyle {
     }
 }
 
+/// What a goal row can do about the session's goal (web `GoalControlValue`).
+/// Set by the session screen; `none` anywhere else (a sub-agent's viewer).
+struct GoalControl {
+    /// Nil without a live connection to send it on. Takes the action and the
+    /// goal it was asked of.
+    var onControl: ((_ action: String, _ goalID: String) -> Void)?
+    /// The actions the adapter offers; empty while not known.
+    var actions: [String]
+    /// The thread's latest goal (its opening call's id). Only it offers the
+    /// controls: they act on the session's goal as it stands NOW, so an
+    /// earlier goal's row would pause or clear a different one.
+    var currentGoalID: String?
+    /// A control sent on this goal and not yet answered: no second one until
+    /// its new state lands (or it was refused).
+    var pendingGoalID: String?
+
+    static let none = GoalControl(onControl: nil, actions: [], currentGoalID: nil)
+
+    /// Which controls a goal row with `goalID` standing at `status` offers:
+    /// pause while active, clear while active or paused (resuming is issuing
+    /// the `/goal` again).
+    func offers(goalID: String, status: ActivityGoal.Status?) -> (pause: Bool, clear: Bool) {
+        guard onControl != nil, goalID == currentGoalID, goalID != pendingGoalID else { return (false, false) }
+        let active: Bool
+        let paused: Bool
+        switch status {
+        case .active?: (active, paused) = (true, false)
+        case .paused?: (active, paused) = (false, true)
+        default: (active, paused) = (false, false)
+        }
+        return (actions.contains("pause") && active, actions.contains("clear") && (active || paused))
+    }
+}
+
+private struct GoalControlKey: EnvironmentKey {
+    static let defaultValue = GoalControl.none
+}
+
+extension EnvironmentValues {
+    var goalControl: GoalControl {
+        get { self[GoalControlKey.self] }
+        set { self[GoalControlKey.self] = newValue }
+    }
+}
+
 /// The goal row's words.
 enum GoalRowText {
     static func status(_ status: ActivityGoal.Status) -> String {
@@ -65,6 +110,7 @@ struct GoalRunRow: View {
     let agent: AgentType
 
     @State private var userOpen: Bool?
+    @Environment(\.goalControl) private var control
 
     private var run: GoalRunPart { goal.run }
     private var facts: ActivityGoal.Facts { goal.facts }
@@ -215,6 +261,7 @@ struct GoalRunRow: View {
                     .foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            controls
             if let errorText = errorText {
                 Text(verbatim: errorText)
                     .font(Theme.Typography.diffCode)
@@ -231,6 +278,30 @@ struct GoalRunRow: View {
             if !goal.model.items.isEmpty {
                 steps
             }
+        }
+    }
+
+    /// Pause and Clear, on the thread's current goal while it can take them.
+    @ViewBuilder
+    private var controls: some View {
+        let offers = control.offers(goalID: run.start.id, status: status)
+        if offers.pause || offers.clear {
+            HStack(spacing: 8) {
+                if offers.pause {
+                    Button { control.onControl?("pause", run.start.id) } label: {
+                        Label("Pause", systemImage: "pause.fill")
+                    }
+                }
+                if offers.clear {
+                    Button { control.onControl?("clear", run.start.id) } label: {
+                        Label("Clear", systemImage: "xmark")
+                    }
+                }
+            }
+            .font(.caption.weight(.medium))
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(Theme.textSecondary)
         }
     }
 

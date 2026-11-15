@@ -54,6 +54,16 @@ final class ConnectionRunsModel {
     /// agent would kill the turn, and Claude Code refuses `/remote-control`
     /// while it works.
     private(set) var isPrompting = false
+    /// The goal-control actions the adapter offers; nil while not known
+    /// (fail-closed — the goal card offers none then). Fixed for the
+    /// connection's life, so once known it is kept.
+    private(set) var goalActions: [String]?
+
+    /// A re-read of `connection`'s snapshot decided its goal vocabulary.
+    func adoptGoalActions(_ actions: [String], connection: String) {
+        guard connectionID == connection, goalActions == nil else { return }
+        goalActions = actions
+    }
 
     /// Tasks with a stop on its way. Held here rather than by the rows: a row
     /// leaves with the sheet, and back in view before the adapter answered it
@@ -68,6 +78,9 @@ final class ConnectionRunsModel {
     /// streamed to this client (codeg draws it from the agent's transcript),
     /// so the owner re-reads the transcript. Wired by the view model.
     @ObservationIgnored var onAutonomousTurnSettled: (@MainActor () -> Void)?
+    /// A fresh snapshot of `connection` left its goal vocabulary undecided
+    /// (`initialize` still in flight). Wired by the view model to read again.
+    @ObservationIgnored var onGoalActionsUndecided: (@MainActor (String) -> Void)?
 
     /// The running list the chip counts and the sheet draws.
     var liveRuns: LiveRuns {
@@ -149,6 +162,9 @@ final class ConnectionRunsModel {
         assignIfChanged(\.remoteControl, r.remoteControl)
         assignIfChanged(\.configStale, Self.restated(configStale, stale: r.configStale, kind: r.configStaleKind))
         assignIfChanged(\.isPrompting, snap.status == .prompting)
+        if goalActions == nil { assignIfChanged(\.goalActions, r.goalActions) }
+        // `initialize` hasn't answered yet: the owner reads it again.
+        if goalActions == nil { onGoalActionsUndecided?(connection) }
         lastSeq = seq
     }
 
@@ -289,6 +305,7 @@ final class ConnectionRunsModel {
         assignIfChanged(\.remoteControl, nil)
         assignIfChanged(\.configStale, nil)
         assignIfChanged(\.isPrompting, false)
+        assignIfChanged(\.goalActions, nil)
         assignIfChanged(\.stoppingTaskIDs, [])
         stopNotice = nil
     }

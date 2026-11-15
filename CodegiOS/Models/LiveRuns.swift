@@ -307,8 +307,46 @@ struct ConnectionRunsSnapshot: Hashable, Sendable {
     /// and which settings drifted. Absent on servers that predate it: not stale.
     var configStale = false
     var configStaleKind: ConfigStaleKind?
+    /// The goal-control actions the connection's adapter offers (`pause`,
+    /// `clear`, …; see ``GoalActions/decode(_:)``). Nil: not known yet.
+    var goalActions: [String]? = GoalActions.legacy
 
     static let empty = ConnectionRunsSnapshot()
+}
+
+/// The goal-control vocabulary a connection's adapter advertises (snapshot
+/// `goal_actions`, web `useAdvertisedGoalActions`). Three ways on the wire: a
+/// list is known; `null` means `initialize` hasn't answered yet — offer
+/// nothing, and read again; absent is a server too old to say, which offers
+/// codex's legacy pair. Offering a wrong one is worse than none: claude's
+/// goal extension has no "pause".
+enum GoalActions {
+    static let legacy = ["pause", "clear"]
+
+    private struct Probe: Decodable {
+        let actions: [String]?
+        private enum CodingKeys: String, CodingKey { case goalActions }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            if !c.contains(.goalActions) {
+                actions = GoalActions.legacy
+            } else if (try? c.decodeNil(forKey: .goalActions)) == true {
+                actions = nil
+            } else {
+                actions = ((try? c.decode([AnyJSON].self, forKey: .goalActions)) ?? []).compactMap(\.string)
+            }
+        }
+    }
+
+    /// The vocabulary a snapshot object carries.
+    static func decode(_ decoder: Decoder) -> [String]? {
+        (try? Probe(from: decoder))?.actions ?? nil
+    }
+
+    /// The vocabulary in a snapshot response body.
+    static func decode(_ data: Data) -> [String]? {
+        (try? CodegJSON.decoder.decode(Probe.self, from: data))?.actions ?? nil
+    }
 }
 
 extension ConnectionRunsSnapshot: Decodable {
@@ -328,6 +366,7 @@ extension ConnectionRunsSnapshot: Decodable {
         remoteControl = (try? c.decodeIfPresent(RemoteControlInfo.self, forKey: .remoteControl)) ?? nil
         configStale = ((try? c.decodeIfPresent(Bool.self, forKey: .configStale)) ?? nil) ?? false
         configStaleKind = ConfigStaleKind(wire: (try? c.decodeIfPresent(String.self, forKey: .configStaleKind)) ?? nil)
+        goalActions = GoalActions.decode(decoder)
     }
 
     /// Decoded from the snapshot object itself, never throwing.
