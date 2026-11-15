@@ -255,7 +255,7 @@ struct UpdateHermesConfigBody: Encodable, Sendable {
 ///
 /// The four reasoning fields are NOT "leave alone when absent": an `apikey` save
 /// rebuilds the whole managed model block from this body, so every one must
-/// echo what is on disk — see `kimiBodyForSave`.
+/// carry the reasoning card's edit or echo what is on disk — see `kimiBodyForSave`.
 struct UpdateKimiCodeConfigBody: Encodable, Sendable {
     let mode: String
     var interfaceType: String?

@@ -119,23 +119,121 @@ let kimiDefaultMaxContextSize = 262_144
 let kimiCapabilityThinking = "thinking"
 let kimiCapabilityAlwaysThinking = "always_thinking"
 
+/// Reasoning levels offered as one-click chips (web `KIMI_COMMON_EFFORTS`).
+/// NOT an enum codeg enforces — kimi forwards the string to the provider
+/// unmapped, so the right set depends on the model. Anything else goes in
+/// through the custom-level field.
+let kimiCommonEfforts = ["minimal", "low", "medium", "high", "xhigh", "max"]
+
+/// The reasoning card's four values (the reasoning slice of the web
+/// `KimiDraft`). Equality is by value, so a freshly seeded card never reads as
+/// edited and an added, removed or reordered level does.
+struct KimiReasoningDraft: Equatable, Sendable {
+    /// Declares a thinking capability — the gate on kimi offering the
+    /// composer's Thinking picker at all.
+    var reasoningEnabled = false
+    /// `always_thinking` rather than `thinking`: the picker loses its Off row.
+    var alwaysThinking = false
+    /// The levels the picker offers. Empty → kimi degrades it to Off / On.
+    var supportEfforts: [String] = []
+    /// The level the picker opens on; "" lets kimi choose.
+    var defaultEffort = ""
+
+    init(reasoningEnabled: Bool = false, alwaysThinking: Bool = false,
+         supportEfforts: [String] = [], defaultEffort: String = "") {
+        self.reasoningEnabled = reasoningEnabled
+        self.alwaysThinking = alwaysThinking
+        self.supportEfforts = supportEfforts
+        self.defaultEffort = defaultEffort
+    }
+
+    /// Seeded from the backend projection (web `kimiDraftFromConfig`): either
+    /// thinking capability reads as on, exactly like kimi's `supportsThinking`.
+    init(_ config: KimiManagedConfig) {
+        self.init(reasoningEnabled: config.reasoningEnabled,
+                  alwaysThinking: config.alwaysThinking,
+                  supportEfforts: config.supportEfforts,
+                  defaultEffort: config.defaultEffort ?? "")
+    }
+
+    /// The chips: the common levels, then any offered level outside them (a
+    /// hand-written one from config.toml stays togglable instead of vanishing).
+    var effortChoices: [String] {
+        var seen = Set<String>()
+        return (kimiCommonEfforts + supportEfforts).filter { seen.insert($0).inserted }
+    }
+
+    /// Flip one chip. Switching a level on keeps chip order rather than click
+    /// order, so the written list reads low→high like kimi's own profiles; a
+    /// default whose level just went is dropped (kimi would clamp it anyway).
+    mutating func toggleEffort(_ effort: String) {
+        if supportEfforts.contains(effort) {
+            supportEfforts.removeAll { $0 == effort }
+        } else {
+            let current = supportEfforts
+            supportEfforts = effortChoices.filter { $0 == effort || current.contains($0) }
+        }
+        if !supportEfforts.contains(defaultEffort) { defaultEffort = "" }
+    }
+
+    /// Offer a typed level: trimmed, appended, ignored when blank or already offered.
+    mutating func addCustomEffort(_ raw: String) {
+        let effort = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !effort.isEmpty, !supportEfforts.contains(effort) else { return }
+        supportEfforts.append(effort)
+    }
+
+    /// The web's `errorDefaultEffortUnlisted`, which blocks an API-key save:
+    /// kimi silently clamps a default outside the offered levels to the middle
+    /// entry, so the composer would open on a level nobody chose. Not checked
+    /// while reasoning is off or no level is offered.
+    var defaultEffortIsUnlisted: Bool {
+        let effort = defaultEffort.trimmingCharacters(in: .whitespacesAndNewlines)
+        return reasoningEnabled && !effort.isEmpty && !supportEfforts.isEmpty
+            && !supportEfforts.contains(effort)
+    }
+}
+
+/// The reasoning card at save time: what it holds and what it was last seeded
+/// with from disk. A field that still equals its seed counts as untouched.
+struct KimiReasoningEdit: Equatable, Sendable {
+    var draft: KimiReasoningDraft
+    var baseline: KimiReasoningDraft
+
+    /// Field by field: the card's value where the user changed it, `onDisk`'s
+    /// where they didn't — so a change made elsewhere since the card was seeded
+    /// survives unless the user overrode that same field here.
+    func resolved(onDisk: KimiReasoningDraft) -> KimiReasoningDraft {
+        var out = onDisk
+        if draft.reasoningEnabled != baseline.reasoningEnabled { out.reasoningEnabled = draft.reasoningEnabled }
+        if draft.alwaysThinking != baseline.alwaysThinking { out.alwaysThinking = draft.alwaysThinking }
+        if draft.supportEfforts != baseline.supportEfforts { out.supportEfforts = draft.supportEfforts }
+        if draft.defaultEffort != baseline.defaultEffort { out.defaultEffort = draft.defaultEffort }
+        return out
+    }
+}
+
 /// The Kimi save body to actually send. An `apikey` save makes the backend
 /// REBUILD the managed model block, reading an absent `reasoningEnabled` as
-/// off and dropping `capabilities` / `support_efforts` / `default_effort` —
-/// the composer's Thinking picker would silently disappear. This panel has no
-/// reasoning editor, so it hands back the declaration already on disk, read
-/// from `freshConfigJson` (the live `acp_list_agents` projection re-read at
-/// save time, not the copy the panel opened with, so a change made elsewhere
-/// meanwhile isn't reverted). `login` clears the block and `raw` writes
-/// verbatim TOML, so both pass through untouched.
-func kimiBodyForSave(_ body: UpdateKimiCodeConfigBody, freshConfigJson: String?) -> UpdateKimiCodeConfigBody {
+/// off and dropping `capabilities` / `support_efforts` / `default_effort` — so
+/// all four always go out. Each is the reasoning card's value where the user
+/// edited it, else the declaration already on disk, read from
+/// `freshConfigJson` (the live `acp_list_agents` projection re-read at save
+/// time, not the copy the panel opened with, so a change made elsewhere
+/// meanwhile isn't reverted). `reasoning == nil` carries all four. Reasoning
+/// off sends no levels and no default, like the web, so the backend omits
+/// `capabilities` and kimi keeps its permissive default. `login` clears the
+/// block and `raw` writes verbatim TOML, so both pass through untouched.
+func kimiBodyForSave(_ body: UpdateKimiCodeConfigBody, reasoning: KimiReasoningEdit? = nil,
+                     freshConfigJson: String?) -> UpdateKimiCodeConfigBody {
     guard body.mode == "apikey" else { return body }
-    let onDisk = KimiManagedConfig.parse(freshConfigJson)
+    let onDisk = KimiReasoningDraft(KimiManagedConfig.parse(freshConfigJson))
+    let r = reasoning?.resolved(onDisk: onDisk) ?? onDisk
     var out = body
-    out.reasoningEnabled = onDisk.reasoningEnabled
-    out.alwaysThinking = onDisk.alwaysThinking
-    out.supportEfforts = onDisk.supportEfforts
-    out.defaultEffort = onDisk.defaultEffort
+    out.reasoningEnabled = r.reasoningEnabled
+    out.alwaysThinking = r.reasoningEnabled && r.alwaysThinking
+    out.supportEfforts = r.reasoningEnabled ? r.supportEfforts : []
+    out.defaultEffort = r.reasoningEnabled ? r.defaultEffort : nil
     return out
 }
 

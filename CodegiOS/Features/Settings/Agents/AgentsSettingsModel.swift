@@ -242,21 +242,23 @@ final class AgentsSettingsModel {
     /// Save Kimi Code via its dedicated endpoint (apikey/login/raw), then reload so
     /// the gate-status banner + `configJson` projection reflect the fresh backend
     /// state. Serialized on `opTail` (like Hermes) so it can't race a toggle.
-    func saveKimiCodeConfig(_ body: UpdateKimiCodeConfigBody) async throws {
+    /// `reasoning` is the panel's reasoning card; its untouched fields go out as
+    /// they are on disk.
+    func saveKimiCodeConfig(_ body: UpdateKimiCodeConfigBody, reasoning: KimiReasoningEdit? = nil) async throws {
         let prior = opTail
         let task = Task { @MainActor () -> String? in
             await prior.value
             guard let client = self.client else { return nil }
             do {
                 // An `apikey` save rebuilds the managed model block, so it has to
-                // carry the reasoning declaration this panel can't edit. Read it
+                // carry every reasoning field the card didn't change. Read them
                 // from the LIVE projection right before the write (not the
                 // panel's snapshot), and before anything is written, so a failed
-                // read aborts with nothing persisted instead of wiping it.
+                // read aborts with nothing persisted instead of wiping them.
                 var payload = body
                 if body.mode == "apikey" {
                     let fresh = try await client.listAgents().first { $0.agentType == .kimiCode }
-                    payload = kimiBodyForSave(body, freshConfigJson: fresh?.configJson)
+                    payload = kimiBodyForSave(body, reasoning: reasoning, freshConfigJson: fresh?.configJson)
                 }
                 let affected = try await client.updateKimiCodeConfig(payload)
                 self.surfaceAffected(affected)

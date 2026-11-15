@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import Codeg
 
-/// An API-key save rebuilds Kimi's managed model block, so the reasoning
-/// declaration this panel can't edit has to go back out as it is on disk.
+/// An API-key save rebuilds Kimi's managed model block, so a reasoning
+/// declaration the save doesn't edit has to go back out as it is on disk.
 struct KimiReasoningCarryOverTests {
     private let thinkingOn = #"""
     {"interfaceType":"kimi","modelId":"kimi-k2","hasManagedBlock":true,
