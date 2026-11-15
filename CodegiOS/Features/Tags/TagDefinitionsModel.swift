@@ -20,6 +20,8 @@ final class TagDefinitionsModel {
     @ObservationIgnored private(set) var endpoint: String?
     /// Bumped by every read, so one that lands after a newer one is dropped.
     @ObservationIgnored private var generation = 0
+    /// When the tags were last read whole from ``endpoint``.
+    @ObservationIgnored private var loadedAt: Date?
 
     init() {}
 
@@ -29,6 +31,7 @@ final class TagDefinitionsModel {
         let endpoint = client.tagEndpoint
         if endpoint != self.endpoint {
             self.endpoint = endpoint
+            loadedAt = nil
             tagsByID = [:]
             branchTag = BranchTagSetting()
         }
@@ -40,6 +43,17 @@ final class TagDefinitionsModel {
         let branch = await branchRead
         guard started == generation, endpoint == self.endpoint else { return }
         adopt(tags: tags, branchTag: branch)
+        if tags != nil { loadedAt = Date() }
+    }
+
+    /// ``load(client:)`` unless the definitions were read from that server
+    /// within `maxAge` — what a screen asks each time it appears (a tab coming
+    /// back runs its `.task` again). An edit made here is announced and read
+    /// at once (`conversationTagDefinitionsDidChange`); one made elsewhere
+    /// shows once the copy has aged.
+    func loadIfStale(client: CodegClient, maxAge: TimeInterval = 60) async {
+        if client.tagEndpoint == endpoint, let loadedAt, Date().timeIntervalSince(loadedAt) < maxAge { return }
+        await load(client: client)
     }
 
     /// Commit one read: whichever half came back applies, a nil keeps what was
@@ -55,6 +69,7 @@ final class TagDefinitionsModel {
     func reset() {
         generation += 1
         endpoint = nil
+        loadedAt = nil
         tagsByID = [:]
         branchTag = BranchTagSetting()
     }

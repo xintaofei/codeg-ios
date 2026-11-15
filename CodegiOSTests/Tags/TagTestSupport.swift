@@ -12,10 +12,11 @@ enum TagFixtures {
         parent: Int? = nil,
         kind: String? = nil,
         pinned: Bool = false,
-        updated: String = "2024-01-02T03:04:05Z"
+        updated: String = "2024-01-02T03:04:05Z",
+        status: String = "completed"
     ) -> ConversationSummary {
         var json: [String: Any] = [
-            "id": id, "folder_id": folder, "agent_type": "codex", "status": "completed",
+            "id": id, "folder_id": folder, "agent_type": "codex", "status": status,
             "message_count": 0, "created_at": "2024-01-02T03:04:05Z", "updated_at": updated,
         ]
         if !tags.isEmpty { json["tag_ids"] = tags }

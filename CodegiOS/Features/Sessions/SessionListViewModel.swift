@@ -383,10 +383,30 @@ final class SessionListViewModel {
     func reload(client: CodegClient) async {
         let endpoint = "\(client.baseURL.absoluteString)|\(client.token)"
         let endpointChanged = endpoint != loadedEndpoint
-        self.client = client
-        loadedEndpoint = endpoint
+        // Rewritten only for another endpoint: a client is no value the
+        // view model can compare, so every write would redraw the list.
+        if endpointChanged {
+            self.client = client
+            loadedEndpoint = endpoint
+        }
+        if !endpointChanged, hasLoaded {
+            // The tab came back (a `TabView` runs `.task` again on every
+            // appear): the list on screen stays, read again quietly only once
+            // it has aged — a refetch per switch put the loading state and
+            // the reads' results through the list just as the page came in.
+            // What changes in the meantime from this device is announced
+            // (`conversationsDidChange`) and read at once.
+            if let lastFetchedAt, Date().timeIntervalSince(lastFetchedAt) < Self.reappearRefetchAge { return }
+            await fetch(isInitial: false)
+            return
+        }
         await fetch(isInitial: true, force: endpointChanged)
     }
+
+    /// When a fetch last brought the list in.
+    @ObservationIgnored private var lastFetchedAt: Date?
+    /// How old the list may be when its tab comes back before it is read again.
+    static let reappearRefetchAge: TimeInterval = 30
 
     /// Pull-to-refresh / toolbar refresh. Keeps the current list on screen
     /// while refetching. No-op if a fetch is already running, so rapid taps
@@ -446,6 +466,7 @@ final class SessionListViewModel {
 
         if result.anySucceeded {
             hasLoaded = true
+            lastFetchedAt = Date()
             consecutiveFailures = 0
             error = nil
         } else {
@@ -470,8 +491,13 @@ final class SessionListViewModel {
         if let conversations {
             self.conversations = conversations
             // A picked conversation deleted (or turned unmovable) elsewhere
-            // is no longer picked.
-            selection.prune(to: conversations)
+            // is no longer picked. Pruned on a copy: a mutation in place
+            // tells every reader of the picks, changed or not (an assignment
+            // of an equal value tells no one), and a refetch mostly prunes
+            // nothing.
+            var pruned = selection
+            pruned.prune(to: conversations)
+            if pruned != selection { selection = pruned }
         }
         if let tags { self.tags = tags }
         if let branchTag { self.branchTag = branchTag }

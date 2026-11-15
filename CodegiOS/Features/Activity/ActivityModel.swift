@@ -44,6 +44,10 @@ final class ActivityModel {
     private var consecutiveFailures = 0
     private static let failuresBeforeAlerting = 2
 
+    /// How many of `conversations` are running — the tab badge. Kept apart
+    /// from the list so its readers redraw only when the number changes.
+    private(set) var runningCount = 0
+
     // MARK: - Derived
 
     /// Sessions currently running, most recently updated first.
@@ -109,6 +113,7 @@ final class ActivityModel {
     func reset() {
         fetchGeneration += 1
         conversations = []
+        runningCount = 0
         folders = []
         openFolders = []
         openFoldersLoaded = false
@@ -155,9 +160,7 @@ final class ActivityModel {
 
         // Partial success: apply whichever endpoint returned, keep the prior value
         // for one that failed (orphaned rows fall into the "Other" safety net).
-        if let loaded = result.folders { folders = loaded }
-        if let loaded = result.openFolders { openFolders = loaded; openFoldersLoaded = true }
-        if let loaded = result.conversations { conversations = loaded }
+        adopt(folders: result.folders, openFolders: result.openFolders, conversations: result.conversations)
 
         if result.anySucceeded {
             hasLoaded = true
@@ -177,6 +180,20 @@ final class ActivityModel {
             if !hasLoaded || consecutiveFailures >= Self.failuresBeforeAlerting {
                 error = result.message
             }
+        }
+    }
+
+    /// Commit one pulse's reads; a nil (a read that failed) keeps the prior
+    /// value. The running count is written apart from the list: the list
+    /// changes on most pulses (a running conversation's time moves on), the
+    /// count rarely — and the app shell, which reads it for the badge,
+    /// redraws only when it does.
+    func adopt(folders: [FolderDetail]?, openFolders: [FolderDetail]?, conversations: [ConversationSummary]?) {
+        if let folders { self.folders = folders }
+        if let openFolders { self.openFolders = openFolders; openFoldersLoaded = true }
+        if let conversations {
+            self.conversations = conversations
+            runningCount = conversations.reduce(0) { $0 + ($1.status.isLive ? 1 : 0) }
         }
     }
 

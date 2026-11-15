@@ -15,18 +15,27 @@ final class ServerVersionModel {
     }
 
     private(set) var state: State = .idle
+    /// The server the loaded version is from.
+    @ObservationIgnored private var loadedFrom: String?
 
     /// Probe `health()` on the given client. A nil client (no server selected or
-    /// unresolved token) resolves straight to `.unavailable`.
+    /// unresolved token) resolves straight to `.unavailable`. The version once
+    /// read stays: Settings asks again each time its tab comes back, and a
+    /// server's version doesn't change under a running app often enough to
+    /// redraw the page for it.
     func load(_ client: CodegClient?) async {
         guard let client else {
+            loadedFrom = nil
             state = .unavailable
             return
         }
+        let source = "\(client.baseURL.absoluteString)|\(client.token)"
+        if case .loaded = state, loadedFrom == source { return }
         state = .loading
         do {
             let health = try await client.health()
             state = .loaded(health.version)
+            loadedFrom = source
         } catch {
             state = .unavailable
         }

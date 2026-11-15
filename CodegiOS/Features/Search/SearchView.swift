@@ -32,7 +32,8 @@ struct SearchView: View {
             await runSearch()
         }
         // The results carry their tags as the Chats list draws them.
-        .task(id: tagSource) { await loadTagDefinitions() }
+        // Asked again each time the tab comes back; read again only once aged.
+        .task(id: tagSource) { await loadTagDefinitions(force: false) }
         .onReceive(NotificationCenter.default.publisher(for: .conversationTagDefinitionsDidChange)) { _ in
             Task { await loadTagDefinitions() }
         }
@@ -48,9 +49,13 @@ struct SearchView: View {
         client.map { "\($0.baseURL.absoluteString)|\($0.token)" } ?? ""
     }
 
-    private func loadTagDefinitions() async {
+    private func loadTagDefinitions(force: Bool = true) async {
         if let client {
-            await tagDefinitions.load(client: client)
+            if force {
+                await tagDefinitions.load(client: client)
+            } else {
+                await tagDefinitions.loadIfStale(client: client)
+            }
         } else {
             tagDefinitions.reset()
         }

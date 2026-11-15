@@ -11,6 +11,10 @@ final class ServerStore {
 
     private let defaults: UserDefaults
     private let storageKey = "codeg.servers.v1"
+    /// Each server's token as last read or written here: the shell asks for
+    /// a client on every render, and a Keychain read each time (several per
+    /// render) is main-thread IPC. Only this store writes the tokens.
+    @ObservationIgnored private var tokenCache: [UUID: String] = [:]
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -26,6 +30,7 @@ final class ServerStore {
     func add(name: String, urlString: String, token: String) -> ServerProfile? {
         let profile = ServerProfile(name: name, urlString: urlString)
         guard Keychain.setToken(token, for: profile.id) else { return nil }
+        tokenCache[profile.id] = token
         servers.append(profile)
         persist()
         return profile
@@ -44,6 +49,7 @@ final class ServerStore {
         if let token, !token.isEmpty {
             // Store the new secret first; abort the whole update if it fails.
             guard Keychain.setToken(token, for: profile.id) else { return false }
+            tokenCache[profile.id] = token
         }
         servers[index] = profile
         persist()
@@ -53,12 +59,14 @@ final class ServerStore {
     func delete(_ profile: ServerProfile) {
         servers.removeAll { $0.id == profile.id }
         Keychain.deleteToken(for: profile.id)
+        tokenCache[profile.id] = nil
         persist()
     }
 
     func delete(at offsets: IndexSet) {
         for index in offsets {
             Keychain.deleteToken(for: servers[index].id)
+            tokenCache[servers[index].id] = nil
         }
         servers.remove(atOffsets: offsets)
         persist()
@@ -72,7 +80,12 @@ final class ServerStore {
     // MARK: - Access
 
     func token(for profile: ServerProfile) -> String? {
-        Keychain.token(for: profile.id)
+        if let cached = tokenCache[profile.id] { return cached }
+        // A missing token isn't remembered: it may be readable later (the
+        // Keychain is locked before first unlock after a reboot).
+        let token = Keychain.token(for: profile.id)
+        if let token { tokenCache[profile.id] = token }
+        return token
     }
 
     /// Build an HTTP client for a profile, or nil if the URL/token is missing.
