@@ -13,8 +13,8 @@ import Testing
 // `isError` — so the web's `(output, errorText)` pairs are passed as such to
 // the `output:errorText:` entry points.
 //
-// Not ported: `isAffirmedResume` (iOS has no live binding for it to
-// corroborate), its halves of the verdict suites, and the `console.warn` spy
+// `isAffirmedResume`'s halves of the verdict suites are in
+// `DelegationBindingTests`. Not ported: the `console.warn` spy
 // of "reads an unreadable call quietly" (iOS logs nothing; the parse it makes
 // is pinned by "screens unknowable argument syntax out of the parse").
 

@@ -50,10 +50,15 @@ struct DelegationReport: Equatable {
     /// pairs `not_resumable` with the task's real status, so the code is the
     /// only thing that tells it from the report of a genuine resume.
     var errorCode: String?
+    /// The agent the task runs on, as the broker reports it — what a
+    /// `resume_delegation` card is drawn by, its arguments naming only a task.
+    var agentType: AgentType? = nil
+    /// The assistant the task runs as, when it runs as one.
+    var assistantName: String? = nil
 }
 
-/// The status a delegation card renders. (`waiting` — child blocked on a
-/// permission decision — can't be derived on iOS, but is kept for parity.)
+/// The status a delegation card renders. `waiting`: the child is parked on
+/// the user's decision, as a check on it reported.
 enum DelegationCardStatus {
     case starting, running, waiting, ok, err
 }
@@ -74,6 +79,15 @@ struct ParsedDelegationMeta {
     /// Broker-minted task id, mirrored on every meta write — the only place a
     /// call whose result names none (an opencode code-mode script) carries it.
     var taskId: String?
+    /// The child's agent. Only the HISTORICAL injection (a detail load, off
+    /// the child's row) carries it — the only agent source for a reloaded
+    /// `resume_delegation`, whose arguments are just `{task_id, reason}`.
+    var agentType: AgentType? = nil
+    /// The assistant the task ran as, by its name when it started.
+    var assistantName: String? = nil
+    /// The bounded task text the broker stamped — the label when the call's
+    /// own arguments never carried it (Cursor) and no live binding is left.
+    var task: String? = nil
 }
 
 enum DelegationModel {
@@ -199,7 +213,12 @@ enum DelegationModel {
             childConversationId: pick(["child_conversation_id", "childConversationId"])?.double.map { Int($0) },
             textPreview: pick(["text_preview", "textPreview"])?.nonEmptyString,
             durationMs: pick(["duration_ms", "durationMs"])?.double,
-            taskId: taskId
+            taskId: taskId,
+            agentType: coerceAgentType(pick(["agent_type", "agentType"])?.string),
+            assistantName: pick(["assistant_name", "assistantName"])?.string.flatMap {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+            },
+            task: pick(["task_preview", "taskPreview"])?.nonEmptyString
         )
     }
 
@@ -286,6 +305,7 @@ enum DelegationModel {
     static func resolveStatus(parsedMeta: ParsedDelegationMeta?, toolOutput: DelegationToolOutput?, state: ToolCallState, hasError: Bool) -> DelegationCardStatus {
         if let parsedMeta { return parsedMeta.status }
         if hasError { return .err }
+        if isBareAck(toolOutput) { return .running }
         switch toolOutput {
         case .ack: return .running
         case .outcome(_, let isError, _, _): return isError ? .err : .ok
@@ -399,7 +419,9 @@ enum DelegationModel {
     private static func interpretReport(_ obj: [String: Any]) -> DelegationToolOutput? {
         let cid = childConversationId(obj)
         // Carried on EVERY variant — see `DelegationReport.errorCode`.
-        let report = DelegationReport(errorCode: obj["error_code"] as? String)
+        let report = DelegationReport(errorCode: obj["error_code"] as? String,
+                                      agentType: coerceAgentType(obj["agent_type"]),
+                                      assistantName: assistantName(obj["assistant_name"]))
         if let status = obj["status"] as? String {
             switch status {
             case "running", "unknown":
@@ -459,6 +481,12 @@ enum DelegationModel {
         return n.intValue
     }
 
+    /// A non-empty assistant name off the wire, as sent (web `coerceAssistantName`).
+    static func assistantName(_ value: Any?) -> String? {
+        guard let s = value as? String, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return s
+    }
+
     private static func scalarText(_ value: Any) -> String {
         if let s = value as? String { return s }
         if ToolJSONFormat.isBoolean(value), let n = value as? NSNumber { return n.boolValue ? "true" : "false" }
@@ -493,6 +521,20 @@ struct StatusReport {
     var text: String?
     var errorCode: String?
     var durationMs: Double?
+    /// A running report whose sub-agent is parked on the user's decision
+    /// (Rust `blocked_on`, or the backend's blocked note on a text-only host).
+    var blocked = false
+    /// How far the sub-agent had got (Rust `DelegationTaskReport.progress`).
+    var progress: DelegationProgress? = nil
+    var agentType: AgentType? = nil
+    var childConversationId: Int? = nil
+}
+
+/// A sub-agent's step count and what it is doing now (web `StepProgress`,
+/// without the per-step marks this client doesn't draw).
+struct DelegationProgress: Equatable {
+    let steps: Int
+    let lastStep: String?
 }
 
 /// One row of the status card: a task ref, its latest poll's report + badge, and
@@ -523,7 +565,7 @@ extension DelegationModel {
 
         let (parsed, hostError) = parseResultObject(raw)
         guard let obj = parsed else {
-            return StatusReport(status: textRunningStatus(raw), text: raw)
+            return StatusReport(status: textRunningStatus(raw), text: raw, blocked: textIsBlocked(raw))
         }
         let contentText = firstContentText(obj)
         let sc = obj["structuredContent"] as? [String: Any]
@@ -538,18 +580,15 @@ extension DelegationModel {
             displayText = nil   // content[0].text WAS the report JSON, not a message
         }
         if let report {
-            return StatusReport(
-                status: validStatus(report),
-                taskId: str(report, "task_id"),
-                text: displayText ?? str(report, "text") ?? str(report, "message"),
-                errorCode: str(report, "error_code"),
-                durationMs: num(report, "duration_ms")
-            )
+            let text = displayText ?? str(report, "text") ?? str(report, "message")
+            return reportFromObject(report, text: text,
+                                    blockedText: text ?? str(report, "message") ?? contentText)
         }
         // A host envelope that failed outright carries no result to show, so its own
         // error string beats dumping the envelope JSON.
         let fallbackText = contentText ?? hostError ?? raw
-        return StatusReport(status: textRunningStatus(fallbackText), text: fallbackText)
+        return StatusReport(status: textRunningStatus(fallbackText), text: fallbackText,
+                            blocked: textIsBlocked(fallbackText))
     }
 
     /// One report per task. A batch poll returns `{ "tasks": [report, ...] }`
@@ -576,7 +615,8 @@ extension DelegationModel {
     static func deriveBadge(kind: DelegationRowKind, report: StatusReport, state: ToolCallState, hasError: Bool) -> ResolvedBadge {
         switch report.status {
         case .completed: return ResolvedBadge(status: .ok)
-        case .running:   return ResolvedBadge(status: .checked)
+        // Parked on the user, it waits; otherwise it came back still working.
+        case .running:   return ResolvedBadge(status: report.blocked ? .waiting : .checked)
         case .unknown:   return ResolvedBadge(status: .err, errorCode: "unknown")
         case .failed:    return ResolvedBadge(status: .err, errorCode: report.errorCode)
         case .canceled:
@@ -690,14 +730,40 @@ extension DelegationModel {
         return obj["structuredContent"] is [String: Any]
     }
 
-    private static func reportFromObject(_ report: [String: Any]) -> StatusReport {
-        StatusReport(
+    private static func reportFromObject(_ report: [String: Any], text: String? = nil,
+                                         blockedText: String? = nil) -> StatusReport {
+        let text = text ?? str(report, "text") ?? str(report, "message")
+        return StatusReport(
             status: validStatus(report),
             taskId: str(report, "task_id"),
-            text: str(report, "text") ?? str(report, "message"),
+            text: text,
             errorCode: str(report, "error_code"),
-            durationMs: num(report, "duration_ms")
+            durationMs: num(report, "duration_ms"),
+            // Structured `blocked_on` when the host kept it; otherwise the
+            // blocked note in the message, all a content-only host leaves.
+            blocked: report["blocked_on"] is [String: Any] || textIsBlocked(blockedText ?? text),
+            progress: progress(report["progress"]),
+            agentType: coerceAgentType(report["agent_type"]),
+            childConversationId: childConversationIdOf(report)
         )
+    }
+
+    /// A report's `progress` (`{steps, marks, last_step}`), if well-formed
+    /// (web `progressFromReport`).
+    private static func progress(_ raw: Any?) -> DelegationProgress? {
+        guard let obj = raw as? [String: Any], let n = obj["steps"] as? NSNumber, !ToolJSONFormat.isBoolean(n),
+              n.doubleValue >= 0, n.doubleValue == n.doubleValue.rounded() else { return nil }
+        let marks = (obj["marks"] as? [Any] ?? []).filter { ($0 as? String) == "ok" || ($0 as? String) == "failed" }
+        let last = (obj["last_step"] as? String)?
+            .split(separator: "\n", omittingEmptySubsequences: false).first
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        return DelegationProgress(steps: max(n.intValue, marks.count),
+                                  lastStep: (last?.isEmpty ?? true) ? nil : last)
+    }
+
+    private static func childConversationIdOf(_ obj: [String: Any]) -> Int? {
+        guard let n = obj["child_conversation_id"] as? NSNumber, !ToolJSONFormat.isBoolean(n) else { return nil }
+        return n.intValue
     }
 
     private static func findTasksArray(_ obj: [String: Any]) -> (tasks: [Any], trusted: Bool)? {
@@ -738,6 +804,7 @@ extension DelegationModel {
     // doesn't degrade a running task's badge to a false "ok".
     private static let runningMarker = "running."
     private static let runningReplyPrefix = "latest sub-agent reply:"
+    private static let runningBlockedPrefix = "awaiting your decision:"
     private static let legacyRunningSentinel = "sub-agent is still running in the background."
 
     private static func textRunningStatus(_ text: String?) -> TaskStatus? {
@@ -750,7 +817,17 @@ extension DelegationModel {
         let firstLine = String(normalized[..<nl]).trimmingCharacters(in: .whitespaces)
         guard firstLine == runningMarker else { return nil }
         let secondLine = String(normalized[normalized.index(after: nl)...]).drop(while: { $0 == " " || $0 == "\t" })
-        return secondLine.hasPrefix(runningReplyPrefix) ? .running : nil
+        return secondLine.hasPrefix(runningReplyPrefix) || secondLine.hasPrefix(runningBlockedPrefix) ? .running : nil
+    }
+
+    /// Whether a running report's text carries the backend's blocked note
+    /// (web `textIsBlocked`): the second line opens with it.
+    static func textIsBlocked(_ text: String?) -> Bool {
+        guard let text, let nl = text.firstIndex(of: "\n") else { return false }
+        return text[text.index(after: nl)...]
+            .drop(while: { $0.isWhitespace })
+            .lowercased()
+            .hasPrefix(runningBlockedPrefix)
     }
 }
 

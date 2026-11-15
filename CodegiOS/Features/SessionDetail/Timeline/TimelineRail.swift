@@ -214,7 +214,18 @@ private struct MarkerCenterKey: PreferenceKey {
 /// marker tint so the rail is scannable at a glance ("what ran, did it succeed").
 enum MarkerKind {
     case user
+    /// A reply's header: the session's agent.
     case assistant(AgentType)
+    /// The agent's words — a small dot. Agent glyphs stay with the reply's
+    /// header and the delegations, so a glyph on the rail always means "an
+    /// agent took over here".
+    case prose
+    /// A delegated task: the logo of the agent that took it, ringed in how
+    /// it stands; a resume wears a small replay mark. Resolved against the
+    /// live binding as it draws.
+    case delegation(ToolCallVM, later: DelegationTaskRow?)
+    /// Checks on (or a cancel of) delegated tasks, ringed in how the tasks stand.
+    case delegationChecks([ToolCallVM], cancel: Bool)
     case reasoning
     case tool(icon: String, state: ToolCallState)
     case toolGroup(error: Bool, streaming: Bool)
@@ -238,6 +249,7 @@ struct NodeMarker: View {
 
     @ScaledMetric(relativeTo: .body) private var scaledSize = TimelineMetrics.markerSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.activityLive) private var live
 
     private var size: CGFloat { min(scaledSize, TimelineMetrics.markerSize * 1.5) }
 
@@ -254,6 +266,14 @@ struct NodeMarker: View {
             chip(icon: "person.fill", tint: Theme.accent, filled: true, scale: TimelineMetrics.userMarkerSize / TimelineMetrics.markerSize)
         case .assistant(let agent):
             AgentAvatar(agent: agent, size: size)
+        case .prose:
+            Circle()
+                .fill(Theme.textTertiary.opacity(0.75))
+                .frame(width: size * 0.28, height: size * 0.28)
+        case .delegation(let vm, let later):
+            delegationMarker(vm, later: later)
+        case .delegationChecks(let polls, let cancel):
+            checksMarker(polls, cancel: cancel)
         case .reasoning:
             chip(icon: "brain", tint: Theme.textTertiary)
         case .tool(let icon, let state):
@@ -311,6 +331,30 @@ struct NodeMarker: View {
             if state == .running || state == .inputStreaming {
                 pulseRing(tint: tint)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func delegationMarker(_ vm: ToolCallVM, later: DelegationTaskRow?) -> some View {
+        if let card = live.delegationCard(vm, later: later) {
+            // The call a permission request waits on is the user's to answer.
+            let awaiting = (vm.state == .running || vm.state == .inputStreaming) && live.awaitingToolCallId == vm.id
+            let tint = awaiting ? Theme.warning : DelegationTint.of(card.status)
+            ZStack {
+                DelegationRailGlyph(agent: card.agentType, tint: tint, size: size, resumed: card.resumed)
+                if card.working, !awaiting { pulseRing(tint: tint) }
+            }
+        } else {
+            toolMarker(icon: vm.icon, state: vm.state)
+        }
+    }
+
+    private func checksMarker(_ polls: [ToolCallVM], cancel: Bool) -> some View {
+        let status = DelegationModel.checksStatus(polls, kind: cancel ? .cancel : .status)
+        let tint = DelegationTint.of(status)
+        return ZStack {
+            chip(icon: cancel ? "nosign" : "hourglass", tint: tint)
+            if status == .running { pulseRing(tint: tint) }
         }
     }
 

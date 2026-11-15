@@ -13,9 +13,9 @@ import SwiftUI
 struct TimelineNode: Identifiable {
     let id: String
     let content: Content
-    /// The session's agent, used to render the agent-branded marker on assistant
-    /// nodes (the rail reintroduces agent identity in the gutter without spending
-    /// any content width).
+    /// The session's agent, used to render the agent-branded marker on a
+    /// reply's header (the rail carries agent identity in the gutter without
+    /// spending any content width).
     let agent: AgentType
     /// Whether the spine continues above / below this node. Suppressed only at the
     /// very first and very last node so the rail terminates at its endpoints.
@@ -68,6 +68,10 @@ struct TimelineNode: Identifiable {
         case reasoning(String)
         case liveReasoning(LiveTextRun, streaming: Bool)
         case tool(ToolCallVM)
+        /// A `delegate_to_agent` / `resume_delegation` call, with the newest
+        /// later check on its task: drawn as the agent that took it, read
+        /// against the live binding as it draws (``ActivityLive``).
+        case delegation(ToolCallVM, later: DelegationTaskRow?)
         case delegationStatusGroup([ToolCallVM])
         case taskGroup([ToolCallVM])
         case image(ImageData, caption: String?)
@@ -116,13 +120,19 @@ struct TimelineNode: Identifiable {
         switch content {
         case .user: return .user
         case .system: return .system
-        case .assistantText, .liveText: return .assistant(agent)
+        // The agent's words are a dot on the rail: its identity is on the
+        // reply's header, and an agent glyph is a delegation's.
+        case .assistantText, .liveText: return .prose
         case .reasoning, .liveReasoning: return .reasoning
-        case .tool(let vm): return .tool(icon: vm.icon, state: vm.state)
-        case .delegationStatusGroup(let polls):
-            let running = polls.contains { $0.state == .running || $0.state == .inputStreaming }
-            let state: ToolCallState = running ? .running : (polls.contains(where: \.isError) ? .error : .done)
-            return .tool(icon: "person.2", state: state)
+        case .tool(let vm):
+            switch vm.companion {
+            case .delegationStatus: return .delegationChecks([vm], cancel: false)
+            case .cancelDelegation: return .delegationChecks([vm], cancel: true)
+            case .delegate: return .delegation(vm, later: nil)
+            default: return .tool(icon: vm.icon, state: vm.state)
+            }
+        case .delegation(let vm, let later): return .delegation(vm, later: later)
+        case .delegationStatusGroup(let polls): return .delegationChecks(polls, cancel: false)
         case .taskGroup(let ops):
             let running = ops.contains { $0.state == .running || $0.state == .inputStreaming }
             let state: ToolCallState = running ? .running : (ops.contains(where: \.isError) ? .error : .done)
@@ -527,9 +537,15 @@ enum TranscriptTimeline {
             return TimelineNode(id: "tool-\(tool.call.id)", content: .goal(BuildActivity.loneGoalStep(tool)),
                                 agent: agent)
         case .tool(let tool):
-            let content: TimelineNode.Content = ActivityRowStyle.usesRow(tool)
-                ? .activityTool(tool, recovered: recovered.contains(tool.key))
-                : .tool(tool.call)
+            let content: TimelineNode.Content
+            if ActivityRowStyle.usesRow(tool) {
+                content = .activityTool(tool, recovered: recovered.contains(tool.key))
+            } else if DelegationModel.drawsCard(tool.call, kind: tool.tool.kind) {
+                content = .delegation(tool.call, later: DelegationModel.latestTaskRow(
+                    tool.laterPolls, taskId: ActivitySummarize.delegationTaskId(tool)))
+            } else {
+                content = .tool(tool.call)
+            }
             return TimelineNode(id: "tool-\(tool.call.id)", content: content, agent: agent)
         case .thought(_, let text, let streaming):
             if case .live(let run, _) = text {
@@ -608,7 +624,9 @@ enum TranscriptTimeline {
         case .liveReasoning(let run, let streaming):
             return [TimelineNode(id: "k-\(run.id)", content: .liveReasoning(run, streaming: streaming), agent: agent)]
         case .tool(let vm):
-            return [TimelineNode(id: "tool-\(vm.id)", content: .tool(vm), agent: agent)]
+            let content: TimelineNode.Content = DelegationModel.drawsCard(vm, kind: DescribeToolCall.kind(vm))
+                ? .delegation(vm, later: nil) : .tool(vm)
+            return [TimelineNode(id: "tool-\(vm.id)", content: content, agent: agent)]
         case .delegationStatusGroup(let polls):
             let gid = polls.first.map { "delegstatus-\($0.id)" } ?? base
             return [TimelineNode(id: gid, content: .delegationStatusGroup(polls), agent: agent)]

@@ -749,6 +749,13 @@ final class SessionDetailViewModel {
         try await client.agentSession(agentType: agentType, sessionId: sessionId)
     }
 
+    /// Read a delegated task's child conversation, for the same viewer. Its
+    /// newest turns: the viewer is for following what the child did, and a
+    /// long child would otherwise be read whole on every refresh.
+    func delegatedConversation(id: Int) async throws -> ConversationDetail {
+        try await client.conversationDetail(id: id, tailTurns: 200)
+    }
+
     /// Adopt the coordinates a response's `turns` arrived under: where they sit in
     /// the full transcript, and which round the server says is running. Pair this
     /// with EVERY `turns = detail.turns` — the array and its window are one

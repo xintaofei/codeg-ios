@@ -209,10 +209,40 @@ struct TimelineFoldingTests {
         guard let node = nodes.first(where: { $0.id == "tool-c1" }) else {
             Issue.record("the running delegation is pinned while folded"); return
         }
-        guard case .tool(let vm) = node.content else {
+        guard case .delegation(let vm, _) = node.content else {
             Issue.record("a delegation draws as its card, not an activity row"); return
         }
         #expect(vm.companion == .delegate)
+    }
+
+    @Test func aFinishedDelegationLeavesAFoldedReplyOnItsBindingsWord() {
+        let date = Date()
+        let turns = [
+            MessageTurn(id: "u", role: .user, blocks: [.text("go")], timestamp: date),
+            MessageTurn(id: "a", role: .assistant, blocks: [
+                .toolUse(id: "d1", name: "mcp__codeg-mcp__delegate_to_agent",
+                         inputPreview: #"{"agent_type":"codex","task":"audit"}"#, status: .unknown, meta: nil),
+                .toolResult(id: "d1", outputPreview: #"{"status":"running","task_id":"t1"}"#,
+                            isError: false, agentStats: nil),
+                .text("Delegated."),
+            ], timestamp: date),
+        ]
+        let built = TranscriptTimeline.buildPersisted(turns: turns, pending: [], agent: .claudeCode,
+                                                      suppressInFlight: false)
+        func binding(_ status: DelegationBinding.Status) -> ActivityLive {
+            var live = ActivityLive.none
+            live.delegations = [DelegationBinding(
+                info: DelegationInfo(parentToolUseId: "d1", childConnectionId: "c", childConversationId: 5,
+                                     agentType: .codex, taskPreview: nil, taskId: "t1", assistantId: nil,
+                                     assistantName: nil),
+                status: status, errorCode: nil)]
+            return live
+        }
+        // The ack alone says running: pinned while folded.
+        #expect(ReplyFolding.apply(built, store: ReplyFoldStore()).contains { $0.id == "tool-d1" })
+        #expect(ReplyFolding.apply(built, store: ReplyFoldStore(), live: binding(.running)).contains { $0.id == "tool-d1" })
+        // The binding saw it finish: folded away with the rest of the steps.
+        #expect(!ReplyFolding.apply(built, store: ReplyFoldStore(), live: binding(.ok)).contains { $0.id == "tool-d1" })
     }
 
     @Test func theNewestReplyIsCurrentEvenWithoutAHeader() {

@@ -29,7 +29,7 @@ struct NodeBody: View {
         case .tool(let vm):
             switch vm.companion {
             case .delegate:
-                DelegatedSubThreadCard(vm: vm)
+                DelegationTaskCard(vm: vm)
             case .cancelDelegation:
                 DelegationStatusGroupCard(polls: [vm], kind: .cancel)
             case .delegationStatus:
@@ -45,6 +45,8 @@ struct NodeBody: View {
                     ToolCallCard(vm: vm)
                 }
             }
+        case .delegation(let vm, let later):
+            DelegationTaskCard(vm: vm, later: later)
         case .delegationStatusGroup(let polls):
             DelegationStatusGroupCard(polls: polls)
         case .taskGroup(let ops):

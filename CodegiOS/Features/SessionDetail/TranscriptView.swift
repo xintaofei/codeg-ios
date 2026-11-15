@@ -189,6 +189,9 @@ struct TranscriptView<Header: View>: View {
         var nodes: [TimelineNode] = []
     }
     @State private var persistedMemo = PersistedMemo()
+    /// What the connection knows about the rows; the fold reads its
+    /// delegations (a finished one leaves a folded reply).
+    @Environment(\.activityLive) private var activityLive
 
     /// The first turn index currently shown. When not explicitly expanded, anchors
     /// to the tail (most recent `initialTurnWindow` turns), snapped back to a
@@ -255,7 +258,7 @@ struct TranscriptView<Header: View>: View {
             let open = replyFolds.isOpen(liveTurn.id, isCurrent: true, completed: !liveTurn.isStreaming)
             all.append(contentsOf: TranscriptTimeline.buildLive(liveTurn, agent: agent, replyOpen: open))
         }
-        all = ReplyFolding.apply(all, store: replyFolds)
+        all = ReplyFolding.apply(all, store: replyFolds, live: activityLive)
         // Terminate the rail at its endpoints, on the *combined* list. The top
         // terminates only when the window starts at the true beginning of the
         // conversation; otherwise the spine continues up into the not-yet-loaded

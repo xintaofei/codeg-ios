@@ -13,8 +13,18 @@ struct ActivityLive: Equatable {
     var awaitingToolCallId: String?
     /// The connection's answered permission requests, by tool call id.
     var approvals: ToolApprovalMap
+    /// The connection's delegations as `delegation_started` / `_completed`
+    /// and its snapshots bound them — who took each task and how it stands,
+    /// fresher than anything stamped on the call.
+    var delegations: [DelegationBinding] = []
 
     static let none = ActivityLive(awaitingToolCallId: nil, approvals: ActivityApproval.emptyToolApprovals)
+
+    /// A delegation call's card, read against the live binding (see
+    /// ``DelegationModel/card(_:binding:later:)``).
+    func delegationCard(_ vm: ToolCallVM, later: DelegationTaskRow?) -> DelegationCard? {
+        DelegationModel.card(vm, binding: DelegationModel.binding(for: vm, in: delegations), later: later)
+    }
 
     /// Whether `step` is the call a pending permission request is about. A
     /// call that has already settled is not waiting on anyone, whatever the

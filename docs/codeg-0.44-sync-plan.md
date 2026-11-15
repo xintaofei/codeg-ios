@@ -387,3 +387,24 @@ web 在 `f33285012`（2026-10-22）→ `70b3b389f` → `ce374de4c` 把工具卡�
 - 状态为「已完成」的会话打开时不会去找连接（原有逻辑），所以这种会话上开着的远程控制、过期设置，要到下一次发送后才看得到。
 - VM 里拼的提示文字（选项调整、加载失败原因、重连提示）跟随系统语言而不是应用内语言，和现有提示一致。
 - 远程控制没有二维码；web 的「重连中」提示条在 iOS 上是按钮里的转圈。
+
+### 委派卡实时状态与时间线标记（2026-11-15）
+
+对照 Android（6988bb7、4a3af0c、d3edfac）和 web 0.44（`use-delegation-card-model.ts`、`delegation-rows.tsx`），加上用户的要求「文本步骤用小圆点，只有委派用 agent 图标」。
+
+- **时间线标记**：助手文字从会话 agent 头像改成小圆点（`MarkerKind.prose`，Android `Prose`，脊线照常在标记周围断开）；回复头部保留会话 agent 头像（Android 同）。委派画成接手任务的 agent 的图标，外圈按状态着色（运行中强调色并脉动、等待琥珀、完成绿、失败红），恢复的委派右下角有回放小标；有权限请求在等这次调用时是琥珀色。委派检查（`get_delegation_status` / `cancel_delegation`）是沙漏 / 禁止图标，按所查任务的状态着色（web `pollsStatus`）。
+- **状态来源**（`DelegationModel.card`，Android `Delegations.model` 的移植）：连接的实时绑定（`delegation_started` / `_completed`、快照的 `active_delegations`，经 `ActivityLive.delegations` 在绘制时叠加，不进 memo）→ broker 写在调用 meta 上的 `codeg.delegation` → 调用报错 → 之后一次检查报告的结束状态（web `taskEnding`）→ ack 表示运行中 → 结果 → 完成 → 启动中；运行中而最近一次检查报告卡在用户决定上（`blocked_on` 或 "Awaiting your decision:"）→ 等待。宿主丢掉结构化报告后只剩 "Delegation successful. task_id=…" 文本时仍算 ack（Android 的补丁，也加进了旧的 `resolveStatus`）。
+- **恢复委派**：`resume_delegation` 现在画成同一张委派卡（标「已恢复」、详情里有恢复原因）；它自己的调用 id 不是绑定的键，按参数里的 task id 找绑定，但必须有本次调用自己的证据：结果里的子会话 id 相同，或者在没有结构化报告时结果以 "Delegation resumed" 开头（web `isAffirmedResume`，测试也移植了）。被拒的恢复仍是说明卡。
+- **卡片**（`DelegationTaskCard`，替换 `DelegatedSubThreadCard`）：名字（assistant 名或 agent 名）· #任务 id · 已恢复；右侧状态词带耗时；任务两行；进度行是子任务步数、结束后结果的第一行（进行中是当前步骤）和「打开会话」；展开看完整任务、工作目录、恢复原因、结果（过长时「展开」）。「打开会话」用子智能体查看器按会话 id 读子会话（`get_folder_conversation`，最近 200 轮，按子会话的 in-flight 判定活跃）。
+- **折叠**：回复折叠时委派行只在还在跑时保留；这一步在 memo 之后的 `ReplyFolding.apply` 里按实时绑定判断（web 的 `pinnedOnly` 也是绘制时判断）。
+- **Codex 指出的问题**：屏幕离开期间子任务结束，回来时新快照不再列它，但内存里的「运行中」绑定还在，会压过 meta 的结束状态。现在比所有已应用事件都新的快照没有重述的运行中绑定会被删掉，卡片退回到 meta。
+
+验证：
+- 新增 22 个单元测试（卡片状态优先级、等待、恢复绑定、`isAffirmedResume` 的 web 用例、标记映射、检查状态、构建出的委派节点、折叠、离开期间结束的绑定），全量 1199 个通过。
+- 模拟器对 mock（新增会话 270：快照绑定的运行中委派、按 task id 找到绑定且检查报告等待中的恢复委派；271 是子会话）用临时 XCUITest 驱动，中英文：小圆点和头部头像；委派图标与外圈颜色；`delegation_completed` 到达后卡片原地变「完成」、外圈变绿、「N 运行中」减一；「打开会话」读出子会话；展开详情。
+- Codex：第一轮指出上面的绑定残留，修复后复审 APPROVED。
+
+没做 / 已知：
+- 回复头部的「运行中 / N 失败」汇总仍按 memo 里的信息算，不看实时绑定。
+- web 的实时子会话进度（直接订阅子连接）和运行时长时钟没做；步数和当前步骤来自检查报告。
+- 一条之后几轮才出现的检查只在同一条回复内交给委派卡（Android 做了整个会话的索引）。

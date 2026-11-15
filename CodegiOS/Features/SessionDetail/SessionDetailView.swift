@@ -163,9 +163,10 @@ struct SessionDetailView: View {
         // A sub-agent's session is fetched by a tool card deep inside the
         // transcript, which has no business holding a client — publish the
         // capability instead, the same way the transcript publishes scrolling.
-        .environment(\.agentSessionLoader, AgentSessionLoader { agent, sessionId in
-            try await model.agentSession(agentType: agent, sessionId: sessionId)
-        })
+        .environment(\.agentSessionLoader, AgentSessionLoader(
+            load: { agent, sessionId in try await model.agentSession(agentType: agent, sessionId: sessionId) },
+            loadConversation: { id in try await model.delegatedConversation(id: id) }
+        ))
         // Images in the transcript's Markdown: read through this server, with
         // relative paths resolved against the conversation's own folder.
         .markdownImages(client: client, root: model.folder?.path)
@@ -287,9 +288,11 @@ struct SessionDetailView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // What the connection knows that the transcript doesn't: the call a
-        // permission request waits on, and how the answered ones went.
+        // permission request waits on, how the answered ones went, and who
+        // took each delegated task and how it stands.
         .environment(\.activityLive, ActivityLive(awaitingToolCallId: model.pendingPermission?.toolCallId,
-                                                  approvals: model.toolApprovals))
+                                                  approvals: model.toolApprovals,
+                                                  delegations: model.runs.delegationBindings))
         .animation(.snappy(duration: 0.28), value: model.pendingUserTurns)
         .animation(.snappy(duration: 0.28), value: model.liveTurn?.id)
         .safeAreaInset(edge: .bottom) {

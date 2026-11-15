@@ -81,85 +81,345 @@ struct CompanionStatusBadge: View {
     }
 }
 
-// MARK: - delegate_to_agent
+// MARK: - delegate_to_agent / resume_delegation
 
-/// A self-contained card for a `delegate_to_agent` call: agent avatar + label,
-/// the broker `#taskId`, a status badge, and the delegated task text. Status-only
-/// (iOS has no sub-agent session viewer), so unlike the web there is no
-/// "View session" affordance.
-struct DelegatedSubThreadCard: View {
-    let vm: ToolCallVM
+/// A delegation's status as a colour: quiet when done, loud when it failed or
+/// waits on the user. Shared by the card's rail marker and its checks'.
+enum DelegationTint {
+    static func of(_ status: DelegationCardStatus) -> Color {
+        switch status {
+        case .starting, .running: return Theme.accent
+        case .waiting: return Theme.warning
+        case .ok: return DiffPalette.addText
+        case .err: return Theme.danger
+        }
+    }
+}
+
+/// A delegation's rail marker (web `DelegationIdentityGlyph` in a `RailIcon`):
+/// the logo of the agent that took the task, ringed in how it stands. A resume
+/// wears a small replay mark on its ring.
+struct DelegationRailGlyph: View {
+    let agent: AgentType?
+    let tint: Color
+    let size: CGFloat
+    var resumed = false
 
     var body: some View {
-        // The broker-written `meta["codeg.delegation"]` is the authoritative
-        // terminal status: under async delegation the tool output is only a
-        // running ack, so without the meta the card would read "Running" forever
-        // even after the child finished. It also carries the elapsed time.
-        let meta = DelegationModel.parseDelegationMeta(vm.meta)
-        // An opencode code-mode `execute` carries its arguments inside its JS
-        // `code`; `parseInput` reads them from there too.
-        let input = DelegationModel.parseInput(vm.input)
-        let toolOutput = DelegationModel.parseToolOutput(vm.output, forceError: vm.isError)
-        let hasError = vm.isError || vm.state == .error
-        let status = DelegationModel.resolveStatus(parsedMeta: meta, toolOutput: toolOutput, state: vm.state, hasError: hasError)
-        let taskId = DelegationModel.parseDelegateTaskId(output: vm.output, errorText: nil) ?? meta?.taskId
-        let duration = meta?.durationMs.map { DelegationModel.formatDuration($0) }
-
-        HStack(alignment: .top, spacing: 10) {
-            avatar(input.agentType)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(verbatim: input.agentType?.label ?? String(localized: "Sub-agent"))
-                        .font(Theme.Typography.cardTitle)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    if let taskId {
-                        Text(verbatim: "#" + taskId.prefix(8))
-                            .font(.mono(10.5)).foregroundStyle(Theme.textTertiary)
-                    }
-                    if let duration {
-                        Text(verbatim: duration)
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(Theme.textTertiary)
-                            .fixedSize()
-                    }
-                    Spacer(minLength: 4)
-                    CompanionStatusBadge(status: badgeStatus(status), errorCode: meta?.errorCode)
+        ZStack(alignment: .bottomTrailing) {
+            Group {
+                if let agent {
+                    AgentIcon(agent: agent)
+                        .frame(width: size * 0.56, height: size * 0.56)
+                } else {
+                    Image(systemName: "person.2.fill")
+                        .font(.system(size: size * 0.36, weight: .semibold))
+                        .foregroundStyle(tint)
                 }
-                if let task = input.task, !task.isEmpty {
-                    Text(verbatim: task)
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(width: size, height: size)
+            .background(tint.opacity(0.14), in: Circle())
+            .overlay(Circle().strokeBorder(tint.opacity(0.6), lineWidth: 1))
+            if resumed {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 12, height: 12)
+                    .background(Theme.bg, in: Circle())
+                    .overlay(Circle().strokeBorder(tint.opacity(0.6), lineWidth: 0.75))
+                    .offset(x: 3, y: 2)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+/// One delegation, start to finish (web `DelegationRow`): `Codex  #14be49e7
+/// done · 1m 34s`, the task it was handed, and — once it reports — how far it
+/// got, the first line of what it came back with, and the way into its own
+/// session. Opened, the whole task, where it ran, why it was resumed and the
+/// full result. A `resume_delegation` draws the same card, marked resumed.
+///
+/// How it stands comes from the connection's live binding, then the broker's
+/// stamp on the call, then the newest check on its task (``DelegationCard``).
+/// With nothing to draw it by it falls back to the plain tool card — and a
+/// refused resume to the card that states the refusal.
+struct DelegationTaskCard: View {
+    let vm: ToolCallVM
+    var later: DelegationTaskRow?
+
+    @Environment(\.activityLive) private var live
+    @State private var expanded = false
+    @State private var sessionOpen = false
+
+    var body: some View {
+        if let card = live.delegationCard(vm, later: later) {
+            content(card)
+        } else if let refusal = DelegationModel.resumeRefusal(vm) {
+            RefusedResumeCard(vm: vm, refusal: refusal)
+        } else {
+            ToolCallCard(vm: vm)
+        }
+    }
+
+    /// The call a permission request waits on: the user's to answer.
+    private var awaiting: Bool {
+        (vm.state == .running || vm.state == .inputStreaming) && live.awaitingToolCallId == vm.id
+    }
+
+    private func content(_ card: DelegationCard) -> some View {
+        let taskLine = card.task.map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+            .flatMap { $0.isEmpty ? nil : $0 }
+        let hasDetail = card.task != nil || card.workingDir != nil || card.reason != nil || card.outcome != nil
+        return VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 4) {
+                    titleLine(card, hasDetail: hasDetail)
+                    // The task, until the panel shows it whole.
+                    if !expanded, let taskLine {
+                        Text(verbatim: taskLine)
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard hasDetail else { return }
+                    withAnimation(Theme.Motion.expand) { expanded.toggle() }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(hasDetail ? .isButton : [])
+                .accessibilityValue(hasDetail ? (expanded ? Text("Expanded") : Text("Collapsed")) : Text(verbatim: ""))
+                // Its own element: the way into the child's session is a button.
+                progressLine(card)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            if expanded, hasDetail {
+                Divider().overlay(Theme.hairline)
+                detail(card)
+                    .transition(.opacity)
+            }
+        }
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .hairlineBorder(Theme.Radius.md)
+        // Waiting on the user's approval, it shows what it would hand over.
+        .onChange(of: awaiting, initial: true) { _, now in
+            if now, hasDetail { expanded = true }
+        }
+        .sheet(isPresented: $sessionOpen) {
+            if let child = card.childConversationId {
+                SubAgentSessionSheet(
+                    source: .conversation(child),
+                    agentType: card.agentType ?? .other(wire: ""),
+                    subagentType: card.assistantName ?? card.agentType?.label,
+                    task: card.task,
+                    live: card.working || card.status == .waiting
+                )
+            }
+        }
+    }
+
+    private func titleLine(_ card: DelegationCard, hasDetail: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text(verbatim: card.assistantName ?? card.agentType?.label ?? String(localized: "Sub-agent"))
+                .font(Theme.Typography.cardTitle)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+            if card.assistantName != nil, let agent = card.agentType {
+                Text(verbatim: "· \(agent.label)")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+            }
+            if let taskId = card.taskId {
+                Text(verbatim: "#" + taskId.prefix(8))
+                    .font(.mono(10.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            if card.resumed {
+                Text("Resumed")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Theme.textTertiary.opacity(0.14), in: RoundedRectangle(cornerRadius: 4))
+                    .fixedSize()
+            }
+            Spacer(minLength: 4)
+            statusWord(card)
+                .fixedSize()
+            if hasDetail {
+                Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        }
+    }
+
+    /// How the delegation stands, at the end of its line (web
+    /// `DelegationStatusWord`), with how long it took once it ended.
+    @ViewBuilder
+    private func statusWord(_ card: DelegationCard) -> some View {
+        let took = card.durationMs.flatMap { $0 > 0 ? " · " + DelegationModel.formatDuration($0) : nil } ?? ""
+        Group {
+            if awaiting {
+                Text("needs you").foregroundStyle(Theme.warning)
+            } else {
+                switch card.status {
+                case .starting: Text("Starting").foregroundStyle(Theme.textTertiary)
+                case .running: Text("Running").foregroundStyle(Theme.accent)
+                case .waiting: Text("Waiting").foregroundStyle(Theme.warning)
+                case .ok:
+                    (Text("Done") + Text(verbatim: took)).foregroundStyle(Theme.textSecondary)
+                case .err:
+                    (Text(CompanionStatusBadge.errorLabel(card.errorCode)) + Text(verbatim: took))
+                        .foregroundStyle(Theme.danger)
                 }
             }
         }
-        .padding(12)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
-        .hairlineBorder(Theme.Radius.md)
+        .font(.caption.weight(.semibold))
+        .lineLimit(1)
     }
 
-    @ViewBuilder private func avatar(_ agent: AgentType?) -> some View {
-        if let agent {
-            AgentAvatar(agent: agent, size: 34)
-        } else {
-            Image(systemName: "person.fill.questionmark")
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.textTertiary)
-                .frame(width: 34, height: 34)
-                .background(Theme.surfaceNested, in: Circle())
-                .overlay(Circle().strokeBorder(Theme.hairline, lineWidth: 1))
+    /// The line under the title (web `ProgressLine`): its steps, what it is
+    /// doing now — or, once it ended, the first line of its result — and the
+    /// way into its own session.
+    @ViewBuilder
+    private func progressLine(_ card: DelegationCard) -> some View {
+        let steps = card.progress.flatMap { $0.steps > 0 ? $0.steps : nil }
+        let summary = card.settled ? DelegationModel.previewLine(card.outcome)
+            : (card.working ? card.progress?.lastStep : nil)
+        if steps != nil || summary != nil || card.childConversationId != nil {
+            HStack(spacing: 8) {
+                if let steps {
+                    Text("\(steps) steps")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                Text(verbatim: summary ?? "")
+                    .font(.caption)
+                    .foregroundStyle(card.settled ? Theme.textSecondary : Theme.accent)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if card.childConversationId != nil {
+                    Button {
+                        sessionOpen = true
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("Open session")
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Theme.accent)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                }
+            }
         }
     }
 
-    private func badgeStatus(_ s: DelegationCardStatus) -> BadgeStatus {
-        switch s {
-        case .starting: return .starting
-        case .running:  return .running
-        case .waiting:  return .waiting
-        case .ok:       return .ok
-        case .err:      return .err
+    /// What was handed over, where, why again, and what came back.
+    private func detail(_ card: DelegationCard) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let task = card.task {
+                section("Task") {
+                    // A task is often a whole brief: a screenful until asked for the rest.
+                    ClampedDetail {
+                        Text(verbatim: task.trimmingCharacters(in: .whitespacesAndNewlines))
+                            .font(.footnote)
+                            .foregroundStyle(Theme.textPrimary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            if let dir = card.workingDir {
+                section("Working directory") {
+                    Text(verbatim: dir)
+                        .font(.mono(11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .textSelection(.enabled)
+                }
+            }
+            if let reason = card.reason {
+                section("Why it was resumed") {
+                    // The context passed into the child's continuation, as sent: plain text.
+                    ClampedDetail {
+                        Text(verbatim: reason)
+                            .font(.footnote)
+                            .foregroundStyle(Theme.textPrimary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            if let outcome = card.outcome {
+                section("Result") {
+                    if card.status == .err {
+                        Text(verbatim: outcome.trimmingCharacters(in: .whitespacesAndNewlines))
+                            .font(.footnote)
+                            .foregroundStyle(Theme.danger)
+                            .textSelection(.enabled)
+                    } else {
+                        ClampedDetail { MarkdownContent(raw: outcome) }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private func section<Body: View>(_ title: LocalizedStringKey, @ViewBuilder _ body: () -> Body) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Theme.textTertiary)
+            body()
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// A long body held to a screenful until asked for the rest (web
+/// `useCollapsibleOverflow`), with a Show more / Show less toggle once it
+/// overflows.
+private struct ClampedDetail<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    @State private var expanded = false
+    @State private var contentHeight: CGFloat = 0
+    private static var clampHeight: CGFloat { 220 }
+
+    private var overflowing: Bool { contentHeight > Self.clampHeight }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            content()
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+                .frame(maxHeight: overflowing && !expanded ? Self.clampHeight : nil, alignment: .top)
+                .clipped()
+            if overflowing {
+                Button {
+                    withAnimation(Theme.Motion.expand) { expanded.toggle() }
+                } label: {
+                    Text(expanded ? "Show less" : "Show more")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 }

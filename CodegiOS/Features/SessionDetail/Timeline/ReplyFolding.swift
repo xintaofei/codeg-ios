@@ -5,7 +5,10 @@ import Foundation
 /// so folding or unfolding a reply never invalidates the expensive build.
 @MainActor
 enum ReplyFolding {
-    static func apply(_ nodes: [TimelineNode], store: ReplyFoldStore) -> [TimelineNode] {
+    /// - Parameter live: what the connection knows — a delegation pinned
+    ///   under a folded reply stays only while it still works, and whether it
+    ///   does can be news the memoized build never saw (its live binding).
+    static func apply(_ nodes: [TimelineNode], store: ReplyFoldStore, live: ActivityLive = .none) -> [TimelineNode] {
         // The current round is positional: the newest reply on screen —
         // headerless or not.
         let currentKey = nodes.last { $0.reply != nil }?.reply?.key
@@ -28,7 +31,15 @@ enum ReplyFolding {
                 out.append(node)
             case .body, .foot:
                 if open[reply.key] ?? true { out.append(node) }
-            case .pinned, .always:
+            case .pinned:
+                // Kept in view under a folded reply only while what it stands
+                // for runs (web `pinnedOnly`, decided as the row draws).
+                if !(open[reply.key] ?? true), case .delegation(let vm, let later) = node.content,
+                   live.delegationCard(vm, later: later)?.settled == true {
+                    break
+                }
+                out.append(node)
+            case .always:
                 out.append(node)
             }
         }

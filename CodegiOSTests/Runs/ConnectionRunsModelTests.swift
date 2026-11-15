@@ -183,6 +183,33 @@ private final class Counter {
         #expect(run.binding?.info.taskId == nil, "an empty task id is none")
     }
 
+    @Test func aDelegationThatEndedUnheardLosesItsRunningBinding() throws {
+        let model = ConnectionRunsModel()
+        try model.hydrate(snapshot(seq: 1), connection: "c1")
+        let running = DelegationInfo(parentToolUseId: "call-1", childConnectionId: "child-a",
+                                     childConversationId: 9, agentType: .codex, taskPreview: "fix the build")
+        let done = DelegationInfo(parentToolUseId: "call-2", childConnectionId: "child-b",
+                                  childConversationId: 10, agentType: .gemini, taskPreview: "lint")
+        model.apply(.delegationStarted(running), seq: 2)
+        model.apply(.delegationStarted(done), seq: 3)
+        model.apply(.delegationCompleted(done, succeeded: false, errorCode: "timeout"), seq: 4)
+        // A stale snapshot (from before what was applied) proves nothing.
+        try model.hydrate(snapshot(seq: 3), connection: "c1")
+        #expect(model.delegationBindings.contains { $0.parentToolUseId == "call-1" })
+        // A fresh one that no longer lists call-1: it ended while nobody listened.
+        try model.hydrate(snapshot(seq: 9), connection: "c1")
+        #expect(!model.delegationBindings.contains { $0.parentToolUseId == "call-1" })
+        // What this model saw end stays: it says how it ended.
+        #expect(model.delegationBindings.first { $0.parentToolUseId == "call-2" }?.status == .err)
+        // One the fresh snapshot restates keeps running.
+        model.apply(.delegationStarted(running), seq: 10)
+        try model.hydrate(snapshot(seq: 12, ["active_delegations": [[
+            "parent_tool_use_id": "call-1", "child_connection_id": "child-a", "child_conversation_id": 9,
+            "agent_type": "codex",
+        ] as [String: Any]]]), connection: "c1")
+        #expect(model.delegationBindings.first { $0.parentToolUseId == "call-1" }?.status == .running)
+    }
+
     @Test func aGoneConnectionTakesEverythingWithIt() throws {
         let model = ConnectionRunsModel()
         try model.hydrate(snapshot(seq: 1, ["async_tasks": [row("t1")], "delegated_children": ["x"],

@@ -132,6 +132,14 @@ final class ConnectionRunsModel {
             upsertBinding(DelegationBinding(info: info, status: .running, errorCode: nil))
         }
         guard !stale else { return }
+        // A fresh snapshot restates every delegation still running. One held
+        // here as running that it leaves out ended while nothing listened —
+        // its completion went to nobody — so its binding no longer says how it
+        // stands, and must not outrank the call's own stamp, which does by now.
+        let restated = Set(r.activeDelegations.map(\.parentToolUseId))
+        if delegationBindings.contains(where: { $0.status == .running && !restated.contains($0.parentToolUseId) }) {
+            delegationBindings.removeAll { $0.status == .running && !restated.contains($0.parentToolUseId) }
+        }
         assignIfChanged(\.sessionID, snap.externalId)
         assignIfChanged(\.backgroundTasks, r.backgroundOutstandingTasks)
         assignIfChanged(\.delegatedChildren, r.delegatedChildren)
