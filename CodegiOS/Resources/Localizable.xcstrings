@@ -13225,6 +13225,216 @@
           }
         }
       }
+    },
+    "This session is still using its previous configuration. Reconnect to apply — your conversation history is kept." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前会话仍在使用旧配置，重连后生效（对话历史不会丢失）。"
+          }
+        }
+      }
+    },
+    "Reconnecting also turns off Remote Control." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重连也会关闭远程控制。"
+          }
+        }
+      }
+    },
+    "Model provider updated" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型供应商已更新"
+          }
+        }
+      }
+    },
+    "Agent settings updated" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能体配置已更新"
+          }
+        }
+      }
+    },
+    "Available once the current turn finishes" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前回合结束后可重连"
+          }
+        }
+      }
+    },
+    "Reconnecting…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在重连…"
+          }
+        }
+      }
+    },
+    "Reconnect to apply" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重连以应用"
+          }
+        }
+      }
+    },
+    "Opens, copies or turns off the Remote Control link" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开、复制或关闭远程控制链接"
+          }
+        }
+      }
+    },
+    "Claude Code returned no link for this session" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code 没有返回本会话的链接"
+          }
+        }
+      }
+    },
+    "Open in browser" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在浏览器中打开"
+          }
+        }
+      }
+    },
+    "Copy link" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制链接"
+          }
+        }
+      }
+    },
+    "Turn off" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭"
+          }
+        }
+      }
+    },
+    "Available once Claude has finished" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude 完成当前工作后可用"
+          }
+        }
+      }
+    },
+    "Remote Control is on" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "远程控制已开启"
+          }
+        }
+      }
+    },
+    "Copy command" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制命令"
+          }
+        }
+      }
+    },
+    "Reload" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新加载"
+          }
+        }
+      }
+    },
+    "New conversation" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建会话"
+          }
+        }
+      }
+    },
+    "%@ set %@ to %@ instead of %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ 把%2$@设成了 %3$@，而不是 %4$@"
+          }
+        }
+      }
+    },
+    "%@ couldn’t open this session — it may have ended, been archived, or be open elsewhere. Reload to retry, or start a new conversation." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 无法打开这个会话：它可能已结束、已归档，或正在别处打开。可重新加载重试，或开始新会话。"
+          }
+        }
+      }
+    },
+    "This conversation’s agent session isn’t known yet, so reconnecting now would start it over. Try again after the next reply." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还不知道这个对话对应的智能体会话，现在重连会从头开始，丢掉之前的上下文。请在下一次回复后再试。"
+          }
+        }
+      }
+    },
+    "New configuration applied" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新配置已应用"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

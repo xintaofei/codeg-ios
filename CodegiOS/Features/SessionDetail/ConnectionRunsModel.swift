@@ -7,7 +7,13 @@ import Observation
 /// sends next. The state behind the composer's "N running" chip and its
 /// suggested placeholder (web `ConnectionState.asyncTasks` /
 /// `backgroundTasks` / `delegatedChildren` / `promptSuggestion`, plus the
-/// `DelegationProvider` bindings).
+/// `DelegationProvider` bindings). Also two facts about the connection's
+/// agent process that the screen docks banners for: Claude Code's Remote
+/// Control while it is on, and whether the process still runs on settings a
+/// later save changed (web `remoteControl` / `configStale`). They live here for
+/// the same reasons the rest does: both streams feed them, every snapshot
+/// restates them, and they belong to one connection — a fork ends Remote
+/// Control, and a new connection is a new process on the current settings.
 ///
 /// Fed by BOTH streams on the connection — the turn's (forwarded by the view
 /// model) and the idle ``ConnectionWatcher``'s between turns — which never run
@@ -39,6 +45,15 @@ final class ConnectionRunsModel {
     private(set) var delegationBindings: [DelegationBinding] = []
     /// The predicted next prompt, trimmed; nil when none.
     private(set) var promptSuggestion: String?
+    /// Claude Code's Remote Control while it is on.
+    private(set) var remoteControl: RemoteControlInfo?
+    /// The agent is on its launch-time settings after a later save; nil when not.
+    private(set) var configStale: ConfigStale?
+    /// The connection is running a turn — this screen's, or another client's
+    /// it isn't following. What the banners' actions wait out: restarting the
+    /// agent would kill the turn, and Claude Code refuses `/remote-control`
+    /// while it works.
+    private(set) var isPrompting = false
 
     /// Tasks with a stop on its way. Held here rather than by the rows: a row
     /// leaves with the sheet, and back in view before the adapter answered it
@@ -123,6 +138,9 @@ final class ConnectionRunsModel {
         // Current state like the rest: a stale snapshot never reaches here, so
         // it cannot bring back a prediction a later prompt already spent.
         assignIfChanged(\.promptSuggestion, PromptSuggestionGate.normalized(r.promptSuggestion))
+        assignIfChanged(\.remoteControl, r.remoteControl)
+        assignIfChanged(\.configStale, Self.restated(configStale, stale: r.configStale, kind: r.configStaleKind))
+        assignIfChanged(\.isPrompting, snap.status == .prompting)
         lastSeq = seq
     }
 
@@ -173,10 +191,27 @@ final class ConnectionRunsModel {
         case .promptSuggestion(let text):
             assignIfChanged(\.promptSuggestion, PromptSuggestionGate.normalized(text))
 
-        case .statusChanged(.prompting):
-            // The prediction was for this prompt's place, so it is spent
-            // whatever was sent — and by whichever client.
-            assignIfChanged(\.promptSuggestion, nil)
+        case .statusChanged(let status):
+            assignIfChanged(\.isPrompting, status == .prompting)
+            switch status {
+            case .prompting:
+                // The prediction was for this prompt's place, so it is spent
+                // whatever was sent — and by whichever client.
+                assignIfChanged(\.promptSuggestion, nil)
+            case .disconnected, .error:
+                // Remote Control ran in the agent CLI, which is gone.
+                assignIfChanged(\.remoteControl, nil)
+            case .connecting, .connected:
+                break
+            }
+
+        case .remoteControl(let info):
+            assignIfChanged(\.remoteControl, info)
+
+        case .sessionConfigStale(let stale, let kind):
+            // A fresh drift shows again even after a dismissed one; a reverted
+            // one clears.
+            assignIfChanged(\.configStale, stale ? ConfigStale(kind: kind) : nil)
 
         case .sessionStarted(let id):
             // A CHANGED session id (a fork) strands the task rows: their
@@ -186,6 +221,9 @@ final class ConnectionRunsModel {
             if sessionID != id {
                 assignIfChanged(\.asyncTasks, [])
                 assignIfChanged(\.promptSuggestion, nil)
+                // Remote Control belongs to the session left behind, whose CLI
+                // codeg closes after the fork.
+                assignIfChanged(\.remoteControl, nil)
                 sessionID = id
             }
 
@@ -199,6 +237,23 @@ final class ConnectionRunsModel {
     /// The user sent a prompt from here: the prediction is spent.
     func clearPromptSuggestion() {
         assignIfChanged(\.promptSuggestion, nil)
+    }
+
+    /// Hide the "restart to apply" banner for the drift on screen. Client-local:
+    /// the connection is still stale, and a later drift shows it again.
+    func dismissConfigStale() {
+        guard var stale = configStale, !stale.dismissed else { return }
+        stale.dismissed = true
+        configStale = stale
+    }
+
+    /// A snapshot's staleness, keeping the dismissal of the drift it restates.
+    /// A different kind is a drift this client never saw announced (the event
+    /// fired while nothing here listened), so it shows.
+    static func restated(_ current: ConfigStale?, stale: Bool, kind: ConfigStaleKind?) -> ConfigStale? {
+        guard stale else { return nil }
+        if let current, current.kind == kind { return current }
+        return ConfigStale(kind: kind)
     }
 
     /// The connection is gone: nothing it listed can still be running.
@@ -223,6 +278,9 @@ final class ConnectionRunsModel {
         assignIfChanged(\.delegatedChildren, [])
         assignIfChanged(\.delegationBindings, [])
         assignIfChanged(\.promptSuggestion, nil)
+        assignIfChanged(\.remoteControl, nil)
+        assignIfChanged(\.configStale, nil)
+        assignIfChanged(\.isPrompting, false)
         assignIfChanged(\.stoppingTaskIDs, [])
         stopNotice = nil
     }

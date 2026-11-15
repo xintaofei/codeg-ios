@@ -214,6 +214,13 @@ final class SessionDetailViewModel {
     /// their own stamps besides. Kept for the screen's life: each record is a
     /// fact about one call, true whichever connection the session moves to.
     private(set) var toolApprovals: ToolApprovalMap = ActivityApproval.emptyToolApprovals
+    /// The conversation's agent session couldn't be loaded, for good (web
+    /// `loadError`): the banner offering Reload and a new conversation stands
+    /// where the composer was, since a send would only fail the same way. The
+    /// transcript stays readable above it. Cleared by Reload.
+    private(set) var sessionLoadFailure: SessionLoadFailure?
+    /// "Reconnect to apply" is ending the agent and starting it again.
+    private(set) var isReapplyingConfig = false
     /// A pending `ask_user_question` awaiting the user's answers.
     private(set) var pendingQuestion: PendingQuestion?
     /// A pending Grok `exit_plan_mode` awaiting approve / request-changes / abandon.
@@ -1450,8 +1457,15 @@ final class SessionDetailViewModel {
         // Identity comes from the loaded summary (existing conversation) or the
         // new-task request; without either the screen isn't ready to send.
         guard summary != nil || newRequest != nil else { return }
-        // A fork in flight is re-pointing the session: wait it out in the queue.
-        if overrideText == nil, isInFlight || !queue.isEmpty || isForking {
+        // A fork in flight is re-pointing the session, and "reconnect to
+        // apply" is restarting its agent: wait them out in the queue. (A
+        // message the app wrote waits there too, rather than being dropped.)
+        if overrideText != nil, isReapplyingConfig {
+            queue.enqueue(QueuedPrompt(text: text, attachments: []))
+            scheduleQueueFlush()
+            return
+        }
+        if overrideText == nil, isInFlight || !queue.isEmpty || isForking || isReapplyingConfig {
             queue.enqueue(QueuedPrompt(text: text, attachments: sending))
             draft = ""
             attachments = []
@@ -1475,7 +1489,7 @@ final class SessionDetailViewModel {
     }
 
     private func startSend(text: String, attachments sending: [Attachment], origin: SendOrigin) {
-        guard !isInFlight, !isForking else { return }
+        guard !isInFlight, !isForking, !isReapplyingConfig else { return }
         // A draft (no linked summary yet) needs a folder + agent before it can
         // connect; lock the pickers the moment its first send begins.
         if summary == nil {
@@ -1620,6 +1634,16 @@ final class SessionDetailViewModel {
         } catch is CancellationError {
             if isTornDown { restoreUnsent(text: text, attachments: sending, live: live, userTurnID: userTurnID, origin: origin) }
         } catch {
+            // A resume whose connection was gone before the stream could
+            // attach — the second time running: the server ends a connection
+            // whose `session/load` failed for good, and says why only on that
+            // connection's own stream, which nothing could be listening to
+            // yet. Say it the way the banner says a reported one.
+            if case APIError.streamGone = error, conversationID != nil,
+               !(summary?.externalId ?? "").isEmpty, sessionLoadFailure == nil {
+                sessionLoadFailure = SessionLoadFailure(
+                    message: SessionNotices.sessionLoadUnconfirmed(agent: agentTypeForUI.label), command: nil)
+            }
             rejectSend(error, text: text, attachments: sending, live: live, userTurnID: userTurnID, origin: origin)
         }
     }
@@ -1673,7 +1697,8 @@ final class SessionDetailViewModel {
             followMovedConversation(moved)
             return
         }
-        notice = Self.describe(error)
+        // The load-failure banner already says what went wrong.
+        if sessionLoadFailure == nil { notice = Self.describe(error) }
     }
 
     // MARK: - Moved conversation
@@ -1760,7 +1785,7 @@ final class SessionDetailViewModel {
     private func flushQueueHead() {
         // The SAME readiness the send path needs, checked before dequeuing: a
         // message taken off the queue and then refused by `startSend` is lost.
-        guard !isTornDown, !queueHeld, !queueSteerInFlight, !isInFlight, !isForking,
+        guard !isTornDown, !queueHeld, !queueSteerInFlight, !isInFlight, !isForking, !isReapplyingConfig,
               summary != nil || newRequest != nil else { return }
         if summary == nil, folder == nil || selectedAgent == nil { return }
         guard let head = queue.dequeue() else { return }
@@ -2964,20 +2989,14 @@ final class SessionDetailViewModel {
                 break
             }
 
-        case .sessionNotice(let info):
-            if let text = SessionNotices.present(info) { notice = text }
-
-        case .pluginLoadFailures(let failures):
-            if let text = SessionNotices.present(failures) { notice = text }
+        case .sessionNotice, .pluginLoadFailures, .configOptionRejected:
+            tellAdvisory(event)
 
         case .sessionLoadFailed(let sessionId, let message, let code):
             // A `status_changed: error` follows and ends the turn — with this
             // as its reason rather than a generic "connection errored".
-            let agent = summary?.agentType
-            let text = SessionNotices.sessionLoadFailure(
-                code: code, message: message, sessionId: sessionId,
-                agent: agent?.label ?? String(localized: "The agent"), agentIsCodex: agent == .codex)
-            live.lastNonFatalError = (text, nil)
+            let failure = adoptSessionLoadFailure(sessionId: sessionId, message: message, code: code)
+            live.lastNonFatalError = (failure.message, nil)
 
         case .feedbackSubmitted(let item):
             feedbackNotes.submitted(item)
@@ -3000,10 +3019,11 @@ final class SessionDetailViewModel {
         case .sessionStarted, .conversationStatusChanged, .userPromptSent, .unknown:
             break
 
-        // The connection's running list and predicted prompt: `runs` takes
-        // these straight off the envelope (see `apply(_:to:)`).
+        // The connection's running list, predicted prompt, Remote Control and
+        // staleness: `runs` takes these straight off the envelope (see
+        // `apply(_:to:)`).
         case .asyncTask, .backgroundActivity, .delegationStarted, .delegationCompleted,
-             .delegationChildRunning, .promptSuggestion:
+             .delegationChildRunning, .promptSuggestion, .sessionConfigStale, .remoteControl:
             break
         case .forkSupported(let supported):
             // Emitted once the agent's `initialize` has run — an answer.
@@ -4047,9 +4067,46 @@ extension SessionDetailViewModel {
             // Answered from another client between turns: the call is in the
             // transcript already, and its row takes the chip.
             case .toolApproval(let approval): self.adoptToolApprovals([approval])
+            // Between turns is when most of these happen: a pick from the
+            // options sheet, a settings save, a reconnect's `session/load`.
+            case .sessionNotice, .pluginLoadFailures, .configOptionRejected: self.tellAdvisory(event)
+            case .sessionLoadFailed(let sessionId, let message, let code):
+                self.adoptSessionLoadFailure(sessionId: sessionId, message: message, code: code)
             default: break
             }
         }
+    }
+
+    /// The connection's one-shot advisories, told once on the notice line —
+    /// off the turn stream, or off the watch between turns.
+    private func tellAdvisory(_ event: AcpEvent) {
+        switch event {
+        case .sessionNotice(let info):
+            if let text = SessionNotices.present(info) { notice = text }
+        case .pluginLoadFailures(let failures):
+            if let text = SessionNotices.present(failures) { notice = text }
+        case .configOptionRejected(let rejection):
+            notice = SessionNotices.configOptionAdjusted(rejection, agent: agentTypeForUI.label)
+        default:
+            break
+        }
+    }
+
+    /// A `session_load_failed`, localized by its code, docked as the banner in
+    /// the composer's place. Persisted conversations only: a draft never loads
+    /// a session.
+    @discardableResult
+    private func adoptSessionLoadFailure(sessionId: String, message: String, code: String) -> SessionLoadFailure {
+        let agent = agentTypeForUI
+        let text = SessionNotices.sessionLoadFailure(
+            code: code, message: message, sessionId: sessionId,
+            agent: agent.label, agentIsCodex: agent == .codex)
+        let failure = SessionLoadFailure(
+            message: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? String(localized: "The agent connection errored.") : text,
+            command: SessionNotices.recoveryCommand(code: code, sessionId: sessionId, agentIsCodex: agent == .codex))
+        if conversationID != nil { sessionLoadFailure = failure }
+        return failure
     }
 
     /// Watch the conversation's connection between turns: while the screen is
@@ -4079,6 +4136,101 @@ extension SessionDetailViewModel {
     private func forgetWatchedConnection() {
         watcher.forget()
         runs.clear()
+    }
+
+    // MARK: - Session banners
+
+    /// "Reconnect to apply" (web `reapplyConfig`): a settings change made after
+    /// the agent was spawned only reaches a new process. End this connection
+    /// and resume the same session on a fresh one — the history is the
+    /// agent's, so it is kept. Never mid-turn, this screen's or another
+    /// client's: the turn would die with the process. Messages sent meanwhile
+    /// wait in the queue (see `send`), and go once the fresh one is up.
+    func reapplyConfig() async {
+        guard !isReapplyingConfig, canRestartAgent, let conn = runs.connectionID else { return }
+        isReapplyingConfig = true
+        defer {
+            isReapplyingConfig = false
+            scheduleQueueFlush()
+        }
+        let lifetime = lifecycle
+        // The fresh connection must resume the session the ending one runs,
+        // or the conversation would go on in a new one without its context.
+        // That connection's own word comes first: another client may have
+        // forked it since this screen learned `externalId`. A conversation
+        // this screen created may know neither yet: read it off the row.
+        var session = [runs.sessionID, summary?.externalId].compactMap { $0 }.first { !$0.isEmpty }
+        if session == nil, let id = conversationID,
+           let detail = try? await client.conversationDetail(id: id, tailTurns: 1),
+           lifetime == lifecycle, conversationID == id {
+            session = detail.summary.externalId.flatMap { $0.isEmpty ? nil : $0 }
+        }
+        // Re-checked after the wait, and right before the disconnect with
+        // nothing in between: a turn started meanwhile — another client's —
+        // would die with the process.
+        guard lifetime == lifecycle, runs.connectionID == conn, canRestartAgent else { return }
+        if conversationID != nil {
+            guard let session else {
+                notice = String(localized: "This conversation’s agent session isn’t known yet, so reconnecting now would start it over. Try again after the next reply.")
+                return
+            }
+            // What the next connect resumes (as a fork here sets it).
+            if summary?.externalId != session { summary?.externalId = session }
+        }
+        // A draft has no conversation to lose: its fresh agent starts fresh.
+        do {
+            try await client.disconnect(connectionId: conn)
+        } catch let error as APIError where error.isStaleConnection {
+            // Already gone: there is nothing to end.
+        } catch {
+            if lifetime == lifecycle { notice = Self.describe(error) }
+            return
+        }
+        guard lifetime == lifecycle else { return }
+        // That process and everything it ran — its tasks, its Remote Control,
+        // its stale settings — are no longer this screen's.
+        if connectionID == conn { connectionID = nil }
+        connectionGeneration &+= 1
+        forgetWatchedConnection()
+        do {
+            // Resolves a connection for the screen and watches it, as the
+            // options sheet does between turns.
+            _ = try await resolveConnectionForOptions()
+            if lifetime == lifecycle { notice = String(localized: "New configuration applied") }
+        } catch {
+            // Nothing lost: the next message connects as it always does.
+            if lifetime == lifecycle { notice = Self.describe(error) }
+        }
+    }
+
+    /// Nothing is running that restarting the agent would kill: no turn of
+    /// this screen's, none of another client's, and no fork re-pointing it.
+    private var canRestartAgent: Bool {
+        !isInFlight && !isTurnActive && !isForking && !runs.isPrompting
+    }
+
+    /// Hide the "restart to apply" banner for the drift on screen.
+    func dismissConfigStale() {
+        runs.dismissConfigStale()
+    }
+
+    /// Turn Remote Control off the way the user would (web
+    /// `RemoteControlStrip`): Claude Code's own `/remote-control off`, sent as
+    /// a message, so its reply lands in the transcript the same way. The
+    /// adapter refuses it while Claude works, so it waits for the turn.
+    func turnOffRemoteControl() {
+        guard runs.remoteControl != nil, !isInFlight, !runs.isPrompting else { return }
+        send(overrideText: "/remote-control off")
+    }
+
+    /// The load-failure banner's Reload: drop the dead connection and read the
+    /// conversation anew. The next message tries the session again.
+    func reloadAfterLoadFailure() {
+        sessionLoadFailure = nil
+        connectionID = nil
+        connectionGeneration &+= 1
+        forgetWatchedConnection()
+        retryLoad()
     }
 
     /// A turn the agent started on its own (Claude's `turn` task) just ended.

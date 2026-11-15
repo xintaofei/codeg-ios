@@ -260,6 +260,12 @@ struct ConnectionRunsSnapshot: Hashable, Sendable {
     var delegatedChildren: [String] = []
     var activeDelegations: [DelegationInfo] = []
     var promptSuggestion: String?
+    /// Claude Code's Remote Control while it is on; absent when off.
+    var remoteControl: RemoteControlInfo?
+    /// The running agent is on its launch-time settings after a later save,
+    /// and which settings drifted. Absent on servers that predate it: not stale.
+    var configStale = false
+    var configStaleKind: ConfigStaleKind?
 
     static let empty = ConnectionRunsSnapshot()
 }
@@ -267,6 +273,7 @@ struct ConnectionRunsSnapshot: Hashable, Sendable {
 extension ConnectionRunsSnapshot: Decodable {
     private enum CodingKeys: String, CodingKey {
         case asyncTasks, backgroundOutstandingTasks, delegatedChildren, activeDelegations, promptSuggestion
+        case remoteControl, configStale, configStaleKind
     }
 
     init(from decoder: Decoder) throws {
@@ -277,6 +284,9 @@ extension ConnectionRunsSnapshot: Decodable {
         delegatedChildren = ((try? c.decodeIfPresent([String].self, forKey: .delegatedChildren)) ?? nil) ?? []
         activeDelegations = ((try? c.decodeIfPresent([DelegationInfo].self, forKey: .activeDelegations)) ?? nil) ?? []
         promptSuggestion = (try? c.decodeIfPresent(String.self, forKey: .promptSuggestion)) ?? nil
+        remoteControl = (try? c.decodeIfPresent(RemoteControlInfo.self, forKey: .remoteControl)) ?? nil
+        configStale = ((try? c.decodeIfPresent(Bool.self, forKey: .configStale)) ?? nil) ?? false
+        configStaleKind = ConfigStaleKind(wire: (try? c.decodeIfPresent(String.self, forKey: .configStaleKind)) ?? nil)
     }
 
     /// Decoded from the snapshot object itself, never throwing.

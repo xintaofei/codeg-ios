@@ -355,6 +355,12 @@ struct CodegClient: Sendable {
         catch { throw APIError.decoding(String(describing: error)) }
     }
 
+    /// End a live chat connection: its agent process exits. The next connect
+    /// with the same `sessionId` resumes the conversation on a fresh process.
+    func disconnect(connectionId: String) async throws {
+        _ = try await send("acp_disconnect", body: ConnectionIdBody(connectionId: connectionId))
+    }
+
     /// Set the active mode on a live chat connection.
     func setMode(connectionId: String, modeId: String) async throws {
         _ = try await send("acp_set_mode", body: SetModeBody(connectionId: connectionId, modeId: modeId))

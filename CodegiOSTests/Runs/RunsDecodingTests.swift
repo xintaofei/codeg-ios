@@ -133,10 +133,10 @@ private func event(_ json: String) throws -> AcpEvent {
     }
 
     @Test func unknownTypesStillFallThrough() throws {
-        guard case .unknown(let type) = try event(#"{"type":"remote_control","remote_control":null}"#) else {
+        guard case .unknown(let type) = try event(#"{"type":"tab_title_changed","title":null}"#) else {
             Issue.record("expected unknown"); return
         }
-        #expect(type == "remote_control")
+        #expect(type == "tab_title_changed")
     }
 }
 

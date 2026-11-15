@@ -343,6 +343,16 @@ struct SessionDetailView: View {
                     .transition(.opacity)
                     .zIndex(2)
                 }
+                // Also about the next launch: the running agent is on settings
+                // a later save changed. Reads `runs` in its own body.
+                ConfigStaleBanner(
+                    runs: model.runs,
+                    turnRunning: model.isInFlight,
+                    busy: model.isReapplyingConfig,
+                    onReconnect: { Task { await model.reapplyConfig() } },
+                    onDismiss: { model.dismissConfigStale() }
+                )
+                .zIndex(2)
                 // What the session is doing about a failure right now: the
                 // agent's own retry, or an incident it is reconnecting through.
                 let dock = model.sessionFailureDock
@@ -369,6 +379,13 @@ struct SessionDetailView: View {
                 // own body: a running-list update re-renders the chip alone.
                 LiveRunsChip(runs: model.runs, agentName: model.agentTypeForUI.label)
                     .zIndex(2)
+                // Claude Code's Remote Control, for as long as its CLI runs.
+                RemoteControlChip(
+                    runs: model.runs,
+                    turnRunning: model.isInFlight,
+                    onTurnOff: { model.turnOffRemoteControl() }
+                )
+                .zIndex(2)
                 if !model.isPinnedToBottom {
                     JumpToLatestButton { model.userTappedScrollToBottom() }
                         .padding(.bottom, 10)
@@ -380,35 +397,49 @@ struct SessionDetailView: View {
                         .transition(.opacity)
                         .zIndex(1)
                 }
-                ComposeBar(
-                    text: $model.draft,
-                    isInFlight: model.isInFlight,
-                    notice: model.notice,
-                    attachments: model.attachments,
-                    canAttachMore: model.canAttachMore,
-                    canAttachImages: model.canAttachImages,
-                    onAddAttachments: { model.addAttachments($0) },
-                    onRemoveAttachment: { model.removeAttachment($0) },
-                    onNotice: { model.notice = $0 },
-                    onSend: { model.send() },
-                    onStop: { model.cancel() },
-                    onDismissNotice: { model.notice = nil },
-                    insertModel: model.insertModel,
-                    canSteer: model.canSteer,
-                    steerChannel: model.steerChannel,
-                    isSteering: model.isSteering,
-                    onSteer: { model.steerDraft() },
-                    suggestion: model.promptSuggestionOffer,
-                    onUseSuggestion: { model.usePromptSuggestion() },
-                    suggestions: model.composer
-                )
-                // A fork re-points the session under the composer.
-                .disabled(model.isForking)
+                if let failure = model.sessionLoadFailure {
+                    // In the composer's place: a send would only fail the same
+                    // way. The draft is kept for after a Reload.
+                    SessionLoadFailureBanner(
+                        failure: failure,
+                        onReload: { model.reloadAfterLoadFailure() },
+                        onNewConversation: onOpenSession.map { open in
+                            { open(NewSessionRequest(preselectedFolderID: model.folder?.id)) }
+                        }
+                    )
+                    .transition(.opacity)
+                } else {
+                    ComposeBar(
+                        text: $model.draft,
+                        isInFlight: model.isInFlight,
+                        notice: model.notice,
+                        attachments: model.attachments,
+                        canAttachMore: model.canAttachMore,
+                        canAttachImages: model.canAttachImages,
+                        onAddAttachments: { model.addAttachments($0) },
+                        onRemoveAttachment: { model.removeAttachment($0) },
+                        onNotice: { model.notice = $0 },
+                        onSend: { model.send() },
+                        onStop: { model.cancel() },
+                        onDismissNotice: { model.notice = nil },
+                        insertModel: model.insertModel,
+                        canSteer: model.canSteer,
+                        steerChannel: model.steerChannel,
+                        isSteering: model.isSteering,
+                        onSteer: { model.steerDraft() },
+                        suggestion: model.promptSuggestionOffer,
+                        onUseSuggestion: { model.usePromptSuggestion() },
+                        suggestions: model.composer
+                    )
+                    // A fork re-points the session under the composer.
+                    .disabled(model.isForking)
+                }
             }
             .animation(.snappy(duration: 0.24), value: model.isPinnedToBottom)
             .animation(.snappy(duration: 0.26), value: model.pendingPermission?.id)
             .animation(.snappy(duration: 0.26), value: model.pendingQuestion?.id)
             .animation(.snappy(duration: 0.26), value: model.pendingPlanApproval?.id)
+            .animation(.snappy(duration: 0.26), value: model.sessionLoadFailure)
         }
     }
 }

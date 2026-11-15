@@ -405,12 +405,9 @@ enum SessionNotices {
         case "provider_mismatch":
             return String(localized: "This conversation was started with a different model provider than the one \(agent) uses now, and \(agent) only continues a conversation on its own provider. Switch back to that provider in \(agent)’s settings and reload, or start a new conversation. (\(message))")
         case "session_archived":
-            // A command we invite the user to paste: only a UUID may go into it.
-            let uuid = sessionId.range(
-                of: #"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"#,
-                options: .regularExpression) != nil
-            guard agentIsCodex, uuid else { return message }
-            let command = "codex unarchive \(sessionId)"
+            guard let command = recoveryCommand(code: code, sessionId: sessionId, agentIsCodex: agentIsCodex) else {
+                return message
+            }
             return String(localized: "The previous session was archived on the \(agent) side. Run \(command) in a terminal to restore it and reload, or start a new conversation.")
         default:
             return message

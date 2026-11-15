@@ -140,6 +140,16 @@ enum AcpEvent: Hashable, Sendable, Decodable {
     case forkSupported(supported: Bool)
     /// The agent's slash commands, re-advertised. Replaces the whole list.
     case availableCommands([AvailableCommandInfo])
+    // The connection's advisories and process facts — decoded in `SessionAdvisories.swift`.
+    /// The agent settled a config-option pick elsewhere. Arrives just before
+    /// the `session_config_options` carrying what it adopted.
+    case configOptionRejected(ConfigOptionRejection)
+    /// The agent's settings changed after it was spawned (`stale`), or a drift
+    /// was reverted (`!stale`). Restated by every snapshot.
+    case sessionConfigStale(stale: Bool, kind: ConfigStaleKind?)
+    /// Claude Code's Remote Control turned on (with its link) or off (nil).
+    /// Restated by every snapshot while it is on.
+    case remoteControl(RemoteControlInfo?)
 
     private enum CodingKeys: String, CodingKey {
         case type, text, title, kind, status, content, meta
@@ -325,7 +335,9 @@ enum AcpEvent: Hashable, Sendable, Decodable {
             }
             self = .availableCommands(commands)
         default:
-            self = AcpEvent.decodeRunsEvent(type: type, from: decoder) ?? .unknown(type: type)
+            self = AcpEvent.decodeRunsEvent(type: type, from: decoder)
+                ?? AcpEvent.decodeAdvisoryEvent(type: type, from: decoder)
+                ?? .unknown(type: type)
         }
     }
 
