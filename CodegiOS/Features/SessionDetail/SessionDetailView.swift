@@ -32,6 +32,8 @@ struct SessionDetailView: View {
     /// The conversation whose tags are being edited ("…" → Tags…), as it
     /// stood when the picker opened.
     @State private var tagging: ConversationSummary?
+    /// The conversation being moved ("…" → Move to…).
+    @State private var moving: ConversationSummary?
 
     init(server: ServerProfile, client: CodegClient, conversationID: Int,
          onOpenSession: ((NewSessionRequest) -> Void)? = nil) {
@@ -113,7 +115,8 @@ struct SessionDetailView: View {
                             onShowDetails: { showDetails = true },
                             onDelete: { showDeleteConfirm = true },
                             onShowMessages: { showMessages = true },
-                            onEditTags: { tagging = model.summary }
+                            onEditTags: { tagging = model.summary },
+                            onMove: { moving = model.summary }
                         )
                     }
                 }
@@ -145,10 +148,19 @@ struct SessionDetailView: View {
         .sheet(item: $tagging) { conversation in
             TagPickerSheet(conversation: conversation, client: client)
         }
+        .sheet(item: $moving) { conversation in
+            MoveConversationSheet(conversation: conversation, client: client) { folder, label in
+                model.move(to: folder, label: label)
+            }
+        }
         // The picker's writes land after it closes too: keep the row's tags
         // current, so reopening it starts from what the server now holds.
         .onReceive(NotificationCenter.default.publisher(for: .conversationTagsDidChange)) { note in
             if let change = note.object as? ConversationTagsChange { model.applyTagChange(change) }
+        }
+        // Moved from the Chats list beside this screen (iPad).
+        .onReceive(NotificationCenter.default.publisher(for: .conversationDidMove)) { note in
+            if let change = note.object as? ConversationMovedChange { model.adoptMove(change) }
         }
         // Presented from a SNAPSHOT taken when it opens, not from the live
         // `piTrustNotice`: answering clears that notice, and a sheet whose body
@@ -535,6 +547,8 @@ private struct SessionActionsMenu: View {
     var onShowMessages: () -> Void = {}
     /// Opens the tag picker.
     var onEditTags: () -> Void = {}
+    /// Opens "Move to…".
+    var onMove: () -> Void = {}
 
     var body: some View {
         Menu {
@@ -572,6 +586,14 @@ private struct SessionActionsMenu: View {
                 }
             } label: {
                 Label("Change Status", systemImage: "circle.dashed")
+            }
+            // A sub-session moves with its parent; a running turn would only be
+            // skipped as busy, so the item waits for the turn to end.
+            if model.canMoveConversation {
+                Button(action: onMove) {
+                    Label("Move to…", systemImage: "folder")
+                }
+                .disabled(!model.canMoveNow)
             }
             Divider()
             Button(role: .destructive, action: onDelete) {

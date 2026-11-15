@@ -128,17 +128,22 @@ struct SessionSectionFullScreen: View {
     var rowTags: (ConversationSummary) -> RowTags = { _ in .none }
     let onOpen: (Int) -> Void
     var onTogglePin: ((ConversationSummary) -> Void)?
-    /// The server the rows' "Tags…" sheet talks to; nil offers no tag editing.
-    /// The sheet is presented from inside this cover (see ``SessionRowSheets``).
-    var tagClient: CodegClient?
+    /// What the rows' "Tags…" / "Move to…" do; nil offers neither. Their
+    /// sheets are presented from inside this cover (see ``SessionRowSheets``).
+    var rowActions: SessionRowActions?
+    /// A move's outcome, told over this cover too (it ran from here).
+    var notice: String?
+    var onDismissNotice: () -> Void = {}
     /// Dismisses the fullscreen. The host drives this by clearing the cover's
     /// item binding (`expandedSection = nil`) — the same path the row-open flow
     /// uses. `@Environment(\.dismiss)` is a no-op for a cover presented with
     /// `.navigationTransition(.zoom)`, so the close button reports up instead.
     let onClose: () -> Void
 
-    /// The conversation whose tags are being edited from a row's menu.
+    /// The conversation whose tags are being edited, or whose move is open,
+    /// from a row's menu.
     @State private var tagging: ConversationSummary?
+    @State private var moving: ConversationSummary?
 
     /// "N sessions total" eyebrow shown above the big title.
     private var totalLabel: LocalizedStringKey {
@@ -162,7 +167,8 @@ struct SessionSectionFullScreen: View {
                         onTap: { onOpen(conv.id) },
                         onTogglePin: onTogglePin.map { toggle in { toggle(conv) } },
                         rowTags: rowTags(conv),
-                        onEditTags: tagClient == nil ? nil : { tagging = conv }
+                        onEditTags: rowActions == nil ? nil : { tagging = conv },
+                        onMove: rowActions == nil ? nil : { moving = conv }
                     )
                     .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
                     .listRowSeparator(.hidden)
@@ -187,11 +193,8 @@ struct SessionSectionFullScreen: View {
                 }
             }
         }
-        .sheet(item: $tagging) { conversation in
-            if let tagClient {
-                TagPickerSheet(conversation: conversation, client: tagClient)
-            }
-        }
+        .transientNotice(notice, dismiss: onDismissNotice)
+        .sessionRowSheets(rowActions, tagging: $tagging, moving: $moving)
     }
 
     /// Big left-aligned group title with a small total-count eyebrow above it —

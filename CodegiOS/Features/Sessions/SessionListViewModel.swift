@@ -50,6 +50,8 @@ final class SessionListViewModel {
     private(set) var isRefreshing = false
     /// User-facing error message for the most recent load/refresh/pin, if it failed.
     private(set) var error: String?
+    /// A one-shot line (a move's outcome), shown for a few seconds.
+    private(set) var notice: String?
 
     /// Monotonic token so a slow fetch can't clobber a newer one's results.
     private var fetchGeneration = 0
@@ -259,6 +261,38 @@ final class SessionListViewModel {
             }
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    // MARK: - Moving
+
+    func dismissNotice() { notice = nil }
+
+    /// Move `conversation` to `folder` (named `label` in the outcome). Nothing
+    /// optimistic: the server decides — a busy conversation is skipped — and
+    /// the refetch after it shows where everything landed.
+    func move(_ conversation: ConversationSummary, to folder: FolderDetail, label: String) async {
+        let result: MoveConversationsResult
+        do {
+            result = try await client.moveConversations(conversationIds: [conversation.id], targetFolderId: folder.id)
+        } catch {
+            notice = ConversationMove.failure(error)
+            return
+        }
+        notice = ConversationMove.message(for: result, conversationID: conversation.id, folderName: label)
+        guard !result.moved.isEmpty else { return }
+        if result.moved.contains(conversation.id) {
+            // A session screen open on it lets go of the old folder's connection.
+            NotificationCenter.default.post(
+                name: .conversationDidMove,
+                object: ConversationMovedChange(endpoint: client.baseURL.absoluteString,
+                                                conversationID: conversation.id, folderID: folder.id)
+            )
+        }
+        // Other screens holding the row (Activity, the folder lists) refetch.
+        NotificationCenter.default.post(name: .conversationsDidChange, object: nil)
+        // Not `refresh()`: one already running may predate the move, and this
+        // one supersedes it.
+        await fetch(isInitial: false)
     }
 
     // MARK: - Loading

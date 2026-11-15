@@ -221,6 +221,16 @@ final class SessionDetailViewModel {
     private(set) var sessionLoadFailure: SessionLoadFailure?
     /// "Reconnect to apply" is ending the agent and starting it again.
     private(set) var isReapplyingConfig = false
+    /// A move to another folder is on its way (`move(to:label:)`). Like a fork,
+    /// it re-points the session: sends — and the queue — wait for it, since one
+    /// going out meanwhile would connect in whichever folder it caught, and the
+    /// server's teardown of the old folder's connection would cut its stream.
+    private(set) var isMoving = false
+    /// The move in flight. Deliberately NOT cancelled by `teardown`: the server
+    /// moves the row whatever happens here, and its answer is what tells this
+    /// model to let go of the old folder's connection — a screen that comes
+    /// back must not resend on it.
+    private var moveTask: Task<Void, Never>?
     /// A pending `ask_user_question` awaiting the user's answers.
     private(set) var pendingQuestion: PendingQuestion?
     /// A pending Grok `exit_plan_mode` awaiting approve / request-changes / abandon.
@@ -1464,15 +1474,16 @@ final class SessionDetailViewModel {
         // Identity comes from the loaded summary (existing conversation) or the
         // new-task request; without either the screen isn't ready to send.
         guard summary != nil || newRequest != nil else { return }
-        // A fork in flight is re-pointing the session, and "reconnect to
-        // apply" is restarting its agent: wait them out in the queue. (A
-        // message the app wrote waits there too, rather than being dropped.)
-        if overrideText != nil, isReapplyingConfig {
+        // A fork or a move in flight is re-pointing the session, and
+        // "reconnect to apply" is restarting its agent: wait them out in the
+        // queue. (A message the app wrote waits there too, rather than being
+        // dropped.)
+        if overrideText != nil, isReapplyingConfig || isMoving {
             queue.enqueue(QueuedPrompt(text: text, attachments: []))
             scheduleQueueFlush()
             return
         }
-        if overrideText == nil, isInFlight || !queue.isEmpty || isForking || isReapplyingConfig {
+        if overrideText == nil, isInFlight || !queue.isEmpty || isForking || isReapplyingConfig || isMoving {
             queue.enqueue(QueuedPrompt(text: text, attachments: sending))
             draft = ""
             attachments = []
@@ -1496,7 +1507,7 @@ final class SessionDetailViewModel {
     }
 
     private func startSend(text: String, attachments sending: [Attachment], origin: SendOrigin) {
-        guard !isInFlight, !isForking, !isReapplyingConfig else { return }
+        guard !isInFlight, !isForking, !isReapplyingConfig, !isMoving else { return }
         // A draft (no linked summary yet) needs a folder + agent before it can
         // connect; lock the pickers the moment its first send begins.
         if summary == nil {
@@ -1720,19 +1731,32 @@ final class SessionDetailViewModel {
     /// The message is not resent on its own: `rejectSend` already put it back in
     /// the composer (or at the front of the held queue) to send again.
     private func followMovedConversation(_ moved: ConversationMoved) {
-        connectionID = nil
-        // An options resolution in flight was made for the old folder's agent.
-        connectionGeneration &+= 1
-        // Point the next send at the new folder right away when it is known, so
-        // a quick resend does not launch another agent in the old one.
-        if let id = moved.folderId, let target = allFolders.first(where: { $0.id == id }) {
-            folder = target
-            currentBranch = target.gitBranch
-        }
+        repointAfterMove(to: moved.folderId.flatMap { id in allFolders.first { $0.id == id } })
         let placeholder = Self.movedNotice(folderName: moved.folderId.flatMap(movedFolderName(id:)))
         notice = placeholder
         notifyConversationsChanged()
+        rereadMovedConversation(replacingNotice: placeholder)
+    }
 
+    /// Let go of the connection started in the folder the conversation left —
+    /// the next send finds or starts one where it is now — and point that send
+    /// at `target` right away when it is known, so a quick resend does not
+    /// launch another agent in the old folder. Shared by the move this screen
+    /// makes and the one a refused send discovers.
+    private func repointAfterMove(to target: FolderDetail?) {
+        connectionID = nil
+        // An options resolution in flight was made for the old folder's agent.
+        connectionGeneration &+= 1
+        if let target {
+            folder = target
+            currentBranch = target.gitBranch
+        }
+    }
+
+    /// Re-read the row and the folders after a move, bound to the lifetime it
+    /// was asked in. `placeholder` is the notice put up before the folder's name
+    /// was known; it is restated with the name once the re-read brings it.
+    private func rereadMovedConversation(replacingNotice placeholder: String?) {
         guard let id = conversationID else { return }
         let lifetime = lifecycle
         relocationTask?.cancel()
@@ -1751,9 +1775,80 @@ final class SessionDetailViewModel {
             self.currentBranch = detail.summary.gitBranch ?? self.folder?.gitBranch
             self.refreshPiTrust()
             // The folder may only be known now (created after this screen loaded).
-            if self.notice == placeholder {
+            if let placeholder, self.notice == placeholder {
                 self.notice = Self.movedNotice(folderName: self.movedFolderName(id: detail.summary.folderId))
             }
+        }
+    }
+
+    // MARK: - Move to another folder
+
+    /// "Move to…" is offered: a root regular / chat conversation.
+    var canMoveConversation: Bool { canManageConversation && summary?.isMovable == true }
+
+    /// …and can run now: between turns (a running one would only be skipped as
+    /// busy), and with nothing else re-pointing the session.
+    var canMoveNow: Bool {
+        canMoveConversation && !isInFlight && !isTurnActive && !isMoving && !isForking && !isReapplyingConfig
+    }
+
+    /// Move this conversation to `target` (`label` names it in the outcome).
+    /// Nothing optimistic: the server decides, and skips a busy conversation.
+    /// On a move the server ends the idle connection, so the next send connects
+    /// afresh in the new folder and resumes the session there. Sends wait
+    /// meanwhile (`isMoving`), and the queue goes once it is done.
+    func move(to target: FolderDetail, label: String) {
+        guard canMoveNow, let id = conversationID else { return }
+        isMoving = true
+        notice = nil
+        let lifetime = lifecycle
+        moveTask = Task { [weak self] in
+            await self?.runMove(conversationID: id, to: target, label: label, lifetime: lifetime)
+        }
+    }
+
+    /// The Chats list moved this conversation (the iPad split shows both). The
+    /// server ended the idle connection in the old folder; let go of it and
+    /// point the next send at the new one now, rather than finding out from a
+    /// refused send. A send of this screen's in flight means the server skipped
+    /// the move as busy, so there is nothing to follow then.
+    func adoptMove(_ change: ConversationMovedChange) {
+        guard change.endpoint == client.baseURL.absoluteString, change.conversationID == conversationID,
+              summary?.folderId != change.folderID, !isMoving, !isForking, !isInFlight else { return }
+        forgetWatchedConnection()
+        repointAfterMove(to: allFolders.first { $0.id == change.folderID })
+        summary?.folderId = change.folderID
+        rereadMovedConversation(replacingNotice: nil)
+    }
+
+    private func runMove(conversationID id: Int, to target: FolderDetail, label: String, lifetime: Int) async {
+        defer {
+            isMoving = false
+            // Whatever was sent while the move was out goes now — where the
+            // conversation is now.
+            scheduleQueueFlush()
+        }
+        let result: MoveConversationsResult
+        do {
+            result = try await client.moveConversations(conversationIds: [id], targetFolderId: target.id)
+        } catch {
+            if lifetime == lifecycle { notice = ConversationMove.failure(error) }
+            return
+        }
+        guard conversationID == id else { return }
+        if result.moved.contains(id) {
+            // Off the old connection first — the server has ended it, and its
+            // end must not read as anything this screen should react to. This
+            // much holds whether or not the screen is still up: a screen that
+            // comes back must not resend on a connection in the old folder.
+            forgetWatchedConnection()
+            repointAfterMove(to: target)
+            summary?.folderId = target.id
+            notifyConversationsChanged()
+            if lifetime == lifecycle { rereadMovedConversation(replacingNotice: nil) }
+        }
+        if lifetime == lifecycle {
+            notice = ConversationMove.message(for: result, conversationID: id, folderName: label)
         }
     }
 
@@ -1792,7 +1887,7 @@ final class SessionDetailViewModel {
     private func flushQueueHead() {
         // The SAME readiness the send path needs, checked before dequeuing: a
         // message taken off the queue and then refused by `startSend` is lost.
-        guard !isTornDown, !queueHeld, !queueSteerInFlight, !isInFlight, !isForking, !isReapplyingConfig,
+        guard !isTornDown, !queueHeld, !queueSteerInFlight, !isInFlight, !isForking, !isReapplyingConfig, !isMoving,
               summary != nil || newRequest != nil else { return }
         if summary == nil, folder == nil || selectedAgent == nil { return }
         guard let head = queue.dequeue() else { return }
@@ -4287,9 +4382,9 @@ extension SessionDetailViewModel {
     }
 
     /// Nothing is running that restarting the agent would kill: no turn of
-    /// this screen's, none of another client's, and no fork re-pointing it.
+    /// this screen's, none of another client's, and no fork or move re-pointing it.
     private var canRestartAgent: Bool {
-        !isInFlight && !isTurnActive && !isForking && !runs.isPrompting
+        !isInFlight && !isTurnActive && !isForking && !isMoving && !runs.isPrompting
     }
 
     /// Hide the "restart to apply" banner for the drift on screen.
@@ -4390,7 +4485,7 @@ extension SessionDetailViewModel {
     /// A settled-but-unreconciled reply (a stopped turn's) does not block: it
     /// belongs to the pre-fork history and is dropped when the fork lands.
     var canForkNow: Bool {
-        guard conversationID != nil, summary != nil, !isForking else { return false }
+        guard conversationID != nil, summary != nil, !isForking, !isMoving else { return false }
         guard !isInFlight, !isTurnActive, pendingUserTurns.isEmpty, reconcileDepth == 0 else { return false }
         guard pendingPermission == nil, pendingQuestion == nil, pendingPlanApproval == nil else { return false }
         if summary?.status == .inProgress { return false }

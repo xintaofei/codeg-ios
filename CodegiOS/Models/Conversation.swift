@@ -78,6 +78,22 @@ enum FolderKind: String, Codable, Hashable, Sendable {
     }
 }
 
+/// Conversation classification (Rust `ConversationKind`): what a row is for,
+/// which decides where it lists and whether it may move. `.other` is the escape
+/// hatch for an unknown wire value, so one new kind can't fail a whole list.
+enum ConversationKind: String, Codable, Hashable, Sendable {
+    case regular
+    case chat
+    case loop
+    case delegate
+    case other = ""
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = ConversationKind(rawValue: raw) ?? .other
+    }
+}
+
 /// Lifecycle status of a conversation row. Stored as a free-form string on the
 /// wire; modeled as an enum with an `.other` escape hatch.
 enum ConversationStatus: String, Codable, Hashable, Sendable {
@@ -144,7 +160,9 @@ extension Notification.Name {
 /// A conversation/session persisted on a server (Rust `DbConversationSummary`).
 struct ConversationSummary: Codable, Identifiable, Hashable, Sendable {
     let id: Int
-    let folderId: Int
+    /// `var` so a move made from the session screen re-points it at once (the
+    /// re-read that follows brings the rest of the row).
+    var folderId: Int
     /// `var` so the detail screen can optimistically reflect a rename before the
     /// server confirms (mirrors `pinnedAt`).
     var title: String?
@@ -167,6 +185,9 @@ struct ConversationSummary: Codable, Identifiable, Hashable, Sendable {
     /// Note: pinning does NOT bump `updatedAt` server-side — the "Pinned" group
     /// sorts by this timestamp instead.
     var pinnedAt: Date? = nil
+    /// Server `kind`: `regular`, `chat`, `loop` or `delegate`. Absent (nil) on
+    /// a server that predates it, which only matters for what may move.
+    var kind: ConversationKind? = nil
     /// The delegating conversation, on a delegation child (a sub-session);
     /// absent on a root row.
     var parentId: Int? = nil
@@ -176,7 +197,7 @@ struct ConversationSummary: Codable, Identifiable, Hashable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, folderId, title, agentType, status, model, gitBranch, externalId
-        case messageCount, createdAt, updatedAt, pinnedAt, parentId
+        case messageCount, createdAt, updatedAt, pinnedAt, kind, parentId
         // `.convertFromSnakeCase` has already turned `tag_ids` into this.
         case wireTagIds = "tagIds"
     }
@@ -188,6 +209,18 @@ struct ConversationSummary: Codable, Identifiable, Hashable, Sendable {
     var tagIds: [Int] {
         get { wireTagIds ?? [] }
         set { wireTagIds = newValue.isEmpty ? nil : newValue }
+    }
+
+    /// Whether it may be moved to another folder (`move_conversations`): a root
+    /// conversation, regular or chat (web `sidebar-conversation-card`). A
+    /// sub-session moves with its parent and a loop never moves. A server that
+    /// sends no kind leaves a root row movable — it judges each move anyway.
+    var isMovable: Bool {
+        guard parentId == nil else { return false }
+        switch kind {
+        case nil, .regular?, .chat?: return true
+        default: return false
+        }
     }
 
     /// Whether it carries tags of its own: root rows only. A sub-session is a

@@ -172,6 +172,16 @@ struct CodegClient: Sendable {
                            body: UpdateConversationStatusBody(conversationId: conversationId, status: status.rawValue))
     }
 
+    /// Move root conversations (their delegation children with them) to another
+    /// OPEN folder (server `move_conversations`). The agent works there from the
+    /// next connection on; an idle connection is torn down server-side, and a
+    /// busy conversation is skipped instead. Each conversation is judged on its
+    /// own — only an unusable target fails the whole call.
+    func moveConversations(conversationIds: [Int], targetFolderId: Int) async throws -> MoveConversationsResult {
+        try await postJSON("move_conversations",
+                           MoveConversationsBody(conversationIds: conversationIds, targetFolderId: targetFolderId))
+    }
+
     /// Permanently delete a conversation (server `delete_conversation`). Response is `null`.
     func deleteConversation(conversationId: Int) async throws {
         _ = try await send("delete_conversation",

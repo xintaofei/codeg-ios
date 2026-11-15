@@ -41,8 +41,10 @@ struct SessionListView: View {
     /// fullscreen's `.navigationTransition(.zoom)`.
     @Namespace private var cardNS
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    /// The conversation whose tags are being edited from a row's menu.
+    /// The conversation whose tags are being edited, or whose move is open,
+    /// from a row's menu.
     @State private var tagging: ConversationSummary?
+    @State private var moving: ConversationSummary?
     @State private var showTagFilter = false
 
     init(
@@ -156,9 +158,18 @@ struct SessionListView: View {
         .onReceive(NotificationCenter.default.publisher(for: .conversationTagDefinitionsDidChange)) { _ in
             Task { await viewModel.reloadTagDefinitions() }
         }
-        .sessionRowSheets(client: client, tagging: $tagging)
+        .sessionRowSheets(rowActions, tagging: $tagging, moving: $moving)
         .sheet(isPresented: $showTagFilter) {
             TagFilterSheet(viewModel: viewModel, client: client)
+        }
+        .transientNotice(viewModel.notice) { viewModel.dismissNotice() }
+    }
+
+    /// What the rows' menus run. A move is the list model's: it tells the
+    /// outcome and refetches where everything landed.
+    private var rowActions: SessionRowActions {
+        SessionRowActions(client: client) { conversation, folder, label in
+            Task { await viewModel.move(conversation, to: folder, label: label) }
         }
     }
 
@@ -299,7 +310,8 @@ struct SessionListView: View {
                     onTap: { select(conv) },
                     onTogglePin: { togglePin(conv) },
                     rowTags: viewModel.rowTags(for: conv),
-                    onEditTags: { tagging = conv }
+                    onEditTags: { tagging = conv },
+                    onMove: { moving = conv }
                 )
             }
         }
@@ -324,7 +336,9 @@ struct SessionListView: View {
             // instead of zooming back to this list and pushing afterward.
             onOpen: { id in open(id: id); expandedSection = nil },
             onTogglePin: { conv in togglePin(conv) },
-            tagClient: client,
+            rowActions: rowActions,
+            notice: viewModel.notice,
+            onDismissNotice: { viewModel.dismissNotice() },
             onClose: { expandedSection = nil }
         )
         .navigationTransition(.zoom(sourceID: section.id, in: cardNS))

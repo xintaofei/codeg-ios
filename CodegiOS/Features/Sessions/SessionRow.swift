@@ -26,6 +26,9 @@ struct SessionRow: View {
     /// When set, the context menu offers "Tags…" — on a root row only (a
     /// sub-session carries no tags of its own).
     var onEditTags: (() -> Void)? = nil
+    /// When set, the context menu offers "Move to…" — for a conversation that
+    /// may move (a root regular or chat row).
+    var onMove: (() -> Void)? = nil
 
     var body: some View {
         if let onTap {
@@ -41,6 +44,11 @@ struct SessionRow: View {
                     if let onEditTags, conversation.canCarryTags {
                         Button(action: onEditTags) {
                             Label("Tags…", systemImage: "tag")
+                        }
+                    }
+                    if let onMove, conversation.isMovable {
+                        Button(action: onMove) {
+                            Label("Move to…", systemImage: "folder")
                         }
                     }
                 }
