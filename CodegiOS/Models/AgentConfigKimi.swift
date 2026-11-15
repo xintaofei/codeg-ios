@@ -109,6 +109,36 @@ func kimiBaseUrlForRegion(_ region: KimiEndpointRegion, _ customUrl: String) -> 
     }
 }
 
+/// The context window the backend writes when a save sends none: Kimi's schema
+/// requires `max_context_size` on the managed model block, so it is never
+/// omitted. Pre-filled into the field so the form shows what lands on disk.
+let kimiDefaultMaxContextSize = 262_144
+
+/// `capabilities` entries that make `kimi acp` advertise its Thinking picker
+/// (backend `KIMI_CAPABILITY_THINKING` / `KIMI_CAPABILITY_ALWAYS_THINKING`).
+let kimiCapabilityThinking = "thinking"
+let kimiCapabilityAlwaysThinking = "always_thinking"
+
+/// The Kimi save body to actually send. An `apikey` save makes the backend
+/// REBUILD the managed model block, reading an absent `reasoningEnabled` as
+/// off and dropping `capabilities` / `support_efforts` / `default_effort` —
+/// the composer's Thinking picker would silently disappear. This panel has no
+/// reasoning editor, so it hands back the declaration already on disk, read
+/// from `freshConfigJson` (the live `acp_list_agents` projection re-read at
+/// save time, not the copy the panel opened with, so a change made elsewhere
+/// meanwhile isn't reverted). `login` clears the block and `raw` writes
+/// verbatim TOML, so both pass through untouched.
+func kimiBodyForSave(_ body: UpdateKimiCodeConfigBody, freshConfigJson: String?) -> UpdateKimiCodeConfigBody {
+    guard body.mode == "apikey" else { return body }
+    let onDisk = KimiManagedConfig.parse(freshConfigJson)
+    var out = body
+    out.reasoningEnabled = onDisk.reasoningEnabled
+    out.alwaysThinking = onDisk.alwaysThinking
+    out.supportEfforts = onDisk.supportEfforts
+    out.defaultEffort = onDisk.defaultEffort
+    return out
+}
+
 /// Mirror of the backend `load_kimi_code_config_json` projection (camelCase keys),
 /// parsed from `AcpAgentInfo.configJson`. Deliberately NOT `apiKey`/`model`/`env`
 /// so the projected block never leaks back into the runtime env.
@@ -127,6 +157,21 @@ struct KimiManagedConfig: Sendable {
     /// Whether that gate token is codeg's synthetic one (vs a real OAuth login).
     var credentialSynthetic: Bool?
     var rawConfigToml: String?
+    /// `[models.<alias>].capabilities` as written on disk. A `thinking` /
+    /// `always_thinking` entry is what makes `kimi acp` offer its Thinking
+    /// picker at all.
+    var capabilities: [String] = []
+    /// `support_efforts`: the reasoning levels the composer offers.
+    var supportEfforts: [String] = []
+    /// `default_effort`: the level the picker opens on.
+    var defaultEffort: String?
+
+    /// Kimi's own `supportsThinking`: either capability turns the picker on.
+    var reasoningEnabled: Bool {
+        capabilities.contains(kimiCapabilityThinking) || capabilities.contains(kimiCapabilityAlwaysThinking)
+    }
+    /// The always-on flavour: the picker has no Off row.
+    var alwaysThinking: Bool { capabilities.contains(kimiCapabilityAlwaysThinking) }
 
     /// Parse the config_json string. Missing/unparseable → an empty config (the
     /// panel treats that as "not configured yet"). Unknown enum values fall back to
@@ -149,6 +194,15 @@ struct KimiManagedConfig: Sendable {
         c.credentialPresent = obj["credentialPresent"] as? Bool
         c.credentialSynthetic = obj["credentialSynthetic"] as? Bool
         c.rawConfigToml = obj["rawConfigToml"] as? String
+        func strings(_ key: String) -> [String] {
+            ((obj[key] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
+        c.capabilities = strings("capabilities")
+        c.supportEfforts = strings("supportEfforts")
+        if let effort = (obj["defaultEffort"] as? String)?.trimmingCharacters(in: .whitespaces), !effort.isEmpty {
+            c.defaultEffort = effort
+        }
         return c
     }
 }

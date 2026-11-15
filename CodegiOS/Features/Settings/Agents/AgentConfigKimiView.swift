@@ -48,7 +48,9 @@ struct KimiConfigSection: View {
         _authType = State(initialValue: c.authType ?? .apiKey)
         _apiKey = State(initialValue: c.key ?? "")
         _modelId = State(initialValue: c.modelId ?? "")
-        _maxContext = State(initialValue: c.maxContextSize.map(String.init) ?? "")
+        // Kimi's schema requires `max_context_size`, so the backend writes its
+        // default when the field is blank; show that number instead of an empty box.
+        _maxContext = State(initialValue: String(c.maxContextSize ?? kimiDefaultMaxContextSize))
         _vertexProject = State(initialValue: c.vertexProject ?? "")
         _vertexLocation = State(initialValue: c.vertexLocation ?? "")
         _rawConfig = State(initialValue: c.rawConfigToml ?? "")
@@ -156,7 +158,7 @@ struct KimiConfigSection: View {
         FieldRow(label: "Max context size (optional)") {
             TextField("262144", text: $maxContext).agentField().keyboardType(.numberPad)
         }
-        caption("Tokens, e.g. 262144. Leave blank to use the model default.")
+        caption("Tokens. Left blank, 262144 is written.")
     }
 
     private var modelSuggestionsMenu: some View {

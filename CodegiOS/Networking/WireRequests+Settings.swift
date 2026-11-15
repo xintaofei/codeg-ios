@@ -252,6 +252,10 @@ struct UpdateHermesConfigBody: Encodable, Sendable {
 /// `acp_update_kimi_code_config` — discriminated on `mode` (`apikey`|`login`|`raw`).
 /// camelCase wire (matches the backend `rename_all="camelCase"`); nil optionals are
 /// omitted, which the backend's `#[serde(default)]` reads as absent (same as null).
+///
+/// The four reasoning fields are NOT "leave alone when absent": an `apikey` save
+/// rebuilds the whole managed model block from this body, so every one must
+/// echo what is on disk — see `kimiBodyForSave`.
 struct UpdateKimiCodeConfigBody: Encodable, Sendable {
     let mode: String
     var interfaceType: String?
@@ -263,6 +267,14 @@ struct UpdateKimiCodeConfigBody: Encodable, Sendable {
     var vertexProject: String?
     var vertexLocation: String?
     var rawConfigToml: String?
+    /// Declares a thinking capability: what makes `kimi acp` offer its Thinking picker.
+    var reasoningEnabled: Bool?
+    /// `always_thinking` instead of `thinking`: the picker has no Off row.
+    var alwaysThinking: Bool?
+    /// The reasoning levels the composer offers.
+    var supportEfforts: [String]?
+    /// The level the picker opens on; the backend drops one outside `supportEfforts`.
+    var defaultEffort: String?
 }
 
 /// `list_provider_models` (codeg 0.37+, replacing the per-agent

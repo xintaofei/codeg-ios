@@ -11063,13 +11063,13 @@
         }
       }
     },
-    "Tokens, e.g. 262144. Leave blank to use the model default." : {
+    "Tokens. Left blank, 262144 is written." : {
       "extractionState" : "manual",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "以 token 计，如 262144。留空则使用模型默认值。"
+            "value" : "以 token 计。留空时写入 262144。"
           }
         }
       }

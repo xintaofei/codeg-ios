@@ -248,7 +248,17 @@ final class AgentsSettingsModel {
             await prior.value
             guard let client = self.client else { return nil }
             do {
-                let affected = try await client.updateKimiCodeConfig(body)
+                // An `apikey` save rebuilds the managed model block, so it has to
+                // carry the reasoning declaration this panel can't edit. Read it
+                // from the LIVE projection right before the write (not the
+                // panel's snapshot), and before anything is written, so a failed
+                // read aborts with nothing persisted instead of wiping it.
+                var payload = body
+                if body.mode == "apikey" {
+                    let fresh = try await client.listAgents().first { $0.agentType == .kimiCode }
+                    payload = kimiBodyForSave(body, freshConfigJson: fresh?.configJson)
+                }
+                let affected = try await client.updateKimiCodeConfig(payload)
                 self.surfaceAffected(affected)
                 await self.loadBody()
                 return nil
