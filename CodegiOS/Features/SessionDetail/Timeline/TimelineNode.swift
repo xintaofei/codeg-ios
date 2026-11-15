@@ -194,15 +194,33 @@ enum TranscriptTimeline {
     ///   which scopes liveness per-round via `inFlightUserTurnId` instead.
     /// - Parameter forkPoints: stamp each reply's footer with its fork point —
     ///   the main transcript only (a sub-agent's viewer has nothing to fork).
+    /// Where the running round's prompt sits in `turns`: the server's
+    /// `in_flight_user_turn_id` when it is loaded, else the newest user turn.
+    static func inFlightPromptIndex(_ turns: [MessageTurn], inFlightUserTurnId: String?) -> Int? {
+        if let id = inFlightUserTurnId,
+           let idx = turns.firstIndex(where: { $0.role == .user && $0.id == id }) {
+            return idx
+        }
+        return turns.lastIndex(where: { $0.role == .user })
+    }
+
     static func buildPersisted(turns rawTurns: [MessageTurn], pending: [MessageTurn], agent: AgentType, suppressInFlight: Bool, inFlightUserTurnId: String? = nil, liveness: ToolLiveness = .settled, forkPoints: Bool = false) -> [TimelineNode] {
         var nodes: [TimelineNode] = []
 
         // Hide the persisted partial in-flight reply while the reattach live turn
         // (which carries the full reply) is in hand: drop the assistant turns that
-        // follow the most recent user prompt. Earlier replies stay untouched.
+        // follow the prompt that opened the running round. Earlier replies stay
+        // untouched.
+        //
+        // That prompt is the server's `in_flight_user_turn_id` — the round's
+        // EARLIEST prompt, which a round can run well past: a message steered in
+        // mid-turn is persisted as a user turn of its own, and anchoring on the
+        // newest user turn left the reply's part before it drawn twice (web
+        // `getTimelineTurns`). Without it in the window — not stamped, or above
+        // what is loaded — the newest user turn is still the best guess.
         let turns: [MessageTurn]
         if suppressInFlight,
-           let promptIdx = rawTurns.lastIndex(where: { $0.role == .user }) {
+           let promptIdx = Self.inFlightPromptIndex(rawTurns, inFlightUserTurnId: inFlightUserTurnId) {
             turns = rawTurns.enumerated()
                 .filter { $0.offset <= promptIdx || $0.element.role != .assistant }
                 .map(\.element)
