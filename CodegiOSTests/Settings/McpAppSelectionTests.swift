@@ -61,4 +61,37 @@ struct McpAppSelectionTests {
         #expect(Set(McpAppType.assignable.map(\.rawValue)) == server.subtracting(["open_claw", "pi"]))
         #expect(McpAppType.assignable.allSatisfy { $0.displayName != $0.rawValue })
     }
+
+    @Test func theScanDecodesWithItsWarnings() throws {
+        let scan = try CodegJSON.decoder.decode(LocalMcpScan.self, from: Data(#"""
+        {"servers":[{"id":"fs","spec":{"type":"stdio"},"apps":["cursor"]}],
+         "warnings":[{"app":"kiro","message":"invalid JSON at line 3"},{"app":7}]}
+        """#.utf8))
+        #expect(scan.servers.map(\.id) == ["fs"])
+        #expect(scan.warnings == [LocalMcpSourceWarning(app: .kiro, message: "invalid JSON at line 3")])
+    }
+
+    @Test func aServerOlderThanTheScanObjectStillLists() throws {
+        // Before codeg 0.30.2 the route answered the bare server list.
+        let scan = try CodegJSON.decoder.decode(LocalMcpScan.self, from: Data(#"""
+        [{"id":"fs","spec":{},"apps":["claude_code"]}]
+        """#.utf8))
+        #expect(scan.servers.map(\.id) == ["fs"])
+        #expect(scan.warnings.isEmpty)
+    }
+
+    @Test func aSpecsOwnKeysSurviveTheSnakeCaseDecoder() throws {
+        // The spec is written back verbatim on save: env names and the like
+        // must not come back camel-cased.
+        let scan = try CodegJSON.decoder.decode(LocalMcpScan.self, from: Data(#"""
+        {"servers":[{"id":"gh","spec":{"type":"stdio","command":"npx",
+          "env":{"GITHUB_TOKEN":"x","api_key":"y"}},"apps":["codex"]}],"warnings":[]}
+        """#.utf8))
+        guard case .object(let spec)? = scan.servers.first?.spec,
+              case .object(let env)? = spec["env"] else {
+            Issue.record("spec did not decode as an object")
+            return
+        }
+        #expect(Set(env.keys) == ["GITHUB_TOKEN", "api_key"])
+    }
 }

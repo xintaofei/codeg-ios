@@ -11,6 +11,9 @@ final class McpSettingsModel {
 
     private(set) var phase: Phase = .loading
     private(set) var servers: [LocalMcpServer] = []
+    /// Agent configs the last scan couldn't read: their servers are hidden,
+    /// not gone, so the list says so beside them (web `sourceUnreadable`).
+    private(set) var sourceWarnings: [LocalMcpSourceWarning] = []
     var refreshError: String?
 
     private let client: CodegClient?
@@ -21,7 +24,9 @@ final class McpSettingsModel {
         guard let client else { phase = .failed("No server selected."); return }
         if servers.isEmpty { phase = .loading }
         do {
-            servers = try await client.mcpScanLocal().sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
+            let scan = try await client.mcpScanLocal()
+            servers = scan.servers.sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
+            sourceWarnings = scan.warnings
             phase = .loaded
             refreshError = nil
         } catch {

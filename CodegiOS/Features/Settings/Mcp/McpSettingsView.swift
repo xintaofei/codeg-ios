@@ -56,7 +56,7 @@ struct McpSettingsView: View {
 
     @ViewBuilder
     private var content: some View {
-        if model.servers.isEmpty {
+        if model.servers.isEmpty, model.sourceWarnings.isEmpty {
             switch model.phase {
             case .loading:
                 LoadingView(label: "Loading MCP servers…")
@@ -80,6 +80,11 @@ struct McpSettingsView: View {
                             retry: { Task { await model.load() } },
                             dismiss: { model.refreshError = nil }
                         )
+                    }
+                    // One agent's config being unreadable hides only that
+                    // agent's servers — the rest of the list is still real.
+                    ForEach(model.sourceWarnings, id: \.self) { warning in
+                        McpSourceWarningBanner(warning: warning)
                     }
                     ForEach(model.servers) { server in
                         McpServerRow(server: server)
@@ -117,6 +122,26 @@ struct McpSettingsView: View {
 
     private var deleteDialogBinding: Binding<Bool> {
         Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
+    }
+}
+
+/// An agent whose MCP config the scan couldn't read (web `sourceUnreadable`).
+private struct McpSourceWarningBanner: View {
+    let warning: LocalMcpSourceWarning
+
+    var body: some View {
+        Label {
+            Text("Couldn’t read the MCP config for \(warning.app.displayName), so its servers are hidden: \(warning.message)")
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+        }
+        .font(.caption)
+        .foregroundStyle(Theme.warning)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Theme.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
     }
 }
 

@@ -103,6 +103,47 @@ enum McpAppSelection {
     }
 }
 
+/// What `mcp_scan_local` answers: every server the scan could read, plus a
+/// warning per agent config it couldn't (Rust `LocalMcpScan`, codeg 0.30.2+).
+/// Before that the route returned the bare server list, which still decodes.
+struct LocalMcpScan: Decodable, Sendable {
+    var servers: [LocalMcpServer]
+    var warnings: [LocalMcpSourceWarning]
+
+    private enum CodingKeys: String, CodingKey { case servers, warnings }
+
+    init(servers: [LocalMcpServer], warnings: [LocalMcpSourceWarning] = []) {
+        self.servers = servers
+        self.warnings = warnings
+    }
+
+    init(from decoder: Decoder) throws {
+        if let list = try? decoder.singleValueContainer().decode([LocalMcpServer].self) {
+            servers = list
+            warnings = []
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        servers = try c.decodeIfPresent([LocalMcpServer].self, forKey: .servers) ?? []
+        // A warning that doesn't decode drops alone, never the server list.
+        let raw = (try? c.decodeIfPresent([FailableWarning].self, forKey: .warnings)) ?? nil
+        warnings = (raw ?? []).compactMap(\.value)
+    }
+
+    private struct FailableWarning: Decodable {
+        let value: LocalMcpSourceWarning?
+        init(from decoder: Decoder) throws { value = try? LocalMcpSourceWarning(from: decoder) }
+    }
+}
+
+/// One agent whose MCP config the scan couldn't read: its servers are missing
+/// from the list (not removed), and the server refuses writes until it can
+/// read every source.
+struct LocalMcpSourceWarning: Decodable, Hashable, Sendable {
+    let app: McpAppType
+    let message: String
+}
+
 /// An installed local MCP server (`mcp_scan_local`). `spec` is the raw MCP server
 /// definition (stdio/http/sse) kept as free-form JSON; `apps` keeps every
 /// app string verbatim, known or not (see `McpAppType`).

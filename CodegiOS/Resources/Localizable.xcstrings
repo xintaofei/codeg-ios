@@ -243,6 +243,17 @@
         }
       }
     },
+    "Couldn’t read the MCP config for %@, so its servers are hidden: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取 %1$@ 的 MCP 配置，其服务器已隐藏：%2$@"
+          }
+        }
+      }
+    },
     "Couldn’t Open Folder" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -94,7 +94,7 @@ extension CodegClient {
 
     // MARK: - MCP
 
-    func mcpScanLocal() async throws -> [LocalMcpServer] {
+    func mcpScanLocal() async throws -> LocalMcpScan {
         try await postJSON("mcp_scan_local", EmptyBody())
     }
 
