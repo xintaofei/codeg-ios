@@ -50,6 +50,9 @@ struct ReplyHeaderView: View {
     let currentRound: Bool
 
     @Environment(\.replyFoldStore) private var store
+    /// A delegation's child can finish — or fail — after its reply settled:
+    /// the header counts it as its card stands.
+    @Environment(\.activityLive) private var live
 
     private var label: LocalizedStringKey {
         !header.completed ? "Working" : (header.hasSteps ? "Activity" : "Reply")
@@ -67,7 +70,7 @@ struct ReplyHeaderView: View {
                 Text(label)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(header.completed ? Theme.textPrimary : Theme.textSecondary)
-                ForEach(Array(ReplyActivityText.summaryLine(header.summary).enumerated()), id: \.offset) { _, piece in
+                ForEach(Array(ReplyActivityText.summaryLine(live.summary(of: header)).enumerated()), id: \.offset) { _, piece in
                     Text(verbatim: piece.text)
                         .font(.caption)
                         .foregroundStyle(piece.danger ? Theme.danger : Theme.textSecondary)

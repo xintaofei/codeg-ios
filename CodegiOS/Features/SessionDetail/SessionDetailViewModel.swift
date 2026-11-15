@@ -49,6 +49,11 @@ final class SessionDetailViewModel {
     /// Which replies are folded in the activity timeline. A send folds every
     /// reply above it; see ``ReplyFoldStore``.
     let replyFolds = ReplyFoldStore()
+    /// The connections of the delegations still running here, followed for
+    /// their live progress (web `useChildProgress`).
+    let childWatch = DelegationChildWatch()
+    /// When each running delegation was first seen running on this screen.
+    let liveClocks = LiveClockStore()
     /// The composer's inline `/`·`$` menu and `@` panel, and the mention
     /// tokens the draft holds (encoded into links on every send).
     let composer: ComposerSuggestionModel
@@ -70,6 +75,15 @@ final class SessionDetailViewModel {
     /// no longer force a re-hash of every visible turn's full text (`MessageTurn`
     /// is content-`Hashable`) just to rebuild the node list.
     private(set) var turnsVersion = 0
+    /// Claude's out-of-turn turns, shown as its transcript watcher reads them
+    /// and retired once a detail read covers them (``BackgroundOverlays``).
+    private(set) var backgroundTurns: [BackgroundOverlayEntry] = [] {
+        didSet { backgroundTurnsVersion &+= 1 }
+    }
+    /// Bumped on every overlay change, for the transcript's memo key.
+    private(set) var backgroundTurnsVersion = 0
+    /// The agent session the overlay's turns were read from.
+    @ObservationIgnored private var overlaySessionID: String?
 
     // MARK: Transcript window
     //
@@ -118,6 +132,14 @@ final class SessionDetailViewModel {
     /// transcript has advanced past what is held. Equals `turns.count` exactly
     /// when nothing is windowed.
     private var loadedEnd: Int { (window?.offset ?? 0) + turns.count }
+
+    /// Where the rounds this screen folded into `turns` itself begin, as an
+    /// index into `turns` — what the out-of-turn overlay joins in wall-clock
+    /// order (the server's own turns all predate it). Nil while every loaded
+    /// turn is the server's.
+    var localTurnsStart: Int? {
+        localRoundsFrom.map { max(0, $0 - (window?.offset ?? 0)) }
+    }
 
     /// Global index of the first turn this screen folded into `turns` itself
     /// (`promoteUnreconciled`): from there on `turns` is the stream's copy, not
@@ -786,6 +808,19 @@ final class SessionDetailViewModel {
         // The server's turns throughout, folded-in rounds replaced.
         localRoundsFrom = nil
         foldedEvidence = nil
+        // What the read holds of the out-of-turn overlay leaves it.
+        if let kept = BackgroundOverlays.retire(backgroundTurns, watermark: detail.transcriptWatermark,
+                                                uncoveredMaxTs: detail.uncoveredPrefixMaxDate) {
+            backgroundTurns = kept
+        }
+    }
+
+    /// The overlay is one agent session's: a fork (or anything else that puts
+    /// this screen on another session) leaves it behind — its watermarks are
+    /// offsets into a transcript the next read is not of.
+    private func dropBackgroundOverlay() {
+        if !backgroundTurns.isEmpty { backgroundTurns = [] }
+        overlaySessionID = nil
     }
 
     /// Prepend one page of older history above the loaded window. Single-flight;
@@ -909,6 +944,8 @@ final class SessionDetailViewModel {
         // as well; picking a known one up here also covers a linked draft,
         // whose `load` fetches nothing.)
         resumeWatching()
+        // And the delegated children it was following.
+        syncDelegationChildren()
     }
 
     /// The error view's "try again". Distinct from `activate()` only in where it
@@ -2714,12 +2751,43 @@ final class SessionDetailViewModel {
     /// completions, the agent's work after them, cron and loop turns. None of
     /// it streams over ACP; the transcript is where it is, so it is re-read
     /// (once the screen is idle). A batch of finished tasks is told once.
+    /// What Claude's transcript watcher saw happen out of turn (Android
+    /// `onBackgroundActivity`, web `APPLY_BACKGROUND_ACTIVITY`): the turns join
+    /// the timeline as they happen, a settled sub-agent's launch card flips to
+    /// its settle in place, and the batch is told once.
     private func noteOutOfTurn(_ activity: BackgroundOutOfTurn) {
         guard !activity.isEmpty else { return }
+        if let session = activity.sessionID, !session.isEmpty, session != overlaySessionID {
+            // Another session's batch: what the overlay held is of the old one.
+            if overlaySessionID != nil { dropBackgroundOverlay() }
+            overlaySessionID = session
+        }
+        if !activity.turns.isEmpty {
+            backgroundTurns = BackgroundOverlays.upsert(backgroundTurns, turns: activity.turns,
+                                                        watermark: activity.watermark)
+            requestScrollToBottom()
+        }
+        for settled in activity.settled {
+            if let flipped = BackgroundTaskLifecycle.settle(turns, settled) { turns = flipped }
+            var overlay = backgroundTurns
+            var changed = false
+            for (index, entry) in overlay.enumerated() {
+                if let flipped = BackgroundTaskLifecycle.settle([entry.turn], settled)?.first {
+                    overlay[index] = BackgroundOverlayEntry(turn: flipped, watermark: entry.watermark)
+                    changed = true
+                }
+            }
+            if changed { backgroundTurns = overlay }
+        }
         if let text = SessionNotices.backgroundSettled(activity.settled, agent: agentTypeForUI.label) {
             notice = text
         }
-        refreshAfterAutonomousTurn()
+        // What the batch could not say in place — a turn this build could not
+        // read, a settle naming no launch call (an older server) — a re-read
+        // brings in.
+        if activity.turnCount > activity.turns.count || activity.settled.contains(where: { $0.toolUseId == nil }) {
+            refreshAfterAutonomousTurn()
+        }
     }
 
     /// The server reported a live turn at load but we couldn't attach to it (it
@@ -4167,7 +4235,15 @@ final class SessionDetailViewModel {
         agentOptions.teardown()
         insertModel.teardown()
         composer.teardown()
+        childWatch.stopAll()
         closeStream()
+    }
+
+    /// Follow the children of the delegations the connection has running —
+    /// and only those (the bindings changed).
+    func syncDelegationChildren() {
+        guard !isTornDown else { return }
+        childWatch.sync(runs.delegationBindings, baseURL: client.baseURL, token: client.token)
     }
 
     // MARK: - Scroll
@@ -4647,6 +4723,7 @@ extension SessionDetailViewModel {
         // transcript lands, and whether it lands or not: every reconnect
         // resumes `externalId`, and the old value is the sibling's session.
         summary?.externalId = result.forkedSessionId
+        dropBackgroundOverlay()
         // A stopped turn's reply still on screen is the old session's. (A fork
         // only succeeds between turns, so nothing here is running.)
         if let live = liveTurn, !live.isStreaming { liveTurn = nil }

@@ -113,6 +113,10 @@ struct TimelineNode: Identifiable {
         let foldable: Bool
         let hasSteps: Bool
         let durationMs: Int?
+        /// The reply's steps, for a summary re-read at draw time against
+        /// what the connection knows — only when it delegated anything.
+        var steps: [ActivityStep] = []
+        var hasDelegations = false
     }
 
     /// The gutter marker for this node — drives the icon and the state tint.
@@ -215,7 +219,36 @@ enum TranscriptTimeline {
     }
 
     static func buildPersisted(turns rawTurns: [MessageTurn], pending: [MessageTurn], agent: AgentType, suppressInFlight: Bool, inFlightUserTurnId: String? = nil, liveness: ToolLiveness = .settled, forkPoints: Bool = false) -> [TimelineNode] {
+        buildPersistedTier(turns: rawTurns, pending: pending, agent: agent, suppressInFlight: suppressInFlight,
+                           inFlightUserTurnId: inFlightUserTurnId, liveness: liveness, forkPoints: forkPoints).nodes
+    }
+
+    /// The persisted tier, and the reply it ends with when nothing follows that
+    /// reply — not a prompt, not an optimistic one — which is what a live reply
+    /// the agent began on its own joins (`buildLive(joining:)`).
+    struct PersistedTier {
+        var nodes: [TimelineNode]
+        var tail: TailReply?
+        /// The thread's delegate calls and the checks on their tasks, folded
+        /// in order (`DelegationTaskIndex`).
+        var delegationFold = DelegationTaskFold()
+    }
+
+    /// A reply at the very end of the persisted tier.
+    struct TailReply {
+        /// Its id, which the transcript keeps for the two replies once the live
+        /// one is handed off (`merge` takes the first turn's).
+        let ownerID: String
+        let parts: [RenderPart]
+        /// Where its rows begin in the tier's nodes; they run to the end
+        /// (header … answer, then its footer).
+        let nodeStart: Int
+    }
+
+    static func buildPersistedTier(turns rawTurns: [MessageTurn], pending: [MessageTurn], agent: AgentType, suppressInFlight: Bool, inFlightUserTurnId: String? = nil, liveness: ToolLiveness = .settled, forkPoints: Bool = false) -> PersistedTier {
         var nodes: [TimelineNode] = []
+        var tail: TailReply?
+        var fold = DelegationTaskFold()
 
         // Hide the persisted partial in-flight reply while the reattach live turn
         // (which carries the full reply) is in hand: drop the assistant turns that
@@ -260,6 +293,7 @@ enum TranscriptTimeline {
             case .user:
                 lastUserID = turn.id
                 nodes.append(TimelineNode(id: turn.id, content: .user(turn), agent: agent, startsGroup: true))
+                tail = nil
                 i += 1
             case .system:
                 // A failed round's closing line draws as the same failure node
@@ -269,10 +303,12 @@ enum TranscriptTimeline {
                 let failure = turn.turnErrorText
                 if !failure.isEmpty {
                     nodes.append(TimelineNode(id: turn.id, content: .error(failure, details: nil), agent: agent))
+                    tail = nil
                 } else if !SystemText.of(turn).isEmpty {
                 // Skip system turns with no renderable text so the rail doesn't
                 // show a lone marker against an empty row.
                     nodes.append(TimelineNode(id: turn.id, content: .system(turn), agent: agent, startsGroup: true))
+                    tail = nil
                 }
                 i += 1
             case .assistant:
@@ -283,10 +319,13 @@ enum TranscriptTimeline {
                 let replyLiveness: ToolLiveness = inRound ? .round : liveness
                 // A reply in the running round is still being written (a reader
                 // with no stream of its own); every other one is a record.
+                let parts = MessageRender.adaptTurn(merged, liveness: replyLiveness)
+                tail = TailReply(ownerID: merged.id, parts: parts, nodeStart: nodes.count)
                 nodes.append(contentsOf: replyNodes(
-                    parts: MessageRender.adaptTurn(merged, liveness: replyLiveness),
+                    parts: parts,
                     ownerID: merged.id, completed: replyLiveness != .round,
-                    durationMs: merged.durationMs, agent: agent))
+                    durationMs: merged.durationMs, agent: agent,
+                    onSteps: { fold.add($0) }))
                 var footer = TimelineNode(id: "\(merged.id)#footer",
                                           content: .footer(merged, questionID: lastUserID), agent: agent)
                 if forkPoints {
@@ -302,9 +341,10 @@ enum TranscriptTimeline {
         // Optimistic user turns (sent, not yet reconciled into `turns`).
         for turn in pending {
             nodes.append(TimelineNode(id: turn.id, content: .user(turn), agent: agent, startsGroup: true))
+            tail = nil
         }
 
-        return nodes
+        return PersistedTier(nodes: nodes, tail: tail, delegationFold: fold)
     }
 
     /// Build the **live** node tier — the in-flight reply. Cheap (O(segments); text
@@ -318,8 +358,33 @@ enum TranscriptTimeline {
     ///   is, its closing prose stays on the rail (what will turn out to be the
     ///   answer is not known yet); folded, the trailing prose is the answer and
     ///   stays in view.
-    static func buildLive(_ live: LiveTurn, agent: AgentType, replyOpen: Bool = true) -> [TimelineNode] {
-        liveNodes(live, agent: agent, replyOpen: replyOpen)
+    /// - Parameter joining: the reply the persisted tier ends with, when the
+    ///   live one follows it with no prompt between — a turn the agent began
+    ///   on its own. The two are drawn as ONE reply, as the transcript holds
+    ///   them once the turn is handed off (web `mergeConsecutiveAssistantTurns`,
+    ///   live included; Android `joinLive`): under the earlier reply's id, its
+    ///   parts then the live ones, so its answer is the trailing run of answer
+    ///   parts — the earlier answer and the new words together while the agent
+    ///   only speaks, the new words alone once it takes a step — and both
+    ///   replies' steps counted. The caller drops the tail's own rows (from
+    ///   `nodeStart`), its footer included: what closes the reply now is the
+    ///   live turn's end.
+    static func buildLive(_ live: LiveTurn, agent: AgentType, replyOpen: Bool = true,
+                          joining: TailReply? = nil) -> [TimelineNode] {
+        liveNodes(live, agent: agent, replyOpen: replyOpen, joining: joining)
+    }
+
+    /// The tier with a live reply after it: the live rows appended, or — when
+    /// the tier ends with a reply the live one joins — that reply's rows
+    /// replaced by the joined reply. `open` answers whether a reply (by key)
+    /// is unfolded; the live reply is the current one.
+    static func appendingLive(_ live: LiveTurn, to tier: PersistedTier, agent: AgentType,
+                              open: (String) -> Bool) -> [TimelineNode] {
+        let joining = tier.tail
+        var all = joining.map { Array(tier.nodes[..<$0.nodeStart]) } ?? tier.nodes
+        all.append(contentsOf: buildLive(live, agent: agent,
+                                         replyOpen: open(joining?.ownerID ?? live.id), joining: joining))
+        return all
     }
 
     // MARK: Live reply → nodes
@@ -327,7 +392,8 @@ enum TranscriptTimeline {
     /// The plan is one of the reply's parts (`LiveSegment.plan`), drawn where
     /// the agent last revised it — not pinned above the reply — and keyed by
     /// the call the hand-off records it as, so it keeps its row then.
-    private static func liveNodes(_ live: LiveTurn, agent: AgentType, replyOpen: Bool) -> [TimelineNode] {
+    private static func liveNodes(_ live: LiveTurn, agent: AgentType, replyOpen: Bool,
+                                  joining: TailReply?) -> [TimelineNode] {
         var out: [TimelineNode] = []
         // A message the user steered into the turn ends the reply so far and
         // starts the reply to it (web `buildStreamingTurnsFromLiveMessage`):
@@ -335,12 +401,15 @@ enum TranscriptTimeline {
         // user bubble between them.
         let segments = live.segments
         var start = 0
-        var ownerID = live.id
+        var ownerID = joining?.ownerID ?? live.id
+        // The joined reply's own parts lead the first stretch only.
+        var lead = joining?.parts ?? []
         for (idx, segment) in segments.enumerated() {
             guard case .steering(let message) = segment else { continue }
             out.append(contentsOf: replyNodes(
-                parts: MessageRender.adaptLive(live, range: start..<idx),
+                parts: lead + MessageRender.adaptLive(live, range: start..<idx),
                 ownerID: ownerID, completed: true, durationMs: nil, agent: agent))
+            lead = []
             let turn = MessageTurn(id: "steer-\(message.id)", role: .user,
                                    blocks: [.text(message.text)], timestamp: message.at)
             out.append(TimelineNode(id: turn.id, content: .user(turn), agent: agent, startsGroup: true))
@@ -348,14 +417,16 @@ enum TranscriptTimeline {
             ownerID = "\(live.id)~\(message.id)"
         }
         // Nothing streamed yet (or nothing since a note was steered in): the
-        // agent is working on it.
-        if start == segments.count && live.isStreaming && live.errorMessage == nil {
-            out.append(TimelineNode(id: "\(ownerID)#thinking", content: .thinking, agent: agent))
-        }
+        // agent is working on it — under the reply it joined, if any, which
+        // is already on screen above.
+        let thinking = start == segments.count && live.isStreaming && live.errorMessage == nil
+            ? TimelineNode(id: "\(ownerID)#thinking", content: .thinking, agent: agent) : nil
+        if let thinking, lead.isEmpty { out.append(thinking) }
         out.append(contentsOf: replyNodes(
-            parts: MessageRender.adaptLive(live, range: start..<segments.count),
+            parts: lead + MessageRender.adaptLive(live, range: start..<segments.count),
             ownerID: ownerID, completed: !live.isStreaming, durationMs: nil, agent: agent,
             keepAnswer: live.isStreaming && replyOpen))
+        if let thinking, !lead.isEmpty { out.append(thinking) }
         if let error = live.errorMessage {
             out.append(TimelineNode(id: "\(live.id)#error",
                                     content: .error(error, details: live.errorDetails), agent: agent))
@@ -372,7 +443,8 @@ enum TranscriptTimeline {
     /// the memoized build, by `ReplyFolding.apply`.
     private static func replyNodes(parts: [RenderPart], ownerID: String, completed: Bool,
                                    durationMs: Int?, agent: AgentType,
-                                   keepAnswer: Bool = false) -> [TimelineNode] {
+                                   keepAnswer: Bool = false,
+                                   onSteps: (([ActivityStep]) -> Void)? = nil) -> [TimelineNode] {
         // `keepAnswer`: an unfolded reply still being written keeps its closing
         // prose on the rail (web `proseOnRail`). Whether the reply can FOLD is
         // decided on the real split either way — a text-only live reply has no
@@ -402,9 +474,15 @@ enum TranscriptTimeline {
         // settles un-foldable. A live reply is exempt from the answer half: its
         // closing prose has not been written yet.
         let foldable = bodyCount > 0 && (!completed || BuildActivity.hasVisibleAnswer(split.trailing))
+        onSteps?(model.steps)
+        let delegates = ActivitySummarize.flatten(model.steps).contains { step in
+            guard let tool = step.toolStep else { return false }
+            return tool.tool.kind == .delegation || tool.tool.kind == .delegationResume
+        }
         let header = TimelineNode.ReplyHeader(
             replyKey: ownerID, summary: model.summary, completed: completed,
-            foldable: foldable, hasSteps: !model.items.isEmpty, durationMs: durationMs)
+            foldable: foldable, hasSteps: !model.items.isEmpty, durationMs: durationMs,
+            steps: delegates ? model.steps : [], hasDelegations: delegates)
         func member(_ node: TimelineNode, _ role: TimelineNode.ReplyMembership.Role) -> TimelineNode {
             var tagged = node
             tagged.reply = .init(key: ownerID, role: role)

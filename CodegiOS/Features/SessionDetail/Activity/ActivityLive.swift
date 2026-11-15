@@ -17,13 +17,38 @@ struct ActivityLive: Equatable {
     /// and its snapshots bound them — who took each task and how it stands,
     /// fresher than anything stamped on the call.
     var delegations: [DelegationBinding] = []
+    /// The thread's newest check on each delegated task, wherever in the
+    /// thread it was made (the transcript sets it over its rows).
+    var delegationTasks: DelegationTaskIndex = .empty
+    /// How far each running delegated agent has got, from its own
+    /// connection, by child connection id (web `useChildProgress`).
+    var childProgress: [String: DelegationProgress] = [:]
 
     static let none = ActivityLive(awaitingToolCallId: nil, approvals: ActivityApproval.emptyToolApprovals)
 
-    /// A delegation call's card, read against the live binding (see
-    /// ``DelegationModel/card(_:binding:later:)``).
+    /// A delegation call's card, read against the live binding and the
+    /// thread's newest check on its task — which a reply later than this one
+    /// may hold (see ``DelegationModel/card(_:binding:later:)``). `later` is
+    /// the newest check in the call's own reply.
     func delegationCard(_ vm: ToolCallVM, later: DelegationTaskRow?) -> DelegationCard? {
-        DelegationModel.card(vm, binding: DelegationModel.binding(for: vm, in: delegations), later: later)
+        DelegationModel.card(vm, binding: DelegationModel.binding(for: vm, in: delegations),
+                             later: delegationTasks.row(for: vm.id) ?? later)
+    }
+
+    /// The live binding a delegation call stands for, if the connection has one.
+    func delegationBinding(for vm: ToolCallVM) -> DelegationBinding? {
+        DelegationModel.binding(for: vm, in: delegations)
+    }
+
+    /// A reply's summary with each delegation counted as its card stands
+    /// (web reads the build's; a child that finished after the reply settled
+    /// would leave the header saying nothing of it).
+    func summary(of header: TimelineNode.ReplyHeader) -> ActivitySummary {
+        guard header.hasDelegations else { return header.summary }
+        return ActivitySummarize.summarize(header.steps) { step in
+            delegationCard(step.call, later: DelegationModel.latestTaskRow(
+                step.laterPolls, taskId: ActivitySummarize.delegationTaskId(step)))?.status
+        }
     }
 
     /// Whether `step` is the call a pending permission request is about. A

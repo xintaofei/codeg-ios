@@ -276,6 +276,9 @@ struct SessionDetailView: View {
             agent: model.agentTypeForUI,
             replyFolds: model.replyFolds,
             turnsVersion: model.turnsVersion,
+            backgroundTurns: model.backgroundTurns,
+            backgroundTurnsVersion: model.backgroundTurnsVersion,
+            localTurnsStart: model.localTurnsStart,
             scrollTick: model.scrollTick,
             stickTick: model.stickTick,
             hasOlderTurns: model.hasOlderTurns,
@@ -317,7 +320,11 @@ struct SessionDetailView: View {
         // took each delegated task and how it stands.
         .environment(\.activityLive, ActivityLive(awaitingToolCallId: model.pendingPermission?.toolCallId,
                                                   approvals: model.toolApprovals,
-                                                  delegations: model.runs.delegationBindings))
+                                                  delegations: model.runs.delegationBindings,
+                                                  childProgress: model.childWatch.progress))
+        .environment(\.liveClocks, model.liveClocks)
+        // Each running delegation's own connection, for how far it got.
+        .onChange(of: model.runs.delegationBindings, initial: true) { model.syncDelegationChildren() }
         // A goal's Pause / Clear, sent on the live connection with the
         // adapter's own vocabulary (the transcript names the current goal).
         .environment(\.goalControl, GoalControl(

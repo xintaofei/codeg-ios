@@ -83,6 +83,12 @@ struct TranscriptView<Header: View>: View {
     /// view via `scrollTick` — no longer rebuilds and re-hashes the whole visible
     /// transcript to follow the scroll.
     let turnsVersion: Int
+    /// Claude's out-of-turn turns not yet in `turns` (``BackgroundOverlays``),
+    /// drawn after the server's, among the rounds folded in locally.
+    var backgroundTurns: [BackgroundOverlayEntry] = []
+    var backgroundTurnsVersion = 0
+    /// Where the rounds the screen folded into `turns` itself begin.
+    var localTurnsStart: Int?
     /// Bumped on streamed content growth; the transcript follows it ONLY while
     /// pinned to the bottom.
     let scrollTick: Int
@@ -183,15 +189,30 @@ struct TranscriptView<Header: View>: View {
         // ends (or moves) even though the turns themselves may not have changed.
         var inFlightUserTurnId: String?
         var agent: AgentType
+        var overlayVersion: Int
+        var localTurnsStart: Int?
     }
     private final class PersistedMemo {
         var key: PersistedKey?
-        var nodes: [TimelineNode] = []
+        var tier = TranscriptTimeline.PersistedTier(nodes: [], tail: nil)
+        /// The thread's checks on each delegated task, as of this build —
+        /// equal from one pass to the next until the tier is rebuilt.
+        var delegationTasks = DelegationTaskIndex.empty
+        var builds = 0
     }
     @State private var persistedMemo = PersistedMemo()
     /// What the connection knows about the rows; the fold reads its
     /// delegations (a finished one leaves a folded reply).
     @Environment(\.activityLive) private var activityLive
+
+    /// What the rows read of the connection, with the thread's checks on
+    /// each delegated task laid in (a check made replies later is still how
+    /// that delegation stands).
+    private var rowsLive: ActivityLive {
+        var live = activityLive
+        live.delegationTasks = persistedMemo.delegationTasks
+        return live
+    }
 
     /// The first turn index currently shown. When not explicitly expanded, anchors
     /// to the tail (most recent `initialTurnWindow` turns), snapped back to a
@@ -237,32 +258,44 @@ struct TranscriptView<Header: View>: View {
             pendingIDs: pendingUserTurns.map(\.id),
             suppressInFlight: suppressInFlight,
             inFlightUserTurnId: inFlightUserTurnId,
-            agent: agent
+            agent: agent,
+            overlayVersion: backgroundTurnsVersion,
+            localTurnsStart: localTurnsStart
         )
 
-        let persisted: [TimelineNode]
+        let persisted: TranscriptTimeline.PersistedTier
         if persistedMemo.key == key {
-            persisted = persistedMemo.nodes
+            persisted = persistedMemo.tier
         } else {
-            let slice = start == 0 ? turns : Array(turns[start...])
-            persisted = TranscriptTimeline.buildPersisted(
+            let window = start == 0 ? turns : Array(turns[start...])
+            // Out-of-turn turns join after the server's, in wall-clock order
+            // with the rounds folded in here.
+            let slice = BackgroundOverlays.compose(window, localFrom: localTurnsStart.map { max(0, $0 - start) },
+                                                   overlay: backgroundTurns)
+            persisted = TranscriptTimeline.buildPersistedTier(
                 turns: slice, pending: pendingUserTurns, agent: agent,
                 suppressInFlight: suppressInFlight,
                 inFlightUserTurnId: inFlightUserTurnId,
                 forkPoints: true
             )
             persistedMemo.key = key
-            persistedMemo.nodes = persisted
+            persistedMemo.tier = persisted
+            persistedMemo.builds &+= 1
+            persistedMemo.delegationTasks = persisted.delegationFold.index(version: persistedMemo.builds)
         }
 
-        var all = persisted
+        var all: [TimelineNode]
         if let liveTurn {
-            // The live reply is the newest, so the current round.
-            let open = replyFolds.isOpen(liveTurn.id, isCurrent: true, completed: !liveTurn.isStreaming)
-            all.append(contentsOf: TranscriptTimeline.buildLive(liveTurn, agent: agent, replyOpen: open))
+            // The live reply is the newest, so the current round — joined
+            // onto the reply above it when nothing stands between them.
+            all = TranscriptTimeline.appendingLive(liveTurn, to: persisted, agent: agent) { key in
+                replyFolds.isOpen(key, isCurrent: true, completed: !liveTurn.isStreaming)
+            }
+        } else {
+            all = persisted.nodes
         }
         let currentGoalID = TranscriptTimeline.latestGoalID(all)
-        all = ReplyFolding.apply(all, store: replyFolds, live: activityLive)
+        all = ReplyFolding.apply(all, store: replyFolds, live: rowsLive)
         // Terminate the rail at its endpoints, on the *combined* list. The top
         // terminates only when the window starts at the true beginning of the
         // conversation; otherwise the spine continues up into the not-yet-loaded
@@ -358,6 +391,7 @@ struct TranscriptView<Header: View>: View {
             }
             .listStyle(.plain)
             .environment(\.replyFoldStore, replyFolds)
+            .environment(\.activityLive, rowsLive)
             .scrollContentBackground(.hidden)
             // Let the 1pt anchor row actually be 1pt (List's default min row
             // height would otherwise pad it to ~44).

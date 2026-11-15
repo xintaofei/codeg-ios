@@ -60,7 +60,14 @@ enum ActivitySummarize {
         return out
     }
 
-    static func summarize(_ steps: [ActivityStep]) -> ActivitySummary {
+    /// - Parameter delegation: how a delegation step's card stands, read at
+    ///   draw time against what the connection knows (its live binding, the
+    ///   thread's newest check on the task). When it answers, the delegation
+    ///   counts as running or failed by that — what its card says — instead
+    ///   of by the call and the checks in this reply alone, which a child
+    ///   that finished after the reply settled leaves behind.
+    static func summarize(_ steps: [ActivityStep],
+                          delegation: ((ActivityToolStep) -> DelegationCardStatus?)? = nil) -> ActivitySummary {
         var summary = ActivitySummary()
         var readPaths = Set<String>()
         var editPaths = Set<String>()
@@ -100,7 +107,15 @@ enum ActivitySummarize {
                 continue   // opened up by `flatten`
             case .tool(let toolStep):
                 let tool = toolStep.tool
-                if let later = toolStep.laterPolls {
+                let card = tool.kind == .delegation || tool.kind == .delegationResume
+                    ? delegation?(toolStep) : nil
+                if let card {
+                    switch card {
+                    case .running, .starting, .waiting: summary.running = true
+                    case .err: failures.append((step.key, nil, index))
+                    case .ok: break
+                    }
+                } else if let later = toolStep.laterPolls {
                     // A delegation stands where its task's newest check says. A
                     // task that failed is the delegation's failure — counted
                     // once, on its row.
@@ -112,7 +127,7 @@ enum ActivitySummarize {
                     default: break
                     }
                 }
-                if tool.status.isLive { summary.running = true }
+                if card == nil, tool.status.isLive { summary.running = true }
 
                 switch tool.kind {
                 case .compaction, .todo, .delegationStatus, .shellSession:
@@ -145,6 +160,8 @@ enum ActivitySummarize {
                     break
                 }
 
+                // Its card already said how it stands.
+                if card != nil { continue }
                 if tool.status == .cancelled {
                     summary.interrupted += 1
                     continue

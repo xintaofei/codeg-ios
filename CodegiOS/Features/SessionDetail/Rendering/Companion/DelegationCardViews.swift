@@ -149,6 +149,7 @@ struct DelegationTaskCard: View {
     var later: DelegationTaskRow?
 
     @Environment(\.activityLive) private var live
+    @Environment(\.liveClocks) private var clocks
     @State private var expanded = false
     @State private var sessionOpen = false
 
@@ -262,10 +263,39 @@ struct DelegationTaskCard: View {
         }
     }
 
+    /// While it works, its own connection is the freshest source of how far
+    /// it got (web `useChildProgress`); the checks' reports cover the rest,
+    /// and once it is done say how it ended.
+    private func progress(_ card: DelegationCard) -> DelegationProgress? {
+        guard card.working || card.status == .waiting,
+              let child = live.delegationBinding(for: vm)?.childConnectionId,
+              let fresh = live.childProgress[child] else { return card.progress }
+        return fresh
+    }
+
     /// How the delegation stands, at the end of its line (web
-    /// `DelegationStatusWord`), with how long it took once it ended.
+    /// `DelegationStatusWord`), with how long it took once it ended — and,
+    /// while it runs, a clock once it has run a while (web `useLiveElapsed`,
+    /// counted from when this screen first saw it running).
     @ViewBuilder
     private func statusWord(_ card: DelegationCard) -> some View {
+        if !awaiting, card.status == .running, let clocks {
+            let started = clocks.start(for: vm.id)
+            TimelineView(.periodic(from: started, by: 1)) { context in
+                let elapsed = context.date.timeIntervalSince(started)
+                (Text("Running") + Text(verbatim: elapsed >= LiveClockStore.showsAfter
+                                        ? " · " + LiveClockStore.clock(elapsed) : ""))
+                    .foregroundStyle(Theme.accent)
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .lineLimit(1)
+            }
+        } else {
+            settledWord(card)
+        }
+    }
+
+    @ViewBuilder
+    private func settledWord(_ card: DelegationCard) -> some View {
         let took = card.durationMs.flatMap { $0 > 0 ? " · " + DelegationModel.formatDuration($0) : nil } ?? ""
         Group {
             if awaiting {
@@ -292,9 +322,10 @@ struct DelegationTaskCard: View {
     /// way into its own session.
     @ViewBuilder
     private func progressLine(_ card: DelegationCard) -> some View {
-        let steps = card.progress.flatMap { $0.steps > 0 ? $0.steps : nil }
+        let progress = progress(card)
+        let steps = progress.flatMap { $0.steps > 0 ? $0.steps : nil }
         let summary = card.settled ? DelegationModel.previewLine(card.outcome)
-            : (card.working ? card.progress?.lastStep : nil)
+            : (card.working ? progress?.lastStep : nil)
         if steps != nil || summary != nil || card.childConversationId != nil {
             HStack(spacing: 8) {
                 if let steps {
