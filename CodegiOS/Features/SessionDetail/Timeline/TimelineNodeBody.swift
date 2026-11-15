@@ -121,14 +121,34 @@ private struct UserNodeBody: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Theme.accent.opacity(0.14),
-            in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
-        )
-        .hairlineBorder(Theme.Radius.md, color: Theme.accent.opacity(0.30))
+        .background(Theme.accent.opacity(0.14), in: UserBubbleShape())
+        .overlay(UserBubbleShape().strokeBorder(Theme.accent.opacity(0.30), lineWidth: 0.75))
+    }
+}
+
+/// The user's bubble, rounded all the way: a pill while the message is one
+/// line, and as round a corner as a pill's when it runs longer.
+struct UserBubbleShape: InsettableShape {
+    /// A one-line bubble's half height, so the two read as one family.
+    var radius: CGFloat = 22
+    var inset: CGFloat = 0
+
+    func path(in rect: CGRect) -> Path {
+        let rect = rect.insetBy(dx: inset, dy: inset)
+        let r = max(0, radius - inset)
+        if rect.height <= 2 * r + 1 {
+            return Capsule(style: .continuous).path(in: rect)
+        }
+        return RoundedRectangle(cornerRadius: r, style: .continuous).path(in: rect)
+    }
+
+    func inset(by amount: CGFloat) -> UserBubbleShape {
+        var shape = self
+        shape.inset += amount
+        return shape
     }
 }
 
