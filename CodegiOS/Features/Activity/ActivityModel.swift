@@ -34,6 +34,9 @@ final class ActivityModel {
     /// (also bumped by `reset()` to invalidate in-flight fetches).
     private var fetchGeneration = 0
     private var loadedEndpoint: String?
+    /// ``CodegClient/tagEndpoint`` of the server the rows are from, so a tag
+    /// write confirmed on another server patches none of them.
+    private var tagEndpoint: String?
 
     /// Consecutive polls where *both* endpoints failed (after retries). Debounces
     /// the error banner so a single blip in the 25s pulse doesn't flash an error
@@ -114,7 +117,14 @@ final class ActivityModel {
         error = nil
         lastRefreshed = nil
         loadedEndpoint = nil
+        tagEndpoint = nil
         consecutiveFailures = 0
+    }
+
+    /// The server confirmed a conversation's tags (a picker's write): patch
+    /// the row in place, so its chips don't wait for the next pulse.
+    func applyTagChange(_ change: ConversationTagsChange) {
+        conversations.applyTagChange(change, endpoint: tagEndpoint)
     }
 
     /// Clears a surfaced refresh-error banner (a failed refresh over a list that
@@ -132,6 +142,7 @@ final class ActivityModel {
         if endpoint != loadedEndpoint {
             reset()
             loadedEndpoint = endpoint
+            tagEndpoint = client.tagEndpoint
         }
         fetchGeneration += 1
         let token = fetchGeneration

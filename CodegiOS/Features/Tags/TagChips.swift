@@ -122,6 +122,19 @@ struct RowTags: Equatable {
     static let none = RowTags()
 
     var isEmpty: Bool { tags.isEmpty && branch == nil }
+
+    /// What `conversation` draws: its tags this client knows, in display order,
+    /// and its branch when the branch tag is on — nothing on a sub-session (its
+    /// parent row carries them). Every surface that shows a conversation's
+    /// chips resolves them here, so a row and the session header agree. Pure.
+    static func resolve(_ conversation: ConversationSummary, tagsByID: [Int: ConversationTag],
+                        branchTag: BranchTagSetting) -> RowTags {
+        guard conversation.canCarryTags else { return .none }
+        let branch = ConversationTags.branchChip(for: conversation, enabled: branchTag.enabled)
+        let resolved = ConversationTags.resolve(conversation.tagIds, in: tagsByID)
+        guard branch != nil || !resolved.isEmpty else { return .none }
+        return RowTags(tags: resolved, branch: branch, branchColor: branchTag.color)
+    }
 }
 
 /// A row's chips (web `ConversationTagChips`, `CARD_TAG_LIMIT`): the branch

@@ -207,19 +207,13 @@ final class SessionListViewModel {
 
     /// What a row draws after its title.
     func rowTags(for conversation: ConversationSummary) -> RowTags {
-        guard conversation.canCarryTags else { return .none }
-        let branch = ConversationTags.branchChip(for: conversation, enabled: branchTag.enabled)
-        let resolved = ConversationTags.resolve(conversation.tagIds, in: tagsByID)
-        guard branch != nil || !resolved.isEmpty else { return .none }
-        return RowTags(tags: resolved, branch: branch, branchColor: branchTag.color)
+        RowTags.resolve(conversation, tagsByID: tagsByID, branchTag: branchTag)
     }
 
     /// The server confirmed a conversation's tags (a picker's write): patch the
     /// row in place. A refetch per toggle could land behind the next toggle.
     func applyTagChange(_ change: ConversationTagsChange) {
-        guard change.endpoint == client.tagEndpoint,
-              let index = conversations.firstIndex(where: { $0.id == change.conversationID }) else { return }
-        conversations[index].tagIds = change.tagIDs
+        conversations.applyTagChange(change, endpoint: client.tagEndpoint)
     }
 
     /// Re-read the tag definitions and the branch tag (a tag was created,

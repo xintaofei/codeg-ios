@@ -34,6 +34,8 @@ struct SessionDetailView: View {
     @State private var tagging: ConversationSummary?
     /// The conversation being moved ("…" → Move to…).
     @State private var moving: ConversationSummary?
+    /// The server's tag definitions, for the chips under the title.
+    @State private var tagDefinitions = TagDefinitionsModel()
 
     init(server: ServerProfile, client: CodegClient, conversationID: Int,
          onOpenSession: ((NewSessionRequest) -> Void)? = nil) {
@@ -59,6 +61,20 @@ struct SessionDetailView: View {
         return model.isNewSession ? Text("New Task") : Text("Session")
     }
 
+    /// The chips under the title: the conversation's tags and branch, resolved
+    /// as its Chats row resolves them. `summary.tagIds` follows every confirmed
+    /// write (``SessionDetailViewModel/applyTagChange(_:)``) and the
+    /// definitions follow every tag edit, so the header keeps up with the picker.
+    private var headerTags: RowTags {
+        guard let summary = model.summary else { return .none }
+        return tagDefinitions.rowTags(for: summary)
+    }
+
+    /// Who the definitions are read from — a token edit re-reads them too.
+    private var tagSource: String {
+        "\(client.baseURL.absoluteString)|\(client.token)"
+    }
+
     var body: some View {
         ZStack {
             CodegBackground()
@@ -67,6 +83,18 @@ struct SessionDetailView: View {
         .navigationTitle(navTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // A tagged conversation's title carries its chips beneath it (web
+            // `ConversationHeaderTags`); an untagged one keeps the system title.
+            if !headerTags.isEmpty {
+                ToolbarItem(placement: .principal) {
+                    TitleWithTagsHeader(
+                        title: navTitle,
+                        tags: headerTags,
+                        onEditTags: model.canEditTags ? { tagging = model.summary } : nil
+                    )
+                }
+                .sharedBackgroundVisibility(.hidden)
+            }
             // The agent avatar (formerly in the compose bar) sits to the right of
             // the title. Shown once loaded; for an editable draft its sheet also
             // hosts the Agent + Folder pickers, otherwise just Mode/config.
@@ -157,6 +185,13 @@ struct SessionDetailView: View {
         // current, so reopening it starts from what the server now holds.
         .onReceive(NotificationCenter.default.publisher(for: .conversationTagsDidChange)) { note in
             if let change = note.object as? ConversationTagsChange { model.applyTagChange(change) }
+        }
+        // The definitions the header's chips resolve against: read here (a
+        // late read only redraws chips), and again after any tag edit — a tag
+        // created from the picker included.
+        .task(id: tagSource) { await tagDefinitions.load(client: client) }
+        .onReceive(NotificationCenter.default.publisher(for: .conversationTagDefinitionsDidChange)) { _ in
+            Task { await tagDefinitions.load(client: client) }
         }
         // Moved from the Chats list beside this screen (iPad).
         .onReceive(NotificationCenter.default.publisher(for: .conversationDidMove)) { note in
@@ -482,6 +517,51 @@ struct SessionDetailView: View {
             .animation(.snappy(duration: 0.26), value: model.pendingPlanApproval?.id)
             .animation(.snappy(duration: 0.26), value: model.sessionLoadFailure)
         }
+    }
+}
+
+/// The nav bar title with the conversation's chips on a line under it (web
+/// `ConversationHeaderTags`, which follows the title in the header row — a
+/// phone's bar has no room beside it). The branch first, then as many tags as
+/// fit — three, two, one — and the rest as "+N". Tapping the chips opens the
+/// tag picker, as the web header's do.
+private struct TitleWithTagsHeader: View {
+    let title: Text
+    let tags: RowTags
+    /// Nil where the tags can't be edited from here.
+    let onEditTags: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 2) {
+            title
+                .font(.headline)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if let onEditTags {
+                Button(action: onEditTags) { chips }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text("Edit tags"))
+                    .accessibilityValue(Text(verbatim: names))
+            } else {
+                chips
+                    .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    private var chips: some View {
+        ViewThatFits(in: .horizontal) {
+            RowTagChips(decoration: tags, limit: 3)
+            RowTagChips(decoration: tags, limit: 2)
+            RowTagChips(decoration: tags, limit: 1)
+        }
+        .contentShape(Rectangle())
+    }
+
+    /// Every chip's name, the hidden ones included, for VoiceOver.
+    private var names: String {
+        ([tags.branch].compactMap { $0 } + tags.tags.map(\.name)).joined(separator: ", ")
     }
 }
 

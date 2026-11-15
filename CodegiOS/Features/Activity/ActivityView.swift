@@ -18,6 +18,13 @@ struct ActivityView: View {
     /// Bumped only when a user pull-to-refresh completes, so the soft landing
     /// haptic fires on the pull — not on the initial programmatic load.
     @State private var pullTick = 0
+    /// The server's tag definitions, for the rows' chips.
+    @State private var tagDefinitions = TagDefinitionsModel()
+
+    /// Who the tag definitions are read from — a token edit re-reads them too.
+    private var tagSource: String {
+        client.map { "\($0.baseURL.absoluteString)|\($0.token)" } ?? ""
+    }
 
     var body: some View {
         ZStack {
@@ -31,6 +38,24 @@ struct ActivityView: View {
             if !activity.hasLoaded {
                 await activity.refresh(client: client)
             }
+        }
+        // The rows carry their tags as the Chats list draws them: the
+        // definitions read here and after every tag edit, each row's own tags
+        // patched as soon as a write is confirmed (not at the next pulse).
+        .task(id: tagSource) { await loadTagDefinitions() }
+        .onReceive(NotificationCenter.default.publisher(for: .conversationTagDefinitionsDidChange)) { _ in
+            Task { await loadTagDefinitions() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .conversationTagsDidChange)) { note in
+            if let change = note.object as? ConversationTagsChange { activity.applyTagChange(change) }
+        }
+    }
+
+    private func loadTagDefinitions() async {
+        if let client {
+            await tagDefinitions.load(client: client)
+        } else {
+            tagDefinitions.reset()
         }
     }
 
@@ -134,7 +159,8 @@ struct ActivityView: View {
             conversation: conversation,
             isSelected: false,
             folderName: activity.folderNames[conversation.folderId],
-            onTap: { onOpen(conversation.id) }
+            onTap: { onOpen(conversation.id) },
+            rowTags: tagDefinitions.rowTags(for: conversation)
         )
         .plainRow(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
     }

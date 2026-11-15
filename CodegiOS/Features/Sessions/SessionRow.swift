@@ -20,8 +20,8 @@ struct SessionRow: View {
     /// `conversation.isPinned`). `.swipeActions` doesn't work inside the list's
     /// `LazyVStack`, so a context menu is the toggle affordance.
     var onTogglePin: (() -> Void)?
-    /// Its tags (and branch chip), drawn after the title. Only the Chats list
-    /// resolves them; elsewhere a row shows none.
+    /// Its tags (and branch chip), drawn after the title — resolved by the
+    /// host (the Chats list, Activity, Search); none by default.
     var rowTags: RowTags = .none
     /// When set, the context menu offers "Tags…" — on a root row only (a
     /// sub-session carries no tags of its own).
