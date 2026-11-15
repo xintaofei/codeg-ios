@@ -27,8 +27,8 @@ private func apiKeySave() -> UpdateKimiCodeConfigBody {
 /// save time, and return the JSON that goes over the wire.
 private func payload(_ draft: KimiReasoningDraft, baseline: KimiReasoningDraft,
                      onDisk: String?) throws -> [String: Any] {
-    let body = kimiBodyForSave(apiKeySave(), reasoning: KimiReasoningEdit(draft: draft, baseline: baseline),
-                               freshConfigJson: onDisk)
+    let body = try kimiBodyForSave(apiKeySave(), reasoning: KimiReasoningEdit(draft: draft, baseline: baseline),
+                                   freshConfigJson: onDisk)
     return try JSONSerialization.jsonObject(with: JSONEncoder().encode(body)) as? [String: Any] ?? [:]
 }
 
@@ -216,12 +216,73 @@ private func payload(_ draft: KimiReasoningDraft, baseline: KimiReasoningDraft,
         var d = seeded(nil)
         d.reasoningEnabled = true
         let edit = KimiReasoningEdit(draft: d, baseline: seeded(nil))
-        let login = kimiBodyForSave(UpdateKimiCodeConfigBody(mode: "login"), reasoning: edit, freshConfigJson: nil)
+        let login = try kimiBodyForSave(UpdateKimiCodeConfigBody(mode: "login"), reasoning: edit, freshConfigJson: nil)
         #expect(login.reasoningEnabled == nil)
         #expect(login.supportEfforts == nil)
-        let raw = kimiBodyForSave(UpdateKimiCodeConfigBody(mode: "raw", rawConfigToml: "x = 1"),
-                                  reasoning: edit, freshConfigJson: nil)
+        let raw = try kimiBodyForSave(UpdateKimiCodeConfigBody(mode: "raw", rawConfigToml: "x = 1"),
+                                      reasoning: edit, freshConfigJson: nil)
         #expect(raw.reasoningEnabled == nil)
         #expect(raw.rawConfigToml == "x = 1")
+    }
+}
+
+/// A default and its level list resolved from different sources (one edited
+/// here, the other carried from disk) that no longer agree: the backend would
+/// drop the default and report success, so no body is built — and so no write.
+@Suite struct KimiReasoningConflictTests {
+    private func save(_ draft: KimiReasoningDraft, baseline: KimiReasoningDraft, onDisk: String) throws {
+        _ = try kimiBodyForSave(apiKeySave(), reasoning: KimiReasoningEdit(draft: draft, baseline: baseline),
+                                freshConfigJson: onDisk)
+    }
+
+    @Test func aDefaultPickedHereWhoseLevelWentElsewhere() {
+        let base = seeded(thinkingLowHigh)
+        var d = base
+        d.defaultEffort = "low"
+        #expect(throws: KimiReasoningConflict()) {
+            try save(d, baseline: base, onDisk: #"{"capabilities":["thinking"],"supportEfforts":["high"]}"#)
+        }
+        // Every level cleared elsewhere drops it just the same.
+        #expect(throws: KimiReasoningConflict()) {
+            try save(d, baseline: base, onDisk: #"{"capabilities":["thinking"]}"#)
+        }
+    }
+
+    @Test func aLevelRemovedHereThatIsNowTheDefaultElsewhere() {
+        let base = seeded(thinkingLowHigh)
+        var d = base
+        d.toggleEffort("low")
+        #expect(d.defaultEffort == "high", "the card's own default is untouched")
+        #expect(throws: KimiReasoningConflict()) {
+            try save(d, baseline: base,
+                     onDisk: #"{"capabilities":["thinking"],"supportEfforts":["low","high"],"defaultEffort":"low"}"#)
+        }
+    }
+
+    @Test func aPairWhollyFromOneSourceGoesThrough() throws {
+        // Both edited here: the card's own, validated choice wins.
+        let base = seeded(thinkingLowHigh)
+        var both = base
+        both.toggleEffort("max")
+        both.defaultEffort = "max"
+        let json = try payload(both, baseline: base, onDisk: #"{"capabilities":["thinking"],"supportEfforts":["low"]}"#)
+        #expect(json["supportEfforts"] as? [String] == ["low", "high", "max"])
+        #expect(json["defaultEffort"] as? String == "max")
+
+        // Both untouched: carried as on disk, even a hand-written mismatch the
+        // backend tidies anyway (as before the card existed).
+        let handWritten = #"{"capabilities":["thinking"],"supportEfforts":["low"],"defaultEffort":"max"}"#
+        let carried = try payload(base, baseline: base, onDisk: handWritten)
+        #expect(carried["defaultEffort"] as? String == "max")
+    }
+
+    @Test func reasoningOffHasNoDefaultToLose() throws {
+        let base = seeded(thinkingLowHigh)
+        var d = base
+        d.defaultEffort = "low"
+        d.reasoningEnabled = false
+        let json = try payload(d, baseline: base, onDisk: #"{"capabilities":["thinking"],"supportEfforts":["high"]}"#)
+        #expect(json["reasoningEnabled"] as? Bool == false)
+        #expect(json["defaultEffort"] == nil)
     }
 }

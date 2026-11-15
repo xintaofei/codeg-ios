@@ -258,7 +258,15 @@ final class AgentsSettingsModel {
                 var payload = body
                 if body.mode == "apikey" {
                     let fresh = try await client.listAgents().first { $0.agentType == .kimiCode }
-                    payload = kimiBodyForSave(body, reasoning: reasoning, freshConfigJson: fresh?.configJson)
+                    do {
+                        payload = try kimiBodyForSave(body, reasoning: reasoning, freshConfigJson: fresh?.configJson)
+                    } catch {
+                        // The card's edit collides with a change made elsewhere.
+                        // Nothing is written; reload so the card re-seeds from
+                        // what is on disk now, or every retry would collide again.
+                        await self.loadBody()
+                        throw error
+                    }
                 }
                 let affected = try await client.updateKimiCodeConfig(payload)
                 self.surfaceAffected(affected)

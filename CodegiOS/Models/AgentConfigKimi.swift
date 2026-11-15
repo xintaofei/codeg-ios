@@ -203,13 +203,34 @@ struct KimiReasoningEdit: Equatable, Sendable {
     /// Field by field: the card's value where the user changed it, `onDisk`'s
     /// where they didn't — so a change made elsewhere since the card was seeded
     /// survives unless the user overrode that same field here.
-    func resolved(onDisk: KimiReasoningDraft) -> KimiReasoningDraft {
+    ///
+    /// Throws `KimiReasoningConflict` when that pairs a default and a level
+    /// list from different sources that no longer agree (a default picked here
+    /// whose level was removed elsewhere, or a level removed here that is now
+    /// the default elsewhere): the backend would silently drop the default.
+    /// Only a change made elsewhere can cause it — a pair wholly from the card
+    /// passed its validation, and one wholly from disk is what's there already.
+    func resolved(onDisk: KimiReasoningDraft) throws -> KimiReasoningDraft {
         var out = onDisk
+        let effortsEdited = draft.supportEfforts != baseline.supportEfforts
+        let defaultEdited = draft.defaultEffort != baseline.defaultEffort
         if draft.reasoningEnabled != baseline.reasoningEnabled { out.reasoningEnabled = draft.reasoningEnabled }
         if draft.alwaysThinking != baseline.alwaysThinking { out.alwaysThinking = draft.alwaysThinking }
-        if draft.supportEfforts != baseline.supportEfforts { out.supportEfforts = draft.supportEfforts }
-        if draft.defaultEffort != baseline.defaultEffort { out.defaultEffort = draft.defaultEffort }
+        if effortsEdited { out.supportEfforts = draft.supportEfforts }
+        if defaultEdited { out.defaultEffort = draft.defaultEffort }
+        if out.reasoningEnabled && effortsEdited != defaultEdited {
+            let effort = out.defaultEffort.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !effort.isEmpty && !out.supportEfforts.contains(effort) { throw KimiReasoningConflict() }
+        }
         return out
+    }
+}
+
+/// The reasoning card's edit can't be combined with what changed on disk
+/// meanwhile, so nothing is written (see `KimiReasoningEdit.resolved`).
+struct KimiReasoningConflict: LocalizedError, Equatable {
+    var errorDescription: String? {
+        "Kimi’s reasoning settings were changed elsewhere while you edited them, so nothing was saved. They’ve been reloaded — check them and save again."
     }
 }
 
@@ -222,13 +243,15 @@ struct KimiReasoningEdit: Equatable, Sendable {
 /// time, not the copy the panel opened with, so a change made elsewhere
 /// meanwhile isn't reverted). `reasoning == nil` carries all four. Reasoning
 /// off sends no levels and no default, like the web, so the backend omits
-/// `capabilities` and kimi keeps its permissive default. `login` clears the
-/// block and `raw` writes verbatim TOML, so both pass through untouched.
+/// `capabilities` and kimi keeps its permissive default. Throws
+/// `KimiReasoningConflict` rather than build a body the backend would quietly
+/// change. `login` clears the block and `raw` writes verbatim TOML, so both
+/// pass through untouched.
 func kimiBodyForSave(_ body: UpdateKimiCodeConfigBody, reasoning: KimiReasoningEdit? = nil,
-                     freshConfigJson: String?) -> UpdateKimiCodeConfigBody {
+                     freshConfigJson: String?) throws -> UpdateKimiCodeConfigBody {
     guard body.mode == "apikey" else { return body }
     let onDisk = KimiReasoningDraft(KimiManagedConfig.parse(freshConfigJson))
-    let r = reasoning?.resolved(onDisk: onDisk) ?? onDisk
+    let r = try reasoning?.resolved(onDisk: onDisk) ?? onDisk
     var out = body
     out.reasoningEnabled = r.reasoningEnabled
     out.alwaysThinking = r.reasoningEnabled && r.alwaysThinking

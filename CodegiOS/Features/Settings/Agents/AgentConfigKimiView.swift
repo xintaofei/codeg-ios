@@ -105,10 +105,12 @@ struct KimiConfigSection: View {
             try? await Task.sleep(for: .seconds(4))
             if !Task.isCancelled { banner = nil }
         }
-        // Re-seed the reasoning card whenever the declaration on disk changes —
-        // our own save (as the backend normalized it), the raw editor, or a
-        // login save clearing the block — like the web re-seeds its draft.
-        .onChange(of: KimiReasoningDraft(liveConfig)) { _, onDisk in
+        // Re-seed the reasoning card whenever the projection changes — our own
+        // save (as the backend normalized it), the raw editor, a login save
+        // clearing the block, a reload after a conflicting save — like the web
+        // re-seeds its draft. An identical refresh leaves in-flight edits alone.
+        .onChange(of: agent.configJson) {
+            let onDisk = KimiReasoningDraft(liveConfig)
             reasoning = onDisk
             reasoningBaseline = onDisk
         }
