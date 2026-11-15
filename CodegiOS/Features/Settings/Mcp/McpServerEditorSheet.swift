@@ -33,7 +33,12 @@ struct McpServerEditorSheet: View {
     private var trimmedId: String { serverId.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var parsedSpec: JSONValue? { JSONValue.parse(specText) }
     private var specIsValidObject: Bool { parsedSpec?.isObject ?? false }
-    private var canSave: Bool { !trimmedId.isEmpty && specIsValidObject && !selectedApps.isEmpty && !isSaving }
+    /// What a save sends: the toggles, plus the server's existing apps that
+    /// aren't offered as toggles (kept, never stripped).
+    private var appsToSave: [McpAppType] {
+        McpAppSelection.apps(selected: selectedApps, existing: editing?.apps ?? [])
+    }
+    private var canSave: Bool { !trimmedId.isEmpty && specIsValidObject && !appsToSave.isEmpty && !isSaving }
 
     var body: some View {
         NavigationStack {
@@ -67,8 +72,8 @@ struct McpServerEditorSheet: View {
                                 specValidityRow
                             }
                         }
-                        EditorSection(title: "Enabled For", footer: selectedApps.isEmpty ? "Select at least one app." : "Which agents this MCP server is available to.") {
-                            ForEach(Array(McpAppType.allCases.enumerated()), id: \.element) { index, app in
+                        EditorSection(title: "Enabled For", footer: appsToSave.isEmpty ? "Select at least one app." : "Which agents this MCP server is available to.") {
+                            ForEach(Array(McpAppType.assignable.enumerated()), id: \.element) { index, app in
                                 if index > 0 { Divider().overlay(Theme.hairline).padding(.leading, 16) }
                                 Toggle(isOn: Binding(
                                     get: { selectedApps.contains(app) },
@@ -134,8 +139,7 @@ struct McpServerEditorSheet: View {
         guard canSave, let spec = parsedSpec else { return }
         isSaving = true
         let id = trimmedId
-        // Canonical app order (filter allCases by membership).
-        let apps = McpAppType.allCases.filter { selectedApps.contains($0) }
+        let apps = appsToSave
         Task {
             do {
                 try await onSave(id, spec, apps)

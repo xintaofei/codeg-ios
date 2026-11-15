@@ -3,35 +3,109 @@ import Foundation
 /// MCP (Model Context Protocol) server configs installed on the server. Each is
 /// enabled for a set of agent "apps" and carries a free-form JSON `spec`.
 
-/// The agent apps an MCP server can be assigned to. A SEPARATE enum from
-/// `AgentType` (it's the MCP-specific app set, which also includes `hermes`).
-enum McpAppType: String, Codable, CaseIterable, Hashable, Sendable, Identifiable {
-    case claudeCode = "claude_code"
-    case codex
-    case gemini
-    case openClaw = "open_claw"
-    case openCode = "open_code"
-    case cline
-    case hermes
+/// An agent app an MCP server can be assigned to: the server's `McpAppType`,
+/// kept as its wire string. A SEPARATE type from `AgentType` (the MCP app set
+/// has its own spellings, e.g. `kimi_code`, and includes `hermes`).
+///
+/// Open rather than an enum on purpose: saving a server means "these apps and
+/// no others" (`mcp_upsert_local_server` removes it from every app not
+/// listed), so an app this build doesn't know must survive load → edit → save
+/// instead of being dropped — dropping it would unassign the server there.
+struct McpAppType: RawRepresentable, Codable, Hashable, Sendable, Identifiable {
+    let rawValue: String
+
+    init(rawValue: String) { self.rawValue = rawValue }
+
+    init(from decoder: Decoder) throws {
+        rawValue = try decoder.singleValueContainer().decode(String.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(rawValue)
+    }
 
     var id: String { rawValue }
 
+    static let claudeCode = McpAppType(rawValue: "claude_code")
+    static let codex = McpAppType(rawValue: "codex")
+    static let gemini = McpAppType(rawValue: "gemini")
+    static let openClaw = McpAppType(rawValue: "open_claw")
+    static let openCode = McpAppType(rawValue: "open_code")
+    static let cline = McpAppType(rawValue: "cline")
+    static let hermes = McpAppType(rawValue: "hermes")
+    static let codeBuddy = McpAppType(rawValue: "code_buddy")
+    static let kimiCode = McpAppType(rawValue: "kimi_code")
+    static let miniMaxCode = McpAppType(rawValue: "minimax_code")
+    static let grok = McpAppType(rawValue: "grok")
+    static let cursor = McpAppType(rawValue: "cursor")
+    static let deepSeek = McpAppType(rawValue: "deepseek")
+    static let qoder = McpAppType(rawValue: "qoder")
+    static let antigravity = McpAppType(rawValue: "antigravity")
+    static let kiro = McpAppType(rawValue: "kiro")
+    static let zCode = McpAppType(rawValue: "zcode")
+    static let trae = McpAppType(rawValue: "trae")
+    static let commandCode = McpAppType(rawValue: "command_code")
+    static let pi = McpAppType(rawValue: "pi")
+
+    /// The apps offered as toggles, in the web's order and with its labels
+    /// (`mcp-settings.tsx` `APP_OPTIONS`). OpenClaw and pi are scanned but not
+    /// offered: OpenClaw no longer takes MCP over the ACP wire, and pi's MCP
+    /// file belongs to a third-party extension. An existing assignment to
+    /// either is kept on save (see `McpAppSelection.apps`).
+    static let assignable: [McpAppType] = [
+        .claudeCode, .codex, .gemini, .openCode, .cline, .hermes, .codeBuddy,
+        .kimiCode, .miniMaxCode, .grok, .cursor, .deepSeek, .qoder, .antigravity,
+        .kiro, .zCode, .trae, .commandCode,
+    ]
+
+    /// Product name; an app this build doesn't know shows its wire value.
     var displayName: String {
-        switch self {
-        case .claudeCode: "Claude Code"
-        case .codex: "Codex"
-        case .gemini: "Gemini"
-        case .openClaw: "OpenClaw"
-        case .openCode: "OpenCode"
-        case .cline: "Cline"
-        case .hermes: "Hermes"
+        switch rawValue {
+        case "claude_code": "Claude Code"
+        case "codex": "Codex CLI"
+        case "gemini": "Gemini CLI"
+        case "open_claw": "OpenClaw"
+        case "open_code": "OpenCode"
+        case "cline": "Cline"
+        case "hermes": "Hermes Agent"
+        case "code_buddy": "CodeBuddy"
+        case "kimi_code": "Kimi Code"
+        case "minimax_code": "MiniMax Code"
+        case "grok": "Grok"
+        case "cursor": "Cursor"
+        case "deepseek": "DeepSeek Harness"
+        case "qoder": "Qoder"
+        case "antigravity": "Google Antigravity"
+        case "kiro": "Kiro CLI"
+        case "zcode": "ZCode"
+        case "trae": "TRAE CLI"
+        case "command_code": "Command Code"
+        case "pi": "pi"
+        default: rawValue
         }
     }
 }
 
+/// The app list an MCP editor saves (web `saveLocalServer`): the toggled
+/// apps in display order, then every app the server already had that isn't
+/// offered as a toggle — never added here, but never silently stripped
+/// either, since the save would delete that app's on-disk entry.
+enum McpAppSelection {
+    static func apps(selected: Set<McpAppType>, existing: [McpAppType]) -> [McpAppType] {
+        let visible = McpAppType.assignable.filter { selected.contains($0) }
+        var seen = Set(visible)
+        var hidden: [McpAppType] = []
+        for app in existing where !McpAppType.assignable.contains(app) && seen.insert(app).inserted {
+            hidden.append(app)
+        }
+        return visible + hidden
+    }
+}
+
 /// An installed local MCP server (`mcp_scan_local`). `spec` is the raw MCP server
-/// definition (stdio/http/sse) kept as free-form JSON; unknown app strings are
-/// dropped so one future app type can't fail the whole list decode.
+/// definition (stdio/http/sse) kept as free-form JSON; `apps` keeps every
+/// app string verbatim, known or not (see `McpAppType`).
 struct LocalMcpServer: Decodable, Identifiable, Hashable, Sendable {
     let id: String
     let spec: JSONValue
@@ -44,7 +118,7 @@ struct LocalMcpServer: Decodable, Identifiable, Hashable, Sendable {
         id = try c.decode(String.self, forKey: .id)
         spec = try c.decodeIfPresent(JSONValue.self, forKey: .spec) ?? .object([:])
         let rawApps = try c.decodeIfPresent([String].self, forKey: .apps) ?? []
-        apps = rawApps.compactMap(McpAppType.init(rawValue:))
+        apps = rawApps.map(McpAppType.init(rawValue:))
     }
 }
 
