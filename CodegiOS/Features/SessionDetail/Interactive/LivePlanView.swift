@@ -6,18 +6,19 @@ import SwiftUI
 /// plan reads the same live and in history. Display only — it never blocks the
 /// turn. Drawn as one of the reply's steps, where the agent last revised it.
 ///
-/// A collapsible card (web's `AgentPlanOverlay` shape, kept inline + native): the
-/// header is always visible with a completed/total count, and the checklist body
-/// expands by default while work is outstanding and collapses once every entry is
-/// done — the user can override either way by tapping the header.
+/// One row of the reply (web `PlanRow`): `Updated plan · <the step under way>
+/// 3/5`, opening onto the checklist. The plan being written right now opens by
+/// itself; an older update stays folded — the newest one says where things
+/// stand, so a reply that revised its plan five times reads as five lines, not
+/// five checklists. The user can open or close either by tapping the row.
 struct LivePlanView: View {
     let entries: [PlanEntry]
     /// Whether the owning turn is still streaming (drives the in-progress spinner
-    /// vs. a steady dot) — false for a plan in history.
+    /// vs. a steady dot, and opens the row) — false for a plan in history.
     var isStreaming: Bool = true
 
-    /// User's explicit expand/collapse, when they've tapped the header. `nil` ⇒ use
-    /// the default (expanded while incomplete). Stable because the timeline keys the
+    /// User's explicit expand/collapse, when they've tapped the row. `nil` ⇒ use
+    /// the default (open while streaming). Stable because the timeline keys the
     /// plan node by the call it is recorded as (`tool-<id>`, the live plan's being
     /// the one its hand-off writes), so this state survives stream re-renders, the
     /// plan moving, and the turn ending.
@@ -26,53 +27,61 @@ struct LivePlanView: View {
     private var completed: Int {
         entries.filter { $0.normalizedStatus == .completed }.count
     }
-    private var allCompleted: Bool { !entries.isEmpty && completed == entries.count }
-    private var isExpanded: Bool { userExpanded ?? !allCompleted }
+    /// The step under way, else the first one not done (web `current`).
+    private var current: PlanEntry? {
+        entries.first { $0.normalizedStatus == .inProgress }
+            ?? entries.first { $0.normalizedStatus != .completed }
+    }
+    private var isExpanded: Bool { userExpanded ?? isStreaming }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(Theme.Motion.expand) { userExpanded = !isExpanded }
-            } label: {
+        if !entries.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
                 header
-            }
-            .buttonStyle(.plain)
-
-            if isExpanded {
-                Divider().overlay(Theme.hairline)
-                PlanChecklist(items: entries.map(\.checklistItem), isStreaming: isStreaming)
-                    .padding(.vertical, 5)
+                if isExpanded {
+                    PlanChecklist(items: entries.map(\.checklistItem), isStreaming: isStreaming)
+                        .padding(.vertical, 2)
+                        .transition(.opacity)
+                }
             }
         }
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
-        .hairlineBorder(Theme.Radius.md)
     }
 
     private var header: some View {
-        // The timeline gutter already marks this node with the checklist icon, so
-        // the card header leads straight with the "Plan" label.
-        HStack(spacing: 8) {
-            Text("Plan")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Spacer(minLength: 8)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text("Updated plan", comment: "Activity row: the agent wrote or revised its plan; followed by the step under way")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize()
+                if let current {
+                    Text(verbatim: current.content)
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .layoutPriority(1)
+                }
+            }
+            Spacer(minLength: 6)
             Text(verbatim: "\(completed)/\(entries.count)")
-                .font(.caption.weight(.semibold).monospacedDigit())
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .background(Theme.surfaceNested, in: Capsule())
-            Image(systemName: "chevron.down")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.caption.monospacedDigit())
                 .foregroundStyle(Theme.textTertiary)
-                .rotationEffect(.degrees(isExpanded ? 0 : -90))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Theme.textTertiary)
+                .rotationEffect(.degrees(isExpanded ? 90 : 0))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 2)
         .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(Theme.Motion.expand) { userExpanded = !isExpanded }
+        }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Plan")
-        .accessibilityValue(Text(verbatim: "\(completed)/\(entries.count)"))
-        .accessibilityHint(isExpanded ? "Collapse" : "Expand")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(Text("Updated plan", comment: "Activity row: the agent wrote or revised its plan; followed by the step under way"))
+        .accessibilityValue(Text(verbatim: [current?.content, "\(completed)/\(entries.count)"]
+            .compactMap { $0 }.joined(separator: ", ")))
+        .accessibilityHint(isExpanded ? Text("Collapse") : Text("Expand"))
     }
 }
