@@ -20,6 +20,12 @@ struct SessionListView: View {
     /// Compact navigation hook: when set, a row tap opens via this instead of
     /// writing the selection binding.
     var onOpen: ((Int) -> Void)?
+    /// Compact: draws what a row in a group's fullscreen list opens, pushed on
+    /// that cover's own stack (see ``SessionSectionFullScreen``).
+    var routeScreen: RouteScreen?
+    /// `AppModel.linkArrivals`: a link closes the group's fullscreen list (and
+    /// whatever it pushed), so where the link went shows instead.
+    var linkArrivals: Int
     /// Shows the "+" new-task affordance when provided.
     var onNewSession: (() -> Void)?
     /// Compact Chats root only: turns the leading title into a tappable server
@@ -62,6 +68,8 @@ struct SessionListView: View {
         client: CodegClient,
         selectedConversationID: Binding<Int?>,
         onOpen: ((Int) -> Void)? = nil,
+        routeScreen: RouteScreen? = nil,
+        linkArrivals: Int = 0,
         onNewSession: (() -> Void)? = nil,
         serverSwitcher: ServerSwitcher? = nil
     ) {
@@ -69,6 +77,8 @@ struct SessionListView: View {
         self.client = client
         self._selectedConversationID = selectedConversationID
         self.onOpen = onOpen
+        self.routeScreen = routeScreen
+        self.linkArrivals = linkArrivals
         self.onNewSession = onNewSession
         self.serverSwitcher = serverSwitcher
         self._viewModel = State(initialValue: SessionListViewModel(client: client))
@@ -424,13 +434,13 @@ struct SessionListView: View {
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.immediately)
         .refreshable { await viewModel.refresh() }
-        // App Store-style zoom into the tapped group's full list. A row tap opens
-        // the conversation *then* clears this binding (see `fullScreen(for:)`), so
-        // the cover's dismissal reveals the already-pushed detail in one motion —
-        // no flash of this list in between.
+        // App Store-style zoom into the tapped group's full list. On a phone a
+        // row pushes its conversation inside the cover; on an iPad it selects
+        // the conversation for the detail column and closes the cover.
         .fullScreenCover(item: $expandedSection) { section in
             fullScreen(for: section)
         }
+        .onChange(of: linkArrivals) { expandedSection = nil }
     }
 
     // MARK: - Cards
@@ -514,10 +524,9 @@ struct SessionListView: View {
             conversations: data.conversations,
             folderName: { data.showFolder ? viewModel.folderNames[$0.folderId] : nil },
             rowTags: { viewModel.rowTags(for: $0) },
-            // Open first (pushes the detail onto the nav stack behind the cover),
-            // then dismiss — so closing the cover reveals the detail directly
-            // instead of zooming back to this list and pushing afterward.
+            // iPad: select for the detail column, then close the cover.
             onOpen: { id in open(id: id); expandedSection = nil },
+            routeScreen: routeScreen,
             onTogglePin: { conv in togglePin(conv) },
             rowActions: rowActions,
             notice: viewModel.notice,

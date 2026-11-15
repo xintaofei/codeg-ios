@@ -130,6 +130,7 @@ struct RootView: View {
                     server: server,
                     client: client,
                     selectedConversationID: $model.selectedConversationID,
+                    linkArrivals: model.linkArrivals,
                     onNewSession: { model.open(.newSession(NewSessionRequest())) }
                 )
                 .id(server.id)
@@ -293,6 +294,11 @@ private struct ChatsRoot: View {
                     client: client,
                     selectedConversationID: $model.selectedConversationID,
                     onOpen: { model.open(.conversation($0)) },
+                    // A group's fullscreen list keeps a stack of its own.
+                    routeScreen: { route, open in
+                        AnyView(RouteDestination(model: model, route: route, open: open))
+                    },
+                    linkArrivals: model.linkArrivals,
                     onNewSession: { model.open(.newSession(NewSessionRequest())) },
                     // The big left title IS the switcher (tappable in place), so
                     // SessionListView owns the title menu here; no inlineLarge +
@@ -423,18 +429,22 @@ private struct SearchTab: View {
 private struct RouteDestination: View {
     let model: AppModel
     let route: Route
+    /// Where what this screen opens goes: the app's own routing, unless the
+    /// screen sits on a stack of its own (a group's fullscreen list).
+    var open: ((Route) -> Void)?
 
     var body: some View {
+        let open = self.open ?? { model.open($0) }
         if let server = model.selectedServer, let client = model.serverStore.client(for: server) {
             switch route {
             case .conversation(let id):
                 SessionDetailView(server: server, client: client, conversationID: id,
-                                  onOpenSession: { model.open(.newSession($0)) })
+                                  onOpenSession: { open(.newSession($0)) })
                     .id("\(server.id)|\(id)|\(client.token.hashValue)")
                     .toolbar(.hidden, for: .tabBar)
             case .newSession(let request):
                 SessionDetailView(server: server, client: client, newSession: request,
-                                  onOpenSession: { model.open(.newSession($0)) })
+                                  onOpenSession: { open(.newSession($0)) })
                     .id(request.id)
                     .toolbar(.hidden, for: .tabBar)
             case .project(let id):
@@ -442,7 +452,7 @@ private struct RouteDestination: View {
                     client: client,
                     folderID: id,
                     activity: model.activity,
-                    onNewSession: { model.open(.newSession(NewSessionRequest(preselectedFolderID: $0.id))) }
+                    onNewSession: { open(.newSession(NewSessionRequest(preselectedFolderID: $0.id))) }
                 )
                 .id("\(server.id)|folder-\(id)")
             }
