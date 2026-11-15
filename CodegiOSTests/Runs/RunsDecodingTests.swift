@@ -60,6 +60,8 @@ private func event(_ json: String) throws -> AcpEvent {
         #expect(tasks[1].toolUseId == nil)
         guard case .backgroundActivity(_, let outOfTurn) = decoded else { return }
         #expect(outOfTurn.turnCount == 1)
+        // A turn without its timestamp is not one this build can place: counted, not kept.
+        #expect(outOfTurn.turns.isEmpty)
         #expect(outOfTurn.settled.isEmpty)
 
         let settled = try event(#"""
@@ -70,8 +72,11 @@ private func event(_ json: String) throws -> AcpEvent {
         guard case .backgroundActivity(let rest, let batch) = settled else { Issue.record("decoded \(settled)"); return }
         #expect(rest.isEmpty)
         #expect(batch.turnCount == 0)
-        #expect(batch.settled == [BackgroundSettled(taskId: "a1", status: "completed", summary: "Survey done"),
+        #expect(batch.settled == [BackgroundSettled(taskId: "a1", status: "completed", summary: "Survey done",
+                                                    toolUseId: "toolu_1"),
                                   BackgroundSettled(taskId: "a2", status: "completed", interim: true)])
+        #expect(batch.watermark == 12)
+        #expect(batch.sessionID == "s1")
 
         // Absent on the wire = none.
         guard case .backgroundActivity(let none, _) = try event(#"{"type":"background_activity","outstanding":0}"#) else {

@@ -135,6 +135,12 @@ struct ToolCallBody: View {
     private var outputBody: some View {
         if let outputNote {
             ToolOutputBody(output: outputNote, isError: false, isCommand: true)
+        } else if let lifecycle = BackgroundTaskLifecycle.parse(vm.trimmedOutput) {
+            // An async sub-agent's launch: its lifecycle, never the marker the
+            // history parser (or a live settle) wrote it after.
+            BackgroundLaunchBody(lifecycle: lifecycle)
+        } else if vm.state == .done, BackgroundTaskLifecycle.isLaunchAck(vm.trimmedOutput) {
+            BackgroundLaunchBody(lifecycle: nil)
         } else if vm.bucket == .read, !vm.isError, let file = ReadOutputFormat.parse(vm.trimmedOutput) {
             FileBodyView(file: file)
         } else if let results = vm.searchResultText {
@@ -697,3 +703,54 @@ private func strArg(_ args: [String: Any]?, _ keys: [String]) -> String? {
     return nil
 }
 
+
+/// An async sub-agent's launch card body (web `useAgentCallModel`, Android
+/// `BackgroundLaunchBody`): how its task stands, its summary, and its result
+/// once a notification brought one. An unsettled lifecycle reads "launched",
+/// not "running": the transcript alone can't prove the task is still alive.
+private struct BackgroundLaunchBody: View {
+    /// Nil for the bare launch ack — still in the reply that launched it.
+    let lifecycle: BackgroundTaskLifecycle?
+
+    private var label: String {
+        guard let lifecycle else {
+            return String(localized: "Running in background", comment: "Background sub-agent launch card: only the launch acknowledgement so far")
+        }
+        guard let status = lifecycle.status else {
+            return String(localized: "Launched in background", comment: "Background sub-agent launch card: launched, no notification seen yet")
+        }
+        if status != "completed" {
+            return String(localized: "Background task finished (\(status))", comment: "Background sub-agent launch card: ended with this status")
+        }
+        return lifecycle.interim
+            ? String(localized: "Background task: interim result", comment: "Background sub-agent launch card: a result, with more to come")
+            : String(localized: "Background task completed", comment: "Background sub-agent launch card: finished")
+    }
+
+    private var failed: Bool {
+        guard let status = lifecycle?.status else { return false }
+        return status != "completed"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(verbatim: label)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(failed ? Theme.danger : Theme.textSecondary)
+            if let summary = lifecycle?.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+                Text(verbatim: summary)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let result = lifecycle?.result?.trimmingCharacters(in: .whitespacesAndNewlines), !result.isEmpty {
+                MarkdownContent(raw: result, streaming: false)
+            } else if lifecycle != nil, lifecycle?.status == nil {
+                Text("Result not returned yet", comment: "Background sub-agent launch card: no result yet")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}

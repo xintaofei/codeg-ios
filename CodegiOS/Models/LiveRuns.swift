@@ -9,11 +9,19 @@ import Foundation
 /// What Claude's transcript watcher saw happen OUT of turn in one batch
 /// (`background_activity`): background completions, the agent's work after
 /// them, cron and loop turns. None of it produces ACP wire events — the
-/// transcript is the only place it shows, so a re-read is what brings it in.
+/// transcript is the only place it shows — so the batch carries the turns the
+/// server's watcher read off it (`BackgroundOverlays`).
 struct BackgroundOutOfTurn: Hashable, Sendable {
     /// Out-of-turn turns parsed from the transcript tail (re-sent whole as
-    /// they grow).
+    /// they grow), counting any this build could not read.
     var turnCount = 0
+    /// The ones it could, upserted by id into the screen's overlay.
+    var turns: [MessageTurn] = []
+    /// How far the transcript was read (a byte offset): a detail read at or
+    /// past it holds these turns, which retires them from the overlay.
+    var watermark: Int64 = 0
+    /// The agent session the watcher reads.
+    var sessionID: String?
     /// Background tasks a `<task-notification>` settled in this batch.
     var settled: [BackgroundSettled] = []
 
@@ -29,21 +37,30 @@ struct BackgroundSettled: Hashable, Sendable, Decodable {
     var summary: String?
     /// The task will notify again — still alive, so not "finished".
     var interim: Bool
+    /// The launching call, whose card the settle flips in place.
+    var toolUseId: String?
+    /// The notification's `<result>` markdown.
+    var result: String?
 
-    init(taskId: String, status: String, summary: String? = nil, interim: Bool = false) {
+    init(taskId: String, status: String, summary: String? = nil, interim: Bool = false,
+         toolUseId: String? = nil, result: String? = nil) {
         self.taskId = taskId
         self.status = status
         self.summary = summary
         self.interim = interim
+        self.toolUseId = toolUseId
+        self.result = result
     }
 
-    private enum CodingKeys: String, CodingKey { case taskId, status, summary, interim }
+    private enum CodingKeys: String, CodingKey { case taskId, status, summary, interim, toolUseId, result }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         taskId = ((try? c.decodeIfPresent(String.self, forKey: .taskId)) ?? nil) ?? ""
         status = ((try? c.decodeIfPresent(String.self, forKey: .status)) ?? nil) ?? ""
         summary = (try? c.decodeIfPresent(String.self, forKey: .summary)) ?? nil
         interim = ((try? c.decodeIfPresent(Bool.self, forKey: .interim)) ?? nil) ?? false
+        toolUseId = ((try? c.decodeIfPresent(String.self, forKey: .toolUseId)) ?? nil).flatMap { $0.isEmpty ? nil : $0 }
+        result = (try? c.decodeIfPresent(String.self, forKey: .result)) ?? nil
     }
 }
 

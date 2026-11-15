@@ -280,6 +280,16 @@ struct ConversationDetail: Decodable, Sendable {
     /// the outline route (≤ 0.35) and from a legacy full response, which is
     /// also how the navigator knows not to ask for an outline.
     let userTurnsBeforeOffset: Int?
+    /// Byte offset of the agent's transcript this read was parsed through: an
+    /// out-of-turn overlay turn read at or before it is in `turns` now
+    /// (`background_activity`'s watermark).
+    var transcriptWatermark: Int64? = nil
+    /// The newest timestamp above the window (`full[0..<turnsOffset)`),
+    /// verbatim; absent when the window covers everything. What a windowed
+    /// read can prove it covers of the overlay.
+    var uncoveredPrefixMaxTs: String? = nil
+
+    var uncoveredPrefixMaxDate: Date? { uncoveredPrefixMaxTs.flatMap(ISO8601.parse) }
 
     /// Global index one past the last loaded turn. The coordinate to compare
     /// against when asking "did the transcript advance past what I hold?" — the

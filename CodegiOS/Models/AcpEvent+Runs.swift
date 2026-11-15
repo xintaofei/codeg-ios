@@ -10,6 +10,14 @@ import Foundation
 extension AcpEvent {
     private enum RunsKeys: String, CodingKey {
         case delta, outstandingTasks, childConnectionId, running, result, text, turns, settled
+        case watermark, sessionId
+    }
+
+    /// One element of a list decoded on its own, so one this build cannot
+    /// read drops alone.
+    private struct Lenient<Value: Decodable>: Decodable {
+        let value: Value?
+        init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
     }
 
     /// `delegation_completed.result` (Rust `DelegationResultSummary`, tagged `kind`).
@@ -35,14 +43,19 @@ extension AcpEvent {
             return .asyncTask(delta)
         case "background_activity":
             // The producer's WHOLE outstanding set; absent on the wire means none.
-            // The turns are counted, not kept: a transcript re-read brings them
-            // in, already in place.
-            let turns = ((try? c.decodeIfPresent([AnyJSON].self, forKey: .turns)) ?? nil) ?? []
+            // Each turn is read on its own: one this build can't read drops
+            // alone, and is still counted.
+            let turns = ((try? c.decodeIfPresent([Lenient<MessageTurn>].self, forKey: .turns)) ?? nil) ?? []
             let settled = ((try? c.decodeIfPresent([BackgroundSettled].self, forKey: .settled)) ?? nil) ?? []
             return .backgroundActivity(
                 outstandingTasks: ((try? c.decodeIfPresent([BackgroundOutstandingTask].self,
                                                              forKey: .outstandingTasks)) ?? nil) ?? [],
-                outOfTurn: BackgroundOutOfTurn(turnCount: turns.count, settled: settled.filter { !$0.taskId.isEmpty }))
+                outOfTurn: BackgroundOutOfTurn(
+                    turnCount: turns.count,
+                    turns: turns.compactMap(\.value),
+                    watermark: ((try? c.decodeIfPresent(Int64.self, forKey: .watermark)) ?? nil) ?? 0,
+                    sessionID: (try? c.decodeIfPresent(String.self, forKey: .sessionId)) ?? nil,
+                    settled: settled.filter { !$0.taskId.isEmpty }))
         case "delegation_started":
             guard let info = try? DelegationInfo(from: decoder), !info.parentToolUseId.isEmpty else { return nil }
             return .delegationStarted(info)
