@@ -16,6 +16,8 @@ struct SessionSectionCard: View {
     /// Per-row folder tag (return `nil` to omit) — shown on cross-folder groups
     /// like Pinned / Other / Activity, hidden inside a single folder's card.
     var folderName: (ConversationSummary) -> String? = { _ in nil }
+    /// Per-row tag chips (the Chats list resolves them; elsewhere none).
+    var rowTags: (ConversationSummary) -> RowTags = { _ in .none }
     /// How many rows to preview before the "Show all" affordance.
     var previewLimit: Int = 5
     /// Whole-card tap → host presents the fullscreen list.
@@ -37,7 +39,8 @@ struct SessionSectionCard: View {
                         SessionRow(
                             conversation: conv,
                             isSelected: false,
-                            folderName: folderName(conv)
+                            folderName: folderName(conv),
+                            rowTags: rowTags(conv)
                         )
                         .padding(.horizontal, 6)
                     }
@@ -122,13 +125,20 @@ struct SessionSectionFullScreen: View {
     /// background refresh while this is open keeps the list current.
     let conversations: [ConversationSummary]
     var folderName: (ConversationSummary) -> String? = { _ in nil }
+    var rowTags: (ConversationSummary) -> RowTags = { _ in .none }
     let onOpen: (Int) -> Void
     var onTogglePin: ((ConversationSummary) -> Void)?
+    /// The server the rows' "Tags…" sheet talks to; nil offers no tag editing.
+    /// The sheet is presented from inside this cover (see ``SessionRowSheets``).
+    var tagClient: CodegClient?
     /// Dismisses the fullscreen. The host drives this by clearing the cover's
     /// item binding (`expandedSection = nil`) — the same path the row-open flow
     /// uses. `@Environment(\.dismiss)` is a no-op for a cover presented with
     /// `.navigationTransition(.zoom)`, so the close button reports up instead.
     let onClose: () -> Void
+
+    /// The conversation whose tags are being edited from a row's menu.
+    @State private var tagging: ConversationSummary?
 
     /// "N sessions total" eyebrow shown above the big title.
     private var totalLabel: LocalizedStringKey {
@@ -150,7 +160,9 @@ struct SessionSectionFullScreen: View {
                         isSelected: false,
                         folderName: folderName(conv),
                         onTap: { onOpen(conv.id) },
-                        onTogglePin: onTogglePin.map { toggle in { toggle(conv) } }
+                        onTogglePin: onTogglePin.map { toggle in { toggle(conv) } },
+                        rowTags: rowTags(conv),
+                        onEditTags: tagClient == nil ? nil : { tagging = conv }
                     )
                     .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
                     .listRowSeparator(.hidden)
@@ -173,6 +185,11 @@ struct SessionSectionFullScreen: View {
                     }
                     .accessibilityLabel("Close")
                 }
+            }
+        }
+        .sheet(item: $tagging) { conversation in
+            if let tagClient {
+                TagPickerSheet(conversation: conversation, client: tagClient)
             }
         }
     }

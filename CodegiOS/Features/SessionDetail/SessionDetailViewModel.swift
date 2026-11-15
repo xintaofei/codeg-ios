@@ -4032,6 +4032,18 @@ final class SessionDetailViewModel {
     /// Current lifecycle status (for the status submenu's checkmark).
     var currentStatus: ConversationStatus? { summary?.status }
 
+    /// Whether the menu offers "Tags…": a root conversation only — a
+    /// sub-session carries no tags of its own.
+    var canEditTags: Bool { canManageConversation && summary?.canCarryTags == true }
+
+    /// The server confirmed this conversation's tags (a picker's write, which
+    /// can land after the picker closed): keep `summary` current, so the next
+    /// picker opens on what the server holds.
+    func applyTagChange(_ change: ConversationTagsChange) {
+        guard change.endpoint == client.tagEndpoint, change.conversationID == conversationID else { return }
+        summary?.tagIds = change.tagIDs
+    }
+
     /// Rename the conversation. Optimistically updates the title (so the nav
     /// title and details sheet reflect it immediately), reverting on failure.
     func rename(to newTitle: String) async {

@@ -130,6 +130,15 @@ extension Notification.Name {
     /// backed lists (Folders tab, Chats grouping) observe it to refetch promptly
     /// instead of waiting for the 25s pulse.
     static let foldersDidChange = Notification.Name("codeg.foldersDidChange")
+    /// Posted when the server confirmed a conversation's tags, with a
+    /// ``ConversationTagsChange`` as the object. Screens holding that row patch
+    /// it in place — a full refetch per toggle could land behind the next one
+    /// and draw it stale.
+    static let conversationTagsDidChange = Notification.Name("codeg.conversationTagsDidChange")
+    /// Posted (no payload) when a tag was created, renamed, recoloured,
+    /// reordered or deleted, or the branch tag setting changed: lists re-read
+    /// the tag definitions their chips resolve against.
+    static let conversationTagDefinitionsDidChange = Notification.Name("codeg.conversationTagDefinitionsDidChange")
 }
 
 /// A conversation/session persisted on a server (Rust `DbConversationSummary`).
@@ -158,6 +167,33 @@ struct ConversationSummary: Codable, Identifiable, Hashable, Sendable {
     /// Note: pinning does NOT bump `updatedAt` server-side — the "Pinned" group
     /// sorts by this timestamp instead.
     var pinnedAt: Date? = nil
+    /// The delegating conversation, on a delegation child (a sub-session);
+    /// absent on a root row.
+    var parentId: Int? = nil
+    /// `tag_ids` as it arrived: the server leaves the key out when there are
+    /// none, so it decodes optional and ``tagIds`` reads it as an array.
+    private var wireTagIds: [Int]? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case id, folderId, title, agentType, status, model, gitBranch, externalId
+        case messageCount, createdAt, updatedAt, pinnedAt, parentId
+        // `.convertFromSnakeCase` has already turned `tag_ids` into this.
+        case wireTagIds = "tagIds"
+    }
+
+    /// The tags on this conversation, ascending. May still name a tag deleted
+    /// since — the server does not re-send every row when a tag goes — so
+    /// readers resolve it against the tag list and skip what it lacks. A `var`
+    /// so a tag edit can patch the row before the next refetch.
+    var tagIds: [Int] {
+        get { wireTagIds ?? [] }
+        set { wireTagIds = newValue.isEmpty ? nil : newValue }
+    }
+
+    /// Whether it carries tags of its own: root rows only. A sub-session is a
+    /// sub-agent's run, not a conversation the user files away (web
+    /// `isSubsession`), so it gets neither tags nor a branch chip.
+    var canCarryTags: Bool { parentId == nil }
 
     /// Non-empty, trimmed user-provided title, or `nil` for an unnamed session.
     /// Render this verbatim (user data, never localized) and fall back to a

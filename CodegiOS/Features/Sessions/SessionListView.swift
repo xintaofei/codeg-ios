@@ -41,6 +41,9 @@ struct SessionListView: View {
     /// fullscreen's `.navigationTransition(.zoom)`.
     @Namespace private var cardNS
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    /// The conversation whose tags are being edited from a row's menu.
+    @State private var tagging: ConversationSummary?
+    @State private var showTagFilter = false
 
     init(
         server: ServerProfile,
@@ -98,6 +101,20 @@ struct SessionListView: View {
                     serverTitleMenu(serverSwitcher)
                 }
             }
+            // Only once there are tags to filter by (a saved filter whose tags
+            // are all gone no longer applies, so it needs no way out).
+            if !viewModel.tags.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    let active = viewModel.activeFilter.isActive
+                    Button { showTagFilter = true } label: {
+                        Image(systemName: active
+                              ? "line.3.horizontal.decrease.circle.fill"
+                              : "line.3.horizontal.decrease.circle")
+                    }
+                    .tint(active ? Theme.accent : Theme.textSecondary)
+                    .accessibilityLabel("Filter by tags")
+                }
+            }
             if let onNewSession {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: onNewSession) {
@@ -117,6 +134,7 @@ struct SessionListView: View {
         // new endpoint and refetches, rather than serving the old endpoint's
         // sessions.
         .task(id: serverRevision) {
+            viewModel.bindTagFilter(server: server.id.uuidString)
             await viewModel.reload(client: client)
         }
         // A conversation mutated from the detail screen (rename / pin / status /
@@ -129,6 +147,18 @@ struct SessionListView: View {
         // grouping — refetch so the new group/merge shows without waiting.
         .onReceive(NotificationCenter.default.publisher(for: .foldersDidChange)) { _ in
             Task { await viewModel.refresh() }
+        }
+        // A tag write the server confirmed (from a row's picker here, or the
+        // session screen's): patch the row rather than refetch per toggle.
+        .onReceive(NotificationCenter.default.publisher(for: .conversationTagsDidChange)) { note in
+            if let change = note.object as? ConversationTagsChange { viewModel.applyTagChange(change) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .conversationTagDefinitionsDidChange)) { _ in
+            Task { await viewModel.reloadTagDefinitions() }
+        }
+        .sessionRowSheets(client: client, tagging: $tagging)
+        .sheet(isPresented: $showTagFilter) {
+            TagFilterSheet(viewModel: viewModel, client: client)
         }
     }
 
@@ -171,6 +201,13 @@ struct SessionListView: View {
                         dismiss: { viewModel.dismissError() }
                     )
                     .padding(.horizontal, Theme.Layout.screenHMargin)
+                }
+
+                // What narrows the list, each tag removable.
+                let filter = viewModel.activeFilter
+                if filter.isActive {
+                    TagFilterBar(filter: filter, tagsByID: viewModel.tagsByID) { viewModel.setTagFilter($0) }
+                        .padding(.horizontal, Theme.Layout.screenHMargin)
                 }
 
                 if isEmpty {
@@ -235,6 +272,7 @@ struct SessionListView: View {
             tint: tint,
             conversations: conversations,
             folderName: { showFolder ? viewModel.folderNames[$0.folderId] : nil },
+            rowTags: { viewModel.rowTags(for: $0) },
             onExpand: { expandedSection = section }
         )
         .matchedTransitionSource(id: section.id, in: cardNS)
@@ -259,7 +297,9 @@ struct SessionListView: View {
                     isSelected: conv.id == selectedConversationID,
                     folderName: viewModel.folderNames[conv.folderId],
                     onTap: { select(conv) },
-                    onTogglePin: { togglePin(conv) }
+                    onTogglePin: { togglePin(conv) },
+                    rowTags: viewModel.rowTags(for: conv),
+                    onEditTags: { tagging = conv }
                 )
             }
         }
@@ -278,11 +318,13 @@ struct SessionListView: View {
             tint: data.tint,
             conversations: data.conversations,
             folderName: { data.showFolder ? viewModel.folderNames[$0.folderId] : nil },
+            rowTags: { viewModel.rowTags(for: $0) },
             // Open first (pushes the detail onto the nav stack behind the cover),
             // then dismiss — so closing the cover reveals the detail directly
             // instead of zooming back to this list and pushing afterward.
             onOpen: { id in open(id: id); expandedSection = nil },
             onTogglePin: { conv in togglePin(conv) },
+            tagClient: client,
             onClose: { expandedSection = nil }
         )
         .navigationTransition(.zoom(sourceID: section.id, in: cardNS))
@@ -326,6 +368,14 @@ struct SessionListView: View {
             InlineErrorView(message: viewModel.error ?? "") {
                 Task { await viewModel.refresh() }
             }
+        } else if viewModel.isFilteredEmpty {
+            // Every conversation filtered away: say so, and offer the way back.
+            EmptyStateView(
+                icon: "line.3.horizontal.decrease.circle",
+                title: "No conversations with these tags",
+                actionTitle: "Clear filter",
+                action: { viewModel.setTagFilter(.none) }
+            )
         } else if searching {
             EmptyStateView(
                 icon: "magnifyingglass",

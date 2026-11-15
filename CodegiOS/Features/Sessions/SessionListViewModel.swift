@@ -29,6 +29,19 @@ final class SessionListViewModel {
     /// search ordering is applied at the derived-data accessors below.
     private(set) var conversations: [ConversationSummary] = []
 
+    /// Every tag this server has, for the rows' chips and the filter. A server
+    /// without tags (or a failed read) only goes without chips.
+    private(set) var tags: [ConversationTag] = [] {
+        didSet { tagsByID = Dictionary(tags.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
+    }
+    private(set) var tagsByID: [Int: ConversationTag] = [:]
+    private(set) var branchTag = BranchTagSetting()
+    /// The tag filter as saved for this server. It may still name tags deleted
+    /// since — ``activeFilter`` is what applies.
+    private(set) var tagFilter: TagFilter = .none
+    /// The server profile the filter is saved under.
+    private var tagFilterServer: String?
+
     /// `true` while the initial full-screen load is in flight (drives the
     /// loader vs. list decision). Refreshes do NOT set this — they keep the
     /// existing list on screen and report progress via `isRefreshing`.
@@ -102,18 +115,20 @@ final class SessionListViewModel {
     }
 
     /// Pinned conversations across all folders, most-recently-pinned first,
-    /// after applying the search filter.
+    /// after applying the search and tag filters.
     func pinned(searchText: String) -> [ConversationSummary] {
-        matching(conversations.filter(\.isPinned), searchText)
+        matching(conversations.filter(\.isPinned), searchText, activeFilter)
             .sorted { ($0.pinnedAt ?? .distantPast) > ($1.pinnedAt ?? .distantPast) }
     }
 
     /// One group per folder (in `sortedFolders` order) holding that folder's
-    /// non-pinned conversations, newest-first. With no search every folder is
-    /// included — even empty ones, so their collapsible header still shows; when
-    /// searching, folders with no matching conversation are dropped.
+    /// non-pinned conversations, newest-first. With no search or tag filter
+    /// every folder is included — even empty ones, so their collapsible header
+    /// still shows; otherwise folders the narrowing leaves empty are dropped
+    /// (web `matchesTagFilter`).
     func folderGroups(searchText: String) -> [FolderGroup] {
-        let searching = !trimmed(searchText).isEmpty
+        let filter = activeFilter
+        let narrowing = !trimmed(searchText).isEmpty || filter.isActive
         // Group by the merge target so a worktree's conversations land under its
         // root folder's header (matching the web), not a hidden worktree row.
         let map = childToParent
@@ -121,23 +136,23 @@ final class SessionListViewModel {
             FolderVisibility.mergedFolderId($0.folderId, childToParent: map)
         }
         return sortedFolders.compactMap { folder in
-            let convs = matching(unpinnedByGroup[folder.id] ?? [], searchText)
+            let convs = matching(unpinnedByGroup[folder.id] ?? [], searchText, filter)
                 .sorted { $0.updatedAt > $1.updatedAt }
-            if searching, convs.isEmpty { return nil }
+            if narrowing, convs.isEmpty { return nil }
             return FolderGroup(folder: folder, conversations: convs)
         }
     }
 
     /// Non-pinned conversations whose (merged) folder isn't a visible group —
     /// orphans / chat-folder sessions — shown in a trailing "Other" group.
-    /// Newest-first, search-filtered. Normally empty: a safety net so a
-    /// conversation never silently disappears.
+    /// Newest-first, search- and tag-filtered. Normally empty: a safety net so
+    /// a conversation never silently disappears.
     func ungrouped(searchText: String) -> [ConversationSummary] {
         let map = childToParent
         let known = Set(sortedFolders.map(\.id))
         return matching(conversations.filter {
             !$0.isPinned && !known.contains(FolderVisibility.mergedFolderId($0.folderId, childToParent: map))
-        }, searchText)
+        }, searchText, activeFilter)
         .sorted { $0.updatedAt > $1.updatedAt }
     }
 
@@ -145,15 +160,85 @@ final class SessionListViewModel {
         s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Filter a slice of conversations by the search query (title / model).
-    private func matching(_ convs: [ConversationSummary], _ searchText: String) -> [ConversationSummary] {
+    /// Filter a slice of conversations by the search query (title / model) and
+    /// the tag filter.
+    private func matching(_ convs: [ConversationSummary], _ searchText: String,
+                          _ filter: TagFilter) -> [ConversationSummary] {
         let query = trimmed(searchText)
-        guard !query.isEmpty else { return convs }
+        guard !query.isEmpty || filter.isActive else { return convs }
         return convs.filter { conv in
+            guard filter.matches(conv) else { return false }
+            guard !query.isEmpty else { return true }
             if conv.displayTitle.localizedCaseInsensitiveContains(query) { return true }
             if let model = conv.model, model.localizedCaseInsensitiveContains(query) { return true }
             return false
         }
+    }
+
+    // MARK: - Tags
+
+    /// The filter that applies: only tags that still exist, once the tags have
+    /// loaded (until then a saved id can't be told from a deleted one).
+    var activeFilter: TagFilter {
+        tags.isEmpty ? .none : tagFilter.pruned(known: Set(tagsByID.keys))
+    }
+
+    /// Every conversation is filtered away (while there are some): the list
+    /// says so and offers the way back, rather than looking empty.
+    var isFilteredEmpty: Bool {
+        let filter = activeFilter
+        return filter.isActive && !conversations.isEmpty && !conversations.contains(where: filter.matches)
+    }
+
+    /// Take the filter saved for `server` — tag ids are a server's own.
+    func bindTagFilter(server: String) {
+        guard server != tagFilterServer else { return }
+        tagFilterServer = server
+        tagFilter = TagFilterStore.load(server: server)
+    }
+
+    /// Change the tag filter; kept for this server.
+    func setTagFilter(_ filter: TagFilter) {
+        tagFilter = filter
+        if let server = tagFilterServer { TagFilterStore.save(filter, server: server) }
+    }
+
+    /// What a row draws after its title.
+    func rowTags(for conversation: ConversationSummary) -> RowTags {
+        guard conversation.canCarryTags else { return .none }
+        let branch = ConversationTags.branchChip(for: conversation, enabled: branchTag.enabled)
+        let resolved = ConversationTags.resolve(conversation.tagIds, in: tagsByID)
+        guard branch != nil || !resolved.isEmpty else { return .none }
+        return RowTags(tags: resolved, branch: branch, branchColor: branchTag.color)
+    }
+
+    /// The server confirmed a conversation's tags (a picker's write): patch the
+    /// row in place. A refetch per toggle could land behind the next toggle.
+    func applyTagChange(_ change: ConversationTagsChange) {
+        guard change.endpoint == client.tagEndpoint,
+              let index = conversations.firstIndex(where: { $0.id == change.conversationID }) else { return }
+        conversations[index].tagIds = change.tagIDs
+    }
+
+    /// Re-read the tag definitions and the branch tag (a tag was created,
+    /// renamed, recoloured, reordered or deleted somewhere).
+    func reloadTagDefinitions() async {
+        let client = self.client
+        let endpoint = client.tagEndpoint
+        async let tagRead = SessionListViewModel.optionalRead { try await client.listConversationTags() }
+        async let branchRead = SessionListViewModel.optionalRead { try await client.conversationBranchTag() }
+        let loadedTags = await tagRead
+        let loadedBranch = await branchRead
+        // Switched servers meanwhile: these ids are the other server's.
+        guard endpoint == self.client.tagEndpoint else { return }
+        if let loadedTags { tags = loadedTags }
+        if let loadedBranch { branchTag = loadedBranch }
+    }
+
+    /// A read whose failure only means going without (tags dress the rows; a
+    /// server without them must still list its conversations).
+    nonisolated private static func optionalRead<T>(_ read: () async throws -> T) async -> T? {
+        try? await read()
     }
 
     // MARK: - Pinning
@@ -225,6 +310,8 @@ final class SessionListViewModel {
             openFolders = []
             openFoldersLoaded = false
             conversations = []
+            tags = []
+            branchTag = BranchTagSetting()
         }
         if isInitial { isLoading = true } else { isRefreshing = true }
         error = nil
@@ -239,18 +326,22 @@ final class SessionListViewModel {
         }
 
         // Two independent reads, each with its own retry; one failing no longer
-        // fails the whole refresh.
-        let result = await client.loadServerSnapshot()
+        // fails the whole refresh. The tag reads ride alongside and only ever
+        // cost the chips: they never fail the list.
+        let client = self.client
+        async let snapshot = client.loadServerSnapshot()
+        async let tagRead = SessionListViewModel.optionalRead { try await client.listConversationTags() }
+        async let branchRead = SessionListViewModel.optionalRead { try await client.conversationBranchTag() }
+        let result = await snapshot
+        let loadedTags = await tagRead
+        let loadedBranch = await branchRead
 
         // A newer fetch superseded this one, or the view went away — discard.
         guard token == fetchGeneration else { return }
         if result.cancelled { return }
 
-        // Partial success degrades gracefully: apply whichever endpoint returned,
-        // and keep the prior value for one that failed.
-        if let loaded = result.folders { folders = loaded }
-        if let loaded = result.openFolders { openFolders = loaded; openFoldersLoaded = true }
-        if let loaded = result.conversations { conversations = loaded }
+        adopt(folders: result.folders, openFolders: result.openFolders, conversations: result.conversations,
+              tags: loadedTags, branchTag: loadedBranch)
 
         if result.anySucceeded {
             hasLoaded = true
@@ -266,5 +357,17 @@ final class SessionListViewModel {
                 error = result.message
             }
         }
+    }
+
+    /// Commit one fetch's reads. Partial success degrades gracefully: whichever
+    /// read returned applies, and a nil (a read that failed) keeps the prior
+    /// value. Also the seam the grouping tests feed.
+    func adopt(folders: [FolderDetail]?, openFolders: [FolderDetail]?, conversations: [ConversationSummary]?,
+               tags: [ConversationTag]? = nil, branchTag: BranchTagSetting? = nil) {
+        if let folders { self.folders = folders }
+        if let openFolders { self.openFolders = openFolders; openFoldersLoaded = true }
+        if let conversations { self.conversations = conversations }
+        if let tags { self.tags = tags }
+        if let branchTag { self.branchTag = branchTag }
     }
 }

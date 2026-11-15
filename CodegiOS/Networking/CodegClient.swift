@@ -437,7 +437,10 @@ struct CodegClient: Sendable {
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 401 { throw APIError.unauthorized }
             let parsed = try? CodegJSON.decoder.decode(ServerError.self, from: data)
-            if http.statusCode == 409 || parsed?.code == "turn_in_progress" {
+            // 409 is ALSO `already_exists` (a tag name taken in its scope, …):
+            // that one keeps the server's own words instead of reading as a
+            // running turn.
+            if (http.statusCode == 409 && parsed?.code != "already_exists") || parsed?.code == "turn_in_progress" {
                 throw APIError.turnInProgress
             }
             throw APIError.server(

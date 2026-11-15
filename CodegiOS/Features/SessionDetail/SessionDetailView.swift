@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 /// The session detail transcript: header, live-streaming message transcript, and
 /// a pinned compose bar. This is the app's showcase screen — the agent's reply
@@ -28,6 +29,9 @@ struct SessionDetailView: View {
     @State private var piTrustSheet: PiTrustSheetInput?
     /// The message navigator ("…" → Messages).
     @State private var showMessages = false
+    /// The conversation whose tags are being edited ("…" → Tags…), as it
+    /// stood when the picker opened.
+    @State private var tagging: ConversationSummary?
 
     init(server: ServerProfile, client: CodegClient, conversationID: Int,
          onOpenSession: ((NewSessionRequest) -> Void)? = nil) {
@@ -108,7 +112,8 @@ struct SessionDetailView: View {
                             },
                             onShowDetails: { showDetails = true },
                             onDelete: { showDeleteConfirm = true },
-                            onShowMessages: { showMessages = true }
+                            onShowMessages: { showMessages = true },
+                            onEditTags: { tagging = model.summary }
                         )
                     }
                 }
@@ -136,6 +141,14 @@ struct SessionDetailView: View {
         }
         .sheet(isPresented: $showMessages) {
             MessageNavigatorSheet(model: model)
+        }
+        .sheet(item: $tagging) { conversation in
+            TagPickerSheet(conversation: conversation, client: client)
+        }
+        // The picker's writes land after it closes too: keep the row's tags
+        // current, so reopening it starts from what the server now holds.
+        .onReceive(NotificationCenter.default.publisher(for: .conversationTagsDidChange)) { note in
+            if let change = note.object as? ConversationTagsChange { model.applyTagChange(change) }
         }
         // Presented from a SNAPSHOT taken when it opens, not from the live
         // `piTrustNotice`: answering clears that notice, and a sheet whose body
@@ -520,6 +533,8 @@ private struct SessionActionsMenu: View {
     let onDelete: () -> Void
     /// Opens the message navigator.
     var onShowMessages: () -> Void = {}
+    /// Opens the tag picker.
+    var onEditTags: () -> Void = {}
 
     var body: some View {
         Menu {
@@ -538,6 +553,12 @@ private struct SessionActionsMenu: View {
             }
             Button(action: onShowMessages) {
                 Label("Messages", systemImage: "list.number")
+            }
+            // A sub-session has no tags of its own in the lists.
+            if model.canEditTags {
+                Button(action: onEditTags) {
+                    Label("Tags…", systemImage: "tag")
+                }
             }
             Menu {
                 ForEach(ConversationStatus.selectable, id: \.self) { status in

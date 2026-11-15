@@ -20,6 +20,12 @@ struct SessionRow: View {
     /// `conversation.isPinned`). `.swipeActions` doesn't work inside the list's
     /// `LazyVStack`, so a context menu is the toggle affordance.
     var onTogglePin: (() -> Void)?
+    /// Its tags (and branch chip), drawn after the title. Only the Chats list
+    /// resolves them; elsewhere a row shows none.
+    var rowTags: RowTags = .none
+    /// When set, the context menu offers "Tags…" — on a root row only (a
+    /// sub-session carries no tags of its own).
+    var onEditTags: (() -> Void)? = nil
 
     var body: some View {
         if let onTap {
@@ -30,6 +36,11 @@ struct SessionRow: View {
                         Button(action: onTogglePin) {
                             Label(conversation.isPinned ? "Unpin" : "Pin",
                                   systemImage: conversation.isPinned ? "pin.slash" : "pin")
+                        }
+                    }
+                    if let onEditTags, conversation.canCarryTags {
+                        Button(action: onEditTags) {
+                            Label("Tags…", systemImage: "tag")
                         }
                     }
                 }
@@ -46,12 +57,20 @@ struct SessionRow: View {
         HStack(spacing: 11) {
             avatar
 
-            (conversation.trimmedTitle.map { Text(verbatim: $0) } ?? Text("Untitled session"))
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Group {
+                if rowTags.isEmpty {
+                    title
+                } else {
+                    // The chips follow the title; on a short row they give way
+                    // first, down to a floor the title always keeps.
+                    let layout = TitleWithChips()
+                    layout {
+                        title
+                        RowTagChips(decoration: rowTags)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if let folderName {
                 Label(folderName, systemImage: "folder")
@@ -75,6 +94,14 @@ struct SessionRow: View {
             }
         }
         .contentShape(Rectangle())
+    }
+
+    private var title: some View {
+        (conversation.trimmedTitle.map { Text(verbatim: $0) } ?? Text("Untitled session"))
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(Theme.textPrimary)
+            .lineLimit(1)
+            .truncationMode(.tail)
     }
 
     /// Small agent avatar with a status-tinted dot badge in the corner (the live
