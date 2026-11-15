@@ -106,6 +106,11 @@ struct ToolCallVM: Identifiable {
     /// Set when this call was identified as a codex-acp command action, i.e. its
     /// name, arguments and bucket were all recovered from its title.
     let commandAction: CodexCommandAction.Resolved?
+    /// The plan document a plan-*mode* call carries (Claude's `ExitPlanMode`
+    /// `{plan: "…"}`), drawn as a plan card rather than as a raw argument;
+    /// nil for every other call. Read only for plan-mode calls, so the live
+    /// tier's per-pass rebuild parses nothing more for the rest.
+    let planDocument: String?
 
     init(id: String, rawName: String, kind: String, state: ToolCallState,
          input: String?, output: String?, content: String?, isError: Bool,
@@ -171,6 +176,10 @@ struct ToolCallVM: Identifiable {
             ?? ToolDerive.icon(bucket: b, name: resolvedName, input: resolvedInput)
         self.diffFiles = ToolDerive.diff(bucket: b, input: resolvedInput, output: output, content: content, parsed: parsed)
         self.announcedSessionId = ToolDerive.announcedSession(name: resolvedName, output: output)
+        // By either name: a live call's wire name is a human title, and the
+        // name inferred from its kind and input is the one that says plan mode.
+        let planModeCall = ToolDerive.isPlanModeName(resolvedName) || ToolDerive.isPlanModeName(toolName ?? rawName)
+        self.planDocument = planModeCall ? PlanParse.planMarkdown(resolvedInput) : nil
     }
 
     /// Grok's live sub-agent ticker, when this call launched one and a tick has
@@ -256,6 +265,13 @@ enum RenderPart {
     /// A run of consecutive task-management calls (`TaskCreate`/`TaskUpdate`/
     /// `TaskList`/`TaskGet`), merged into one evolving checklist card.
     case taskGroup([ToolCallVM])
+    /// A plan checklist: the live turn's plan (`LiveSegment.plan`), or a
+    /// persisted plan-like call that carries one (`PlanParse`) — drawn as the
+    /// same card either way. `id` is the call it is recorded as: the hand-off
+    /// keeps the live plan as a call of that id (`LiveTurn.planCallID`), so
+    /// the row is the same one live and handed off. `streaming`: its turn is
+    /// still running (the in-progress entry spins).
+    case plan(id: String, entries: [PlanEntry], streaming: Bool)
     case image(ImageData, caption: String?)
     /// A context compaction (`_meta.contextCompaction`, either shape) — a
     /// conversation boundary marker, not a tool call. Rendered as a chrome-less
@@ -319,6 +335,24 @@ enum MessageRender {
                 else if let prompt, !prompt.isEmpty { parts.append(.text(prompt)) }
             case .toolUse(let toolID, let name, let inputPreview, let status, let meta):
                 let resultIdx = findResult(in: blocks, after: idx, toolID: toolID, consumed: consumed)
+                // A plan-like call that carries a checklist draws as the plan the
+                // live stream showed (web: a `plan` part), its result ("Todos have
+                // been modified") consumed with it. Only one that yields entries —
+                // anything else (a read, a clear, a plan-mode document) stays a
+                // call. And only one that applied: a failed write keeps its error
+                // card rather than drawing a plan that never took, as a failed
+                // task op stays out of the task checklist.
+                if PlanParse.isPlanLikeToolName(name) {
+                    let entries = PlanParse.parseTodos(inputPreview)
+                    var rejected = status == .failed
+                    if let r = resultIdx, case .toolResult(_, _, let e, _, _) = blocks[r] { rejected = rejected || e }
+                    if !entries.isEmpty, !rejected {
+                        if let r = resultIdx { consumed.insert(r) }
+                        parts.append(.plan(id: toolID ?? "\(turn.id)#plan-\(idx)", entries: entries,
+                                           streaming: liveness == .round))
+                        continue
+                    }
+                }
                 var output: String?
                 var isErr = false
                 var stats: AgentExecutionStats?
@@ -428,6 +462,7 @@ enum MessageRender {
         // they render as finalized (no caret, cached). Without this, every text
         // segment showed its own blinking caret.
         let lastIndex = segments.count - 1
+        let hasPlan = turn.currentPlan != nil
         for idx in span {
             let segment = segments[idx]
             let isLast = idx == lastIndex
@@ -438,7 +473,23 @@ enum MessageRender {
                 parts.append(.liveText(run, streaming: turn.isStreaming && isLast))
             case .thinking(let run):
                 parts.append(.liveReasoning(run, streaming: turn.isStreaming && isLast))
+            case .plan(let entries):
+                // Where the agent last revised it — the same place, and the same
+                // row, as the turn handed off keeps it (`snapshotAsMessageTurns`).
+                // Its spinner follows the turn, not the segment: text written
+                // after a revision doesn't make the plan any less current.
+                parts.append(.plan(id: turn.planCallID, entries: entries, streaming: turn.isStreaming))
             case .tool(let call):
+                // Kimi sends each todo write twice: as this call, and as the plan
+                // update the `plan` segment holds. Once that plan is in, it stands
+                // for every write (web `buildStreamingTurnsFromLiveMessage`);
+                // before it lands — or if it never does — the write is drawn as
+                // the plan it carries, never as a generic call. Its identity is
+                // the input's exact shape: the name `TodoList` is not on the wire.
+                if !call.isError, let todos = PlanParse.kimiTodoWriteEntries(call.rawInput) {
+                    if !hasPlan { parts.append(.plan(id: call.id, entries: todos, streaming: turn.isStreaming)) }
+                    continue
+                }
                 let state: ToolCallState = call.isFinished ? (call.isError ? .error : .done) : .running
                 // Same boundary-marker treatment as the persisted path: codex emits
                 // the `Context compacting` → `Context compacted` pair on one id, so

@@ -324,11 +324,11 @@ enum TranscriptTimeline {
 
     // MARK: Live reply → nodes
 
+    /// The plan is one of the reply's parts (`LiveSegment.plan`), drawn where
+    /// the agent last revised it — not pinned above the reply — and keyed by
+    /// the call the hand-off records it as, so it keeps its row then.
     private static func liveNodes(_ live: LiveTurn, agent: AgentType, replyOpen: Bool) -> [TimelineNode] {
         var out: [TimelineNode] = []
-        if !live.livePlan.isEmpty {
-            out.append(TimelineNode(id: "\(live.id)#plan", content: .plan(live.livePlan, streaming: live.isStreaming), agent: agent))
-        }
         // A message the user steered into the turn ends the reply so far and
         // starts the reply to it (web `buildStreamingTurnsFromLiveMessage`):
         // each stretch between steers is a reply of its own, the message a
@@ -347,8 +347,9 @@ enum TranscriptTimeline {
             start = idx + 1
             ownerID = "\(live.id)~\(message.id)"
         }
-        if start == segments.count && live.isStreaming && live.errorMessage == nil
-            && (start > 0 || live.livePlan.isEmpty) {
+        // Nothing streamed yet (or nothing since a note was steered in): the
+        // agent is working on it.
+        if start == segments.count && live.isStreaming && live.errorMessage == nil {
             out.append(TimelineNode(id: "\(ownerID)#thinking", content: .thinking, agent: agent))
         }
         out.append(contentsOf: replyNodes(
@@ -562,8 +563,8 @@ enum TranscriptTimeline {
             return TimelineNode(id: base, content: .error(message, details: nil), agent: agent)
         case .image(_, let image, let caption):
             return TimelineNode(id: base, content: .image(image, caption: caption), agent: agent)
-        case .plan(_, let entries, let streaming):
-            return TimelineNode(id: base, content: .plan(entries, streaming: streaming), agent: agent)
+        case .plan(_, let id, let entries, let streaming):
+            return planNode(id: id, entries: entries, streaming: streaming, agent: agent)
         case .delegationPolls(_, let polls, _):
             let gid = polls.first.map { "delegstatus-\($0.id)" } ?? base
             return TimelineNode(id: gid, content: .delegationStatusGroup(polls), agent: agent)
@@ -605,6 +606,17 @@ enum TranscriptTimeline {
 
     // MARK: Part → node
 
+    /// A plan's node, keyed like the call it is recorded as (`tool-<id>`):
+    /// the live plan's id is the one the hand-off writes its `TodoWrite` call
+    /// with (`LiveTurn.planCallID`), so the row — and whether the reader
+    /// collapsed its card — survives the turn ending; and a live call the
+    /// persisted path finds to be a plan (a plan-like name, a checklist in
+    /// its input) keeps the row it had as a call.
+    private static func planNode(id: String, entries: [PlanEntry], streaming: Bool,
+                                 agent: AgentType) -> TimelineNode {
+        TimelineNode(id: "tool-\(id)", content: .plan(entries, streaming: streaming), agent: agent)
+    }
+
     /// Map one `RenderPart` to its node(s): one, except a background-task lane
     /// (a row per task). IDs are chosen so a tool that is `running`
     /// during streaming keeps the SAME `List` identity once the reply finalizes
@@ -639,6 +651,8 @@ enum TranscriptTimeline {
         case .taskGroup(let ops):
             let gid = ops.first.map { "taskgroup-\($0.id)" } ?? base
             return [TimelineNode(id: gid, content: .taskGroup(ops), agent: agent)]
+        case .plan(let id, let entries, let streaming):
+            return [planNode(id: id, entries: entries, streaming: streaming, agent: agent)]
         case .image(let img, let cap):
             return [TimelineNode(id: base, content: .image(img, caption: cap), agent: agent)]
         case .compaction(let info):

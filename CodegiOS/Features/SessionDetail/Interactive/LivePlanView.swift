@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// The agent's live plan / TODO checklist, rebuilt from `plan_update` events (or a
-/// reattach snapshot). Display only — it never blocks the turn. Rendered inside the
-/// in-flight turn, above the streaming content.
+/// The agent's plan / TODO checklist: the live one, rebuilt from `plan_update`
+/// events (or a reattach snapshot), and a persisted plan-like call's
+/// (`TodoWrite`, Kimi's `TodoList`, codex's `update_plan` — `PlanParse`), so a
+/// plan reads the same live and in history. Display only — it never blocks the
+/// turn. Drawn as one of the reply's steps, where the agent last revised it.
 ///
 /// A collapsible card (web's `AgentPlanOverlay` shape, kept inline + native): the
 /// header is always visible with a completed/total count, and the checklist body
@@ -11,13 +13,14 @@ import SwiftUI
 struct LivePlanView: View {
     let entries: [PlanEntry]
     /// Whether the owning turn is still streaming (drives the in-progress spinner
-    /// vs. a steady dot). The plan node only renders for the live turn, so this is
-    /// usually true; threaded through so the brief finalize window reads correctly.
+    /// vs. a steady dot) — false for a plan in history.
     var isStreaming: Bool = true
 
     /// User's explicit expand/collapse, when they've tapped the header. `nil` ⇒ use
     /// the default (expanded while incomplete). Stable because the timeline keys the
-    /// plan node by `"<live.id>#plan"`, so this state survives stream re-renders.
+    /// plan node by the call it is recorded as (`tool-<id>`, the live plan's being
+    /// the one its hand-off writes), so this state survives stream re-renders, the
+    /// plan moving, and the turn ending.
     @State private var userExpanded: Bool?
 
     private var completed: Int {

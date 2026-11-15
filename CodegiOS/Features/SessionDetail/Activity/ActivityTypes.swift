@@ -170,7 +170,9 @@ enum ActivityStep {
     case thought(key: String, text: ActivityText, streaming: Bool)
     case note(key: String, ActivityNote)
     case image(key: String, ImageData, caption: String?)
-    case plan(key: String, [PlanEntry], streaming: Bool)
+    /// A plan checklist (`RenderPart.plan`). `id` is the call it is recorded
+    /// as, which its row is keyed by — the same live and handed off.
+    case plan(key: String, id: String, entries: [PlanEntry], streaming: Bool)
     /// A run of `get_delegation_status` polls, drawn as one row.
     case delegationPolls(key: String, polls: [ToolCallVM], status: StepStatus)
     /// A run of background-task polls (Claude Code's `TaskOutput` /
@@ -190,7 +192,7 @@ enum ActivityStep {
         case .tool(let step): return step.key
         case .backgroundTasks(let step): return step.key
         case .thought(let key, _, _), .note(let key, _), .image(let key, _, _),
-             .plan(let key, _, _), .delegationPolls(let key, _, _), .taskList(let key, _),
+             .plan(let key, _, _, _), .delegationPolls(let key, _, _), .taskList(let key, _),
              .compaction(let key, _), .unsupported(let key, _):
             return key
         case .goal(let step): return step.key

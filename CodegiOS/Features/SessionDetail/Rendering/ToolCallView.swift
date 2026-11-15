@@ -18,9 +18,13 @@ struct ToolCallCard: View {
 
     /// Auto-open while running / on error (so live output and failures are
     /// visible without a tap), and for a small diff (the change is the point on
-    /// mobile). Large diffs stay collapsed behind their +N/−M stat.
+    /// mobile). Large diffs stay collapsed behind their +N/−M stat. A plan-mode
+    /// call that carries its plan opens onto it: in a plan-mode turn the plan
+    /// is what the reader came for (web `PlanModeRow`) — and its card clamps a
+    /// long one behind Show more.
     private var autoExpands: Bool {
         if vm.state == .running || vm.state == .error { return true }
+        if vm.planDocument != nil { return true }
         if let files = vm.diffFiles {
             let rows = files.reduce(0) { $0 + $1.hunks.reduce(0) { $0 + $1.rows.count } }
             return rows <= 40
@@ -146,15 +150,22 @@ struct ToolCallBody: View {
 
     @ViewBuilder
     private var inputBody: some View {
-        switch vm.bucket {
-        case .execute: BashInputBody(vm: vm)
-        case .read: FileInputBody(vm: vm)
-        case .search: SearchInputBody(vm: vm)
-        case .todo: TodoInputBody(vm: vm)
-        case .web: WebInputBody(vm: vm)
-        case .session: ShellSessionInputBody(vm: vm)
-        case .script: CodexScriptInputBody(vm: vm)
-        default: GenericInputBody(vm: vm)
+        if let plan = vm.planDocument {
+            // The plan document as the plan card a codex `<proposed_plan>`
+            // draws as (web: both render `PlanMarkdownCard`), rendered and
+            // clamped — not its raw markdown in an argument field.
+            ProposedPlanCard(markdown: plan)
+        } else {
+            switch vm.bucket {
+            case .execute: BashInputBody(vm: vm)
+            case .read: FileInputBody(vm: vm)
+            case .search: SearchInputBody(vm: vm)
+            case .todo: TodoInputBody(vm: vm)
+            case .web: WebInputBody(vm: vm)
+            case .session: ShellSessionInputBody(vm: vm)
+            case .script: CodexScriptInputBody(vm: vm)
+            default: GenericInputBody(vm: vm)
+            }
         }
     }
 }

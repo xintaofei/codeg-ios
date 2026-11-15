@@ -37,14 +37,15 @@ enum BuildActivity {
 
     /// Parts that ARE the reply's answer rather than the process that produced
     /// it: prose, the codex Plan-mode document the user has to read, a
-    /// generated image, the failure line. Exhaustive on purpose, so a new part
-    /// kind has to be classified here.
+    /// generated image, the failure line. A plan CHECKLIST is process — the
+    /// agent's bookkeeping of the work (web `isTurnAnswerPart`). Exhaustive on
+    /// purpose, so a new part kind has to be classified here.
     static func isAnswerPart(_ part: RenderPart) -> Bool {
         switch part {
         case .text, .liveText, .proposedPlan, .image, .turnError:
             return true
         case .reasoning, .liveReasoning, .tool, .delegationStatusGroup, .backgroundTaskGroup, .taskGroup,
-             .compaction, .unknown:
+             .plan, .compaction, .unknown:
             return false
         case .goalRun:
             return false
@@ -129,6 +130,9 @@ enum BuildActivity {
         case .tool(let vm): return "tool:\(vm.id)"
         case .delegationStatusGroup, .backgroundTaskGroup, .taskGroup: return "group"
         case .goalRun(let run): return "goal-run:\(run.start.id)"
+        // By the call it is recorded as, not its entries: a live plan's are
+        // revised as the reply goes on, and the anchor must not move with them.
+        case .plan(let id, _, _): return "plan:\(id)"
         }
     }
 
@@ -179,6 +183,8 @@ enum BuildActivity {
             case .taskGroup(let ops):
                 guard let first = ops.first else { continue }
                 steps.append(.taskList(key: "tasks:\(first.id)", ops: ops))
+            case .plan(let id, let entries, let streaming):
+                steps.append(.plan(key: key("plan"), id: id, entries: entries, streaming: streaming))
             case .image(let image, let caption):
                 steps.append(.image(key: key("image"), image, caption: caption))
             case .compaction(let info):

@@ -135,6 +135,9 @@ enum LiveSegment: Identifiable {
     /// A message the user inserted into this turn (native steering). It ends
     /// the reply so far, and what follows is the reply to it.
     case steering(SteeredMessage)
+    /// The agent's plan, standing where it last revised it
+    /// (`LiveTurn.updatePlan`). At most one per turn.
+    case plan([PlanEntry])
 
     var id: String {
         switch self {
@@ -142,6 +145,7 @@ enum LiveSegment: Identifiable {
         case .thinking(let run): return "k-\(run.id)"
         case .tool(let call): return "x-\(call.id)"
         case .steering(let message): return "s-\(message.id)"
+        case .plan: return "p"
         }
     }
 }
@@ -238,9 +242,6 @@ final class LiveTurn: Identifiable {
     private(set) var segments: [LiveSegment] = []
     /// Tool-call lookup so `tool_call_update` finds its target in O(1).
     private var toolIndex: [String: LiveToolCall] = [:]
-    /// The agent's live plan/TODO list (`plan_update`). Replaced wholesale per
-    /// event (each carries the full list); rendered as a checklist above the turn.
-    var livePlan: [PlanEntry] = []
     /// Fatal error surfaced inline at the end of the turn.
     var errorMessage: String?
     /// Server-supplied diagnostic evidence for that error (agent stderr tail,
@@ -291,7 +292,8 @@ final class LiveTurn: Identifiable {
     }
 
     /// True before any content has streamed — used to show a "waiting" shimmer.
-    var isEmpty: Bool { segments.isEmpty && errorMessage == nil && livePlan.isEmpty }
+    /// (The plan is one of the segments.)
+    var isEmpty: Bool { segments.isEmpty && errorMessage == nil }
 
     /// Take over another turn's streamed content wholesale — used when a
     /// reconnect could not be replayed (the gap was too large, or the cursor
@@ -308,15 +310,65 @@ final class LiveTurn: Identifiable {
         segments = other.segments
         steeredIDs = other.steeredIDs
         toolIndex = other.toolIndex
-        livePlan = other.livePlan
     }
 
     /// This round failed here (as opposed to being cancelled, or not failing).
     var failedLocally: Bool { errorMessage != nil && !errorIsCancellation }
 
-    /// Replace the live plan from a `plan_update` event (or snapshot `plan` block).
+    // MARK: - Plan
+
+    /// The id of the call the plan is recorded as: the turn handed off keeps
+    /// it as a `PlanParse.handoffToolName` call of this id, and the timeline
+    /// keys the plan's row by it, live and handed off alike — so the row (and
+    /// whether the reader collapsed it) survives the hand-off.
+    var planCallID: String { "\(id)-plan" }
+
+    /// The agent's plan as it stands, if it has one.
+    var currentPlan: [PlanEntry]? {
+        for segment in segments {
+            if case .plan(let entries) = segment { return entries }
+        }
+        return nil
+    }
+
+    /// The agent's plan, as of now — a `plan_update` event (each carries the
+    /// full list), or a reattach snapshot's `plan` block.
+    ///
+    /// It stands where it was last revised, as the web's `PLAN_UPDATE` keeps
+    /// it: the old one is taken out and the new one goes at the end, so the
+    /// plan moves to the point in the reply where the agent revised it rather
+    /// than staying pinned where it first appeared. An empty one removes it.
+    /// A snapshot replays its blocks in order, so a reattach puts the plan
+    /// back where the server's copy holds it.
     func updatePlan(_ entries: [PlanEntry]) {
-        livePlan = entries
+        let at = segments.firstIndex { if case .plan = $0 { return true }; return false }
+        if let at, at == segments.count - 1, case .plan(let current) = segments[at], current == entries {
+            return   // already the latest word, already last
+        }
+        guard at != nil || !entries.isEmpty else { return }
+        if let at {
+            segments.remove(at: at)
+            rejoinRuns(at: at)
+        }
+        if !entries.isEmpty { segments.append(.plan(entries)) }
+    }
+
+    /// What streamed either side of a plan that moved away was ONE run of
+    /// prose (or of thought) the plan cut in two — appends join a run
+    /// otherwise — so it is joined again, or a sentence split mid-word would
+    /// draw as two paragraphs. The later run's text goes onto the earlier
+    /// run, published at once so the moved words never blink out for a
+    /// coalesce window; the later run's row goes away.
+    private func rejoinRuns(at index: Int) {
+        guard index > 0, index < segments.count else { return }
+        switch (segments[index - 1], segments[index]) {
+        case (.text(let before), .text(let after)), (.thinking(let before), .thinking(let after)):
+            before.append(after.fullText)
+            before.flushNow()
+            segments.remove(at: index)
+        default:
+            break
+        }
     }
 
     // MARK: - Mutation (event handlers call these on the main actor)
@@ -381,7 +433,7 @@ final class LiveTurn: Identifiable {
             switch segment {
             case .text(let run), .thinking(let run): run.flushNow()
             case .tool(let call): call.flushTranscript()
-            case .steering: break
+            case .steering, .plan: break
             }
         }
     }
@@ -489,10 +541,18 @@ final class LiveTurn: Identifiable {
     /// A message the user steered into the turn splits it, as it does on
     /// screen: the reply so far, the user's message, then the reply to it.
     /// Empty replies are left out.
+    ///
+    /// The plan is kept where it stood, as the call the transcript records a
+    /// plan by (`PlanParse.handoffToolName`, id `planCallID`), which the
+    /// persisted path draws as the same plan card in the same row — so it
+    /// doesn't vanish as the turn ends and come back elsewhere once the
+    /// transcript is read again. Kimi's own todo writes go the way the live
+    /// adapter draws them (`MessageRender.adaptLive`).
     func snapshotAsMessageTurns() -> [MessageTurn] {
         var out: [MessageTurn] = []
         var blocks: [ContentBlock] = []
         var chunk = 0
+        let hasPlan = currentPlan != nil
         func closeReply() {
             if !blocks.isEmpty {
                 out.append(MessageTurn(id: chunk == 0 ? id : "\(id)~\(chunk)", role: .assistant,
@@ -512,6 +572,15 @@ final class LiveTurn: Identifiable {
                     blocks.append(.thinking(run.fullText))
                 }
             case .tool(let call):
+                if !call.isError, let todos = PlanParse.kimiTodoWriteEntries(call.rawInput) {
+                    // The plan stands for it; with none, it is the plan.
+                    if !hasPlan {
+                        blocks.append(.toolUse(id: call.id, name: PlanParse.handoffToolName,
+                                               inputPreview: PlanParse.handoffInput(todos),
+                                               status: .completed, meta: nil))
+                    }
+                    continue
+                }
                 // The snapshot always pairs a result below, which states the
                 // outcome. A `failed` status is kept all the same: it is what
                 // tells codex's search that found nothing (a bare live `failed`)
@@ -526,6 +595,11 @@ final class LiveTurn: Identifiable {
                 closeReply()
                 out.append(MessageTurn(id: "steer-\(message.id)", role: .user,
                                        blocks: [.text(message.text)], timestamp: message.at))
+            case .plan(let entries):
+                // No result to pair: the plan card states no outcome.
+                blocks.append(.toolUse(id: planCallID, name: PlanParse.handoffToolName,
+                                       inputPreview: PlanParse.handoffInput(entries),
+                                       status: .completed, meta: nil))
             }
         }
         // A failed round keeps saying why after it is folded in — the same
