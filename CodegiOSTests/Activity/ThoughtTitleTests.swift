@@ -54,4 +54,32 @@ struct ThoughtTitleTests {
         let content = "Plain reasoning text."
         #expect(ThoughtTitle.thoughtBodyWithoutTitle(content, title: "Plain reasoning text") == content)
     }
+
+    // MARK: row (web `ThoughtRow`)
+
+    @Test func rowOpensOntoTheReasoningWithoutItsHeading() {
+        let row = ThoughtTitle.row(Self.summary, streaming: false)
+        #expect(row.title == "Summarizing log status")
+        #expect(row.body == "I need to gather the logs.\n\n**Checking the Makefile**\n\nThe docs target is missing.")
+    }
+
+    @Test func rowWithNothingButItsHeadingHasNothingToOpen() {
+        #expect(ThoughtTitle.row("**Planning the fix**", streaming: false).body.isEmpty)
+        #expect(ThoughtTitle.row("## Planning the fix\n\n  \n", streaming: true).body.isEmpty)
+        #expect(ThoughtTitle.row("   ", streaming: false).body.isEmpty)
+    }
+
+    @Test func rowKeepsTheWholeTextWhenTheTitleIsItsFirstSentence() {
+        let row = ThoughtTitle.row("Let me look at the parser first. Then the tests.", streaming: false)
+        #expect(row.title == "Let me look at the parser first")
+        #expect(row.body == "Let me look at the parser first. Then the tests.")
+    }
+
+    @Test func rowWhileStreamingKeepsAnOpeningHeadingThatIsNotTheTitle() {
+        // The newest heading names a thought still being written; the first
+        // one is not the title, so it stays in the panel.
+        let row = ThoughtTitle.row(Self.summary, streaming: true)
+        #expect(row.title == "Checking the Makefile")
+        #expect(row.body == Self.summary)
+    }
 }

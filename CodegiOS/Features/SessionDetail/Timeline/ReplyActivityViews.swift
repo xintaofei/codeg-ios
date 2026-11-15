@@ -158,6 +158,9 @@ struct ThoughtNodeBody: View {
     }
 }
 
+/// The open panel is the reasoning minus the heading the row already shows
+/// (web `ThoughtRow`: `thoughtBodyWithoutTitle(…).trim()`); a thought that is
+/// nothing but its heading has no panel, so the row does not open.
 private struct ThoughtRow: View {
     let text: String
     let streaming: Bool
@@ -165,6 +168,10 @@ private struct ThoughtRow: View {
     @State private var expanded = false
 
     var body: some View {
+        let row = ThoughtTitle.row(text, streaming: streaming)
+        let title = row.title
+        let detail = row.body
+        let expandable = !detail.isEmpty
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(streaming
@@ -172,28 +179,36 @@ private struct ThoughtRow: View {
                      : String(localized: "Thought"))
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(Theme.textSecondary)
-                if let title = ThoughtTitle.thoughtTitle(text, streaming: streaming) {
+                if let title {
                     Text(verbatim: title)
                         .font(.subheadline)
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 6)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(Theme.textTertiary)
-                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                if expandable {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
             }
             .padding(.vertical, 2)
             .contentShape(Rectangle())
-            .onTapGesture { withAnimation(Theme.Motion.expand) { expanded.toggle() } }
+            .onTapGesture {
+                guard expandable else { return }
+                withAnimation(Theme.Motion.expand) { expanded.toggle() }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(expandable ? .isButton : [])
+            .accessibilityValue(expandable ? (expanded ? Text("Expanded") : Text("Collapsed")) : Text(""))
 
-            if expanded {
+            if expanded && expandable {
                 Group {
                     if streaming {
-                        MarkdownText(raw: text, color: Theme.textSecondary, plain: true)
+                        MarkdownText(raw: detail, color: Theme.textSecondary, plain: true)
                     } else {
-                        MarkdownContent(raw: text)
+                        MarkdownContent(raw: detail)
                     }
                 }
                 .transition(.opacity)

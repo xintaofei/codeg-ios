@@ -51,6 +51,14 @@ enum ThoughtTitle {
             .replacingOccurrences(of: #"^\s*\n"#, with: "", options: .regularExpression)
     }
 
+    /// What a thought row shows (web `ThoughtRow`): its title, and the panel it
+    /// opens onto — the reasoning minus the heading the title came from,
+    /// trimmed. An empty `body` means the row has nothing to open.
+    static func row(_ content: String, streaming: Bool) -> (title: String?, body: String) {
+        let title = thoughtTitle(content, streaming: streaming)
+        return (title, trim(thoughtBodyWithoutTitle(content, title: title)))
+    }
+
     // MARK: - Helpers
 
     private static func cleanInline(_ text: String) -> String {
