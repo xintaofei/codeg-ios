@@ -5,6 +5,12 @@ import SwiftUI
 /// then upserts (spec + apps together).
 struct McpServerEditorSheet: View {
     let editing: LocalMcpServer?
+    /// The last scan couldn't read every agent's config. Saving means "these
+    /// agents and no others", and an agent that holds this server may be
+    /// showing unchecked — so no save until the file is fixed and the list
+    /// re-read (web `scanDegraded`). The server refuses one too, but would
+    /// accept this stale draft once the file is repaired out of band.
+    var saveBlocked = false
     let onSave: (_ serverId: String, _ spec: JSONValue, _ apps: [McpAppType]) async throws -> Void
 
     @State private var serverId: String
@@ -22,8 +28,10 @@ struct McpServerEditorSheet: View {
     }
     """
 
-    init(editing: LocalMcpServer?, onSave: @escaping (String, JSONValue, [McpAppType]) async throws -> Void) {
+    init(editing: LocalMcpServer?, saveBlocked: Bool = false,
+         onSave: @escaping (String, JSONValue, [McpAppType]) async throws -> Void) {
         self.editing = editing
+        self.saveBlocked = saveBlocked
         self.onSave = onSave
         _serverId = State(initialValue: editing?.id ?? "")
         _specText = State(initialValue: editing?.spec.prettyString ?? Self.template)
@@ -38,7 +46,7 @@ struct McpServerEditorSheet: View {
     private var appsToSave: [McpAppType] {
         McpAppSelection.apps(selected: selectedApps, existing: editing?.apps ?? [])
     }
-    private var canSave: Bool { !trimmedId.isEmpty && specIsValidObject && !appsToSave.isEmpty && !isSaving }
+    private var canSave: Bool { !saveBlocked && !trimmedId.isEmpty && specIsValidObject && !appsToSave.isEmpty && !isSaving }
 
     var body: some View {
         NavigationStack {
@@ -46,6 +54,7 @@ struct McpServerEditorSheet: View {
                 CodegBackground()
                 ScrollView {
                     VStack(spacing: 18) {
+                        if saveBlocked { saveBlockedNotice }
                         EditorSection(title: "Server", footer: editing == nil ? "A unique id for this MCP server." : nil) {
                             FieldRow(label: "ID") {
                                 if editing != nil {
@@ -120,6 +129,21 @@ struct McpServerEditorSheet: View {
 
     /// Persistent guidance on accepted transports (mirrors the web settings).
     private static let typeHint: LocalizedStringKey = "Supported types: stdio, http (alias: streamable-http), and sse. env applies to stdio only; remote servers carry auth via headers."
+
+    private var saveBlockedNotice: some View {
+        Label {
+            Text("Fix or remove that file and refresh before saving: assignments are computed from the agents this page could read, so saving now could drop this server from one it could not.")
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+        }
+        .font(.caption)
+        .foregroundStyle(Theme.warning)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Theme.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+    }
 
     /// Live validity indicator shown beneath the JSON editor once it's non-empty.
     @ViewBuilder

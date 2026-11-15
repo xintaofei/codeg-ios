@@ -110,11 +110,11 @@ struct McpSettingsView: View {
     private func editorSheet(_ route: EditorRoute) -> some View {
         switch route {
         case .add:
-            McpServerEditorSheet(editing: nil) { id, spec, apps in
+            McpServerEditorSheet(editing: nil, saveBlocked: !model.sourceWarnings.isEmpty) { id, spec, apps in
                 try await model.upsert(serverId: id, spec: spec, apps: apps)
             }
         case .edit(let server):
-            McpServerEditorSheet(editing: server) { id, spec, apps in
+            McpServerEditorSheet(editing: server, saveBlocked: !model.sourceWarnings.isEmpty) { id, spec, apps in
                 try await model.upsert(serverId: id, spec: spec, apps: apps)
             }
         }

@@ -30,7 +30,10 @@ final class McpSettingsModel {
             phase = .loaded
             refreshError = nil
         } catch {
-            if servers.isEmpty { phase = .failed(error.localizedDescription) }
+            // Only a screen with nothing on it shows the full-page error; a
+            // list that still shows servers or warnings keeps them, with the
+            // banner above.
+            if servers.isEmpty, sourceWarnings.isEmpty { phase = .failed(error.localizedDescription) }
             else { refreshError = error.localizedDescription }
         }
     }

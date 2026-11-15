@@ -5577,6 +5577,17 @@
         }
       }
     },
+    "Fix or remove that file and refresh before saving: assignments are computed from the agents this page could read, so saving now could drop this server from one it could not." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存前请先修复或删除该文件并刷新：分配结果按本页能读到的智能体计算，现在保存可能会把该服务器从读不到的智能体中移除。"
+          }
+        }
+      }
+    },
     "Folder" : {
       "extractionState" : "stale",
       "localizations" : {
