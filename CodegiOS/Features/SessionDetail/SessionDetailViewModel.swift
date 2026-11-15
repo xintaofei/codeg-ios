@@ -1512,6 +1512,7 @@ final class SessionDetailViewModel {
 
     private func runSend(text: String, attachments sending: [Attachment], live: LiveTurn, userTurnID: String, origin: SendOrigin) async {
         let clientMessageID = UUID().uuidString
+        live.clientMessageId = clientMessageID
         do {
             // For a brand-new draft, create the conversation row server-side BEFORE
             // prompting so every client (desktop / web) sees it immediately. No-op
@@ -2500,6 +2501,9 @@ final class SessionDetailViewModel {
                 adoptForkSupport(status: snap.status, supported: snap.forkSupported)
                 composer.adoptSnapshotCommands(snap.availableCommands)
                 if let rebuilt = buildLiveTurn(from: snap) {
+                    // A reattach owns the running turn from the start: what
+                    // streams from here IS that turn.
+                    rebuilt.serverTurnStarted = true
                     live = rebuilt
                     liveTurn = rebuilt
                     // This live turn is the snapshot's complete in-flight reply;
@@ -2732,13 +2736,25 @@ final class SessionDetailViewModel {
         // Only the turn's own opening counts: the backend delivers stray
         // updates BETWEEN turns too (a late tool update, a straggling delta),
         // and one of those arriving before this prompt starts would otherwise
-        // read as "this turn is running".
-        case .statusChanged(.prompting), .userMessage:
+        // read as "this turn is running". The prompt's echo counts only when
+        // it is THIS prompt's: a reconnect can skip the `prompting` before it.
+        case .statusChanged(.prompting):
             live.serverTurnStarted = true
+        case .userMessage(let messageId, _):
+            if live.clientMessageId == nil || messageId == live.clientMessageId {
+                live.serverTurnStarted = true
+            }
         default:
             break
         }
         trackFailureLifecycle(event)
+        // Until the server starts this send's turn, what streams is the turn
+        // before it: an agent's own turn (Grok) that the server ends with
+        // `turn_complete(cancelled)` just ahead of a prompt queued behind it,
+        // or a straggler between turns. Folding that in put the other turn's
+        // tail in this reply, and its end finalized THIS turn as cancelled —
+        // closing the stream before the real reply arrived.
+        if !live.serverTurnStarted, Self.belongsToTheTurnBefore(event) { return }
         switch event {
         case .contentDelta(let text, let parent):
             live.appendText(text, parentToolUseId: parent)
@@ -2920,6 +2936,22 @@ final class SessionDetailViewModel {
         case .forkSupported(let supported):
             // Emitted once the agent's `initialize` has run — an answer.
             forkSupported = supported
+        }
+    }
+
+    /// What a send ignores until the server has started its turn: the reply's
+    /// content, the end of a turn, and a verdict failing one. Cards, notices
+    /// and connection status still land — they are the connection's, not the
+    /// reply's — and an agent dying (`status_changed: error`) still ends it.
+    static func belongsToTheTurnBefore(_ event: AcpEvent) -> Bool {
+        switch event {
+        case .contentDelta, .thinking, .toolCall, .toolCallUpdate, .planUpdate, .turnComplete:
+            return true
+        case .error(let message, let code, _):
+            if case .failsTurn = AcpErrorRoute.route(code: code, message: message) { return true }
+            return false
+        default:
+            return false
         }
     }
 
@@ -3220,10 +3252,17 @@ final class SessionDetailViewModel {
             finalize(live: live, stopReason: "end_turn")
             return true
         }
-        // A prompting snapshot past the handshake is this turn running — the
-        // same evidence its opening events would have been, had they arrived.
-        if snap.status == .prompting { live.serverTurnStarted = true }
-        if let rebuilt = buildLiveTurn(from: snap), !rebuilt.segments.isEmpty {
+        // A snapshot past the handshake running THIS prompt is the turn
+        // started — the evidence its opening events would have been, had they
+        // arrived. Prompting alone isn't: an agent's own turn (Grok) prompts
+        // with no prompt of ours behind it, and this send may still be queued.
+        if !live.serverTurnStarted, snap.startsTurn(forPrompt: live.clientMessageId) {
+            live.serverTurnStarted = true
+        }
+        // Its in-flight reply is then the whole of what streamed, gap
+        // included; before that it is the other turn's, which this reply
+        // must not take.
+        if live.serverTurnStarted, let rebuilt = buildLiveTurn(from: snap), !rebuilt.segments.isEmpty {
             live.adoptContent(from: rebuilt)
         }
         // After the adopt: a restored permission borrows from the live call it is

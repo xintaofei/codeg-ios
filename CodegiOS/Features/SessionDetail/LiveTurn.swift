@@ -272,10 +272,19 @@ final class LiveTurn: Identifiable {
     /// the deltas being lost; and an event at or below it is a duplicate of one
     /// already applied. Not observed by any view.
     @ObservationIgnored var lastSeq: UInt64?
-    /// An event has shown the server running THIS turn (its `prompting`
-    /// status, the prompt's echo, or any of the reply). Until then an idle
-    /// connection means the turn has not started, not that it has ended.
+    /// The server has started THIS turn: its `prompting` status, the echo of
+    /// this send's own prompt, or a reconnect snapshot running that prompt.
+    /// Until then an idle connection means the turn has not started, not that
+    /// it has ended — and what streams belongs to the turn before it (an
+    /// agent's own turn the server closes just ahead of this prompt), so
+    /// none of it is this reply's. A reattach owns the running turn from the
+    /// start, so a turn rebuilt from a snapshot is born started.
     @ObservationIgnored var serverTurnStarted = false
+    /// The `clientMessageId` this send's prompt went out with. The server
+    /// stamps it on the turn's `user_message` (and the snapshot's
+    /// `pending_user_message`), which is what tells this prompt's turn from
+    /// another client's or the agent's own.
+    @ObservationIgnored var clientMessageId: String?
 
     init(id: String = "live-\(UUID().uuidString)") {
         self.id = id

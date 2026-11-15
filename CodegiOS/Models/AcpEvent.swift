@@ -371,6 +371,11 @@ struct LiveSessionSnapshot: Sendable, Decodable {
     /// The agent's slash commands as the connection holds them. Nil when the
     /// field is absent or did not decode — never read as "no commands".
     let availableCommands: [AvailableCommandInfo]?
+    /// The id of the prompt the running turn answers (Rust
+    /// `pending_user_message.message_id`: the client's own `clientMessageId`,
+    /// verbatim). Nil between turns — and during a turn an agent started on
+    /// its own, which answers no prompt.
+    let pendingUserMessageId: String?
 
     private enum CodingKeys: String, CodingKey {
         case connectionId, conversationId, folderId, status, externalId, eventSeq
@@ -378,6 +383,11 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         case lastError, sessionFailures, feedback, feedbackToolAvailable, nativeSteeringAvailable
         case forkSupported
         case availableCommands
+        case pendingUserMessage
+    }
+
+    private struct PendingUserMessage: Decodable {
+        let messageId: String
     }
 
     init(from decoder: Decoder) throws {
@@ -401,6 +411,18 @@ struct LiveSessionSnapshot: Sendable, Decodable {
         runs = ConnectionRunsSnapshot.lenient(from: decoder)
         forkSupported = (try? c.decodeIfPresent(Bool.self, forKey: .forkSupported)) ?? nil
         availableCommands = (try? c.decodeIfPresent([AvailableCommandInfo].self, forKey: .availableCommands)) ?? nil
+        pendingUserMessageId = ((try? c.decodeIfPresent(PendingUserMessage.self, forKey: .pendingUserMessage)) ?? nil)?.messageId
+    }
+
+    /// Whether a RECONNECT snapshot shows that the send still waiting for its
+    /// turn to start has started: the connection is prompting on behalf of
+    /// that very prompt. A turn the agent started on its own (Grok) prompts
+    /// with no user message, and another client's prompt carries another id,
+    /// so neither qualifies. (The send's first attach is never asked: it
+    /// precedes the prompt, so whatever turn it shows is someone else's.)
+    func startsTurn(forPrompt clientMessageId: String?) -> Bool {
+        guard status == .prompting, let pending = pendingUserMessageId else { return false }
+        return clientMessageId == nil || pending == clientMessageId
     }
 }
 
