@@ -307,6 +307,7 @@ struct SessionDetailView: View {
             inFlightUserTurnId: model.inFlightUserTurnId,
             agent: model.agentTypeForUI,
             replyFolds: model.replyFolds,
+            disclosures: model.disclosures,
             turnsVersion: model.turnsVersion,
             backgroundTurns: model.backgroundTurns,
             backgroundTurnsVersion: model.backgroundTurnsVersion,

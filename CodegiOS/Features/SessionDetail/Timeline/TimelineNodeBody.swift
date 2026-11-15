@@ -7,10 +7,19 @@ import SwiftUI
 /// renderers (and their caches) are unchanged. Live text / reasoning are rendered
 /// by small `@Bindable` leaves that read `run.text`, preserving the 50 ms-coalesced
 /// streaming + caret behaviour.
+///
+/// Every disclosure inside remembers what the reader opened under this node's
+/// id (``DisclosureStore``), so a row the list recycles comes back as it was
+/// left.
 struct NodeBody: View {
     let node: TimelineNode
 
     var body: some View {
+        content.disclosureRoot(node.id)
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch node.content {
         case .user(let turn):
             UserNodeBody(turn: turn)
@@ -55,7 +64,10 @@ struct NodeBody: View {
             InlineImageView(image: img, caption: cap)
                 .railHead(.top(14))
         case .compaction(let info):
+            // By the call, where there is one: the live and history copies of
+            // a compaction are one event, whichever of them is drawn.
             ContextCompactionDivider(info: info)
+                .disclosureRoot(info.callID.map { "compaction-\($0)" } ?? node.id)
         case .footer(let turn, let questionID):
             TurnFooter(turn: turn, questionID: questionID, forkPoint: node.forkPoint)
         case .plan(let entries, let streaming):
@@ -96,7 +108,7 @@ private struct UserNodeBody: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(turn.blocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(turn.blocks.enumerated()), id: \.offset) { index, block in
                 switch block {
                 case .text(let text):
                     MarkdownText(raw: text)
@@ -105,6 +117,7 @@ private struct UserNodeBody: View {
                     InlineImageView(image: image, caption: nil)
                 default:
                     ContentBlockView(block: block)
+                        .disclosureScope("block\(index)")
                 }
             }
         }
@@ -304,7 +317,9 @@ struct ThinkingShimmer: View {
 struct ContextCompactionDivider: View {
     let info: CompactionInfo
 
-    @State private var summaryOpen = false
+    /// The summary's toggle, kept across the list recycling the row.
+    @DisclosureChoice("summary") private var summaryChoice: Bool?
+    private var summaryOpen: Bool { summaryChoice ?? false }
 
     private static let formatter: NumberFormatter = {
         let f = NumberFormatter()
@@ -405,7 +420,7 @@ struct ContextCompactionDivider: View {
 
     private var summaryToggle: some View {
         Button {
-            withAnimation(Theme.Motion.expand) { summaryOpen.toggle() }
+            withAnimation(Theme.Motion.expand) { summaryChoice = !summaryOpen }
         } label: {
             HStack(spacing: 2) {
                 Text("Summary")
@@ -441,7 +456,9 @@ private struct CompactionSummaryPanel: View {
     /// The compaction is still running: the summary may still be arriving.
     let streaming: Bool
 
-    @State private var expanded = false
+    /// Show more, kept across the list recycling the row.
+    @DisclosureChoice("summary.more") private var choice: Bool?
+    private var expanded: Bool { choice ?? false }
     /// The body's natural height, measured unclamped.
     @State private var contentHeight: CGFloat = 0
 
@@ -473,7 +490,7 @@ private struct CompactionSummaryPanel: View {
             if overflowing {
                 Divider().overlay(Theme.hairline)
                 Button {
-                    withAnimation(Theme.Motion.expand) { expanded.toggle() }
+                    withAnimation(Theme.Motion.expand) { choice = !expanded }
                 } label: {
                     HStack(spacing: 4) {
                         expanded ? Text("Show less") : Text("Show more")
@@ -503,7 +520,9 @@ struct InlineTurnError: View {
     /// multi-line raw agent output, and only useful once the user asks why.
     var details: String?
 
-    @State private var detailsExpanded = false
+    /// The details' toggle, kept across the list recycling the row.
+    @DisclosureChoice("details") private var detailsChoice: Bool?
+    private var detailsExpanded: Bool { detailsChoice ?? false }
 
     /// Guard against a pathological stderr tail. The server already bounds this,
     /// but the bound is its own, not one this card's layout agreed to.
@@ -534,7 +553,7 @@ struct InlineTurnError: View {
     @ViewBuilder
     private func disclosure(_ details: String) -> some View {
         Button {
-            withAnimation(Theme.Motion.expand) { detailsExpanded.toggle() }
+            withAnimation(Theme.Motion.expand) { detailsChoice = !detailsExpanded }
         } label: {
             HStack(spacing: 4) {
                 Text("Details")

@@ -287,7 +287,8 @@ struct ActivityToolRow: View {
     /// Drawn inside a group's panel: no separate surface.
     var nested = false
 
-    @State private var userExpanded: Bool?
+    /// The reader's toggle, kept across the list recycling the row.
+    @DisclosureChoice("tool") private var userExpanded: Bool?
     @Environment(\.activityLive) private var live
 
     private var vm: ToolCallVM { step.call }
@@ -387,7 +388,8 @@ struct ActivityGroupRow: View {
     let given: StepStatus
     let recoveredKeys: Set<String>
 
-    @State private var userExpanded: Bool?
+    /// The reader's toggle, kept across the list recycling the row.
+    @DisclosureChoice("group") private var userExpanded: Bool?
     @Environment(\.activityLive) private var live
 
     init(kind: ActivityGroupKind, steps: [ActivityToolStep], status: StepStatus, recoveredKeys: Set<String>) {
@@ -505,6 +507,8 @@ struct ActivityGroupRow: View {
                 .foregroundStyle(Theme.textTertiary)
                 .frame(width: 16)
             ActivityToolRow(step: step, recovered: recoveredKeys.contains(step.key), nested: true)
+                // Each member remembers its own toggle.
+                .disclosureScope(step.key)
         }
     }
 }

@@ -54,6 +54,10 @@ final class SessionDetailViewModel {
     let childWatch = DelegationChildWatch()
     /// When each running delegation was first seen running on this screen.
     let liveClocks = LiveClockStore()
+    /// What the reader opened or closed in the transcript's rows — a thought,
+    /// a tool row, a summary — so a row the list recycles comes back as it was
+    /// left. Per screen; see ``DisclosureStore``.
+    let disclosures = DisclosureStore()
     /// The composer's inline `/`·`$` menu and `@` panel, and the mention
     /// tokens the draft holds (encoded into links on every send).
     let composer: ComposerSuggestionModel

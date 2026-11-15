@@ -21,8 +21,9 @@ struct LivePlanView: View {
     /// the default (open while streaming). Stable because the timeline keys the
     /// plan node by the call it is recorded as (`tool-<id>`, the live plan's being
     /// the one its hand-off writes), so this state survives stream re-renders, the
-    /// plan moving, and the turn ending.
-    @State private var userExpanded: Bool?
+    /// plan moving, the turn ending — and, kept in the screen's store, the list
+    /// recycling the row.
+    @DisclosureChoice("plan") private var userExpanded: Bool?
 
     private var completed: Int {
         entries.filter { $0.normalizedStatus == .completed }.count

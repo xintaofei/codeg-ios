@@ -164,6 +164,9 @@ struct SubAgentSessionSheet: View {
         // A sub-agent's timeline does not fold; its headers must not reach
         // for the parent session's fold state.
         .environment(\.replyFoldStore, nil)
+        // Nor for the parent's disclosures: the child's turn ids are its own
+        // and can repeat the parent's, so its rows keep their own state.
+        .environment(\.disclosureStore, nil)
         .environment(\.defaultMinListRowHeight, 1)
     }
 

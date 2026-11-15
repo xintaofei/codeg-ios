@@ -12,7 +12,8 @@ struct BackgroundTaskRowView: View {
     let row: BackgroundTask.Row
     let launch: BackgroundLaunch?
 
-    @State private var userExpanded: Bool?
+    /// The reader's toggle, kept across the list recycling the row.
+    @DisclosureChoice("task") private var userExpanded: Bool?
 
     private var status: StepStatus { BackgroundTask.rowStatus(row) }
     private var failed: Bool { row.badge == .failed }

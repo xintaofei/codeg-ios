@@ -109,7 +109,8 @@ struct GoalRunRow: View {
     let goal: ActivityGoalStep
     let agent: AgentType
 
-    @State private var userOpen: Bool?
+    /// The reader's toggle, kept across the list recycling the row.
+    @DisclosureChoice("goal") private var userOpen: Bool?
     @Environment(\.goalControl) private var control
 
     private var run: GoalRunPart { goal.run }

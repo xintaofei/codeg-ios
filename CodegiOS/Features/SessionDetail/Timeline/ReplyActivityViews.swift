@@ -163,12 +163,14 @@ struct ThoughtNodeBody: View {
 
 /// The open panel is the reasoning minus the heading the row already shows
 /// (web `ThoughtRow`: `thoughtBodyWithoutTitle(…).trim()`); a thought that is
-/// nothing but its heading has no panel, so the row does not open.
+/// nothing but its heading has no panel, so the row does not open. Opened, it
+/// stays open when the list recycles the row (``DisclosureStore``).
 private struct ThoughtRow: View {
     let text: String
     let streaming: Bool
 
-    @State private var expanded = false
+    @DisclosureChoice("thought") private var choice: Bool?
+    private var expanded: Bool { choice ?? false }
 
     var body: some View {
         let row = ThoughtTitle.row(text, streaming: streaming)
@@ -200,7 +202,7 @@ private struct ThoughtRow: View {
             .contentShape(Rectangle())
             .onTapGesture {
                 guard expandable else { return }
-                withAnimation(Theme.Motion.expand) { expanded.toggle() }
+                withAnimation(Theme.Motion.expand) { choice = !expanded }
             }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(expandable ? .isButton : [])

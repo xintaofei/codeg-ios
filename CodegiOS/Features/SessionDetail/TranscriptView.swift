@@ -77,6 +77,10 @@ struct TranscriptView<Header: View>: View {
     /// Which replies are folded (the activity timeline). Applied after the
     /// memoized build, so folding never rebuilds the persisted tier.
     let replyFolds: ReplyFoldStore
+    /// What the reader opened or closed in the rows, kept across the list
+    /// recycling them. Read by the rows as they draw — never by the build, so
+    /// it is no part of the memo's key.
+    let disclosures: DisclosureStore
     /// A cheap, monotonic version of the view model's `turns`, bumped on every
     /// mutation. The persisted node tier is memoized on it (plus the window /
     /// pending / suppression signals), so a streamed token — which re-runs this
@@ -395,6 +399,7 @@ struct TranscriptView<Header: View>: View {
             .listStyle(.plain)
             .environment(\.replyFoldStore, replyFolds)
             .environment(\.activityLive, rowsLive)
+            .environment(\.disclosureStore, disclosures)
             .scrollContentBackground(.hidden)
             // Let the 1pt anchor row actually be 1pt (List's default min row
             // height would otherwise pad it to ~44).

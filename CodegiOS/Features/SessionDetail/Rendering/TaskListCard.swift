@@ -12,7 +12,9 @@ struct TaskListCard: View {
     /// Show at most this many rows before a "Show N more" toggle (a long
     /// `TaskList` can carry dozens).
     private let collapsedLimit = 10
-    @State private var expanded = false
+    /// Show more, kept across the list recycling the row.
+    @DisclosureChoice("tasks.more") private var choice: Bool?
+    private var expanded: Bool { choice ?? false }
 
     /// Every parsed op — drives the header's action summary.
     private var parsedAll: [TaskOp] {
@@ -91,7 +93,7 @@ struct TaskListCard: View {
 
     private func expandToggle(hidden: Int) -> some View {
         Button {
-            withAnimation(Theme.Motion.expand) { expanded.toggle() }
+            withAnimation(Theme.Motion.expand) { choice = !expanded }
         } label: {
             (expanded ? Text("Show less") : Text("Show \(hidden) more"))
                 .font(.system(size: 11, weight: .semibold))

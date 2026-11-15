@@ -14,7 +14,8 @@ import SwiftUI
 struct ToolCallCard: View {
     let vm: ToolCallVM
 
-    @State private var userExpanded: Bool?
+    /// The reader's toggle, kept across the list recycling the row.
+    @DisclosureChoice("card") private var userExpanded: Bool?
 
     /// Auto-open while running / on error (so live output and failures are
     /// visible without a tap), and for a small diff (the change is the point on

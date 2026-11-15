@@ -14,7 +14,9 @@ struct ProposedPlanCard: View {
     /// The block is still open and its reply still streams.
     var streaming: Bool = false
 
-    @State private var expanded = false
+    /// Show more, kept across the list recycling the row.
+    @DisclosureChoice("plan.more") private var choice: Bool?
+    private var expanded: Bool { choice ?? false }
     /// The body's natural height, measured unclamped.
     @State private var contentHeight: CGFloat = 0
 
@@ -87,7 +89,7 @@ struct ProposedPlanCard: View {
 
     private var toggle: some View {
         Button {
-            withAnimation(Theme.Motion.expand) { expanded.toggle() }
+            withAnimation(Theme.Motion.expand) { choice = !expanded }
         } label: {
             HStack(spacing: 4) {
                 expanded ? Text("Show less") : Text("Show more")
@@ -121,6 +123,7 @@ struct ProposedPlanSegmentsView: View {
                     MarkdownContent(raw: prose, streaming: streaming && index == lastIndex, assistantReply: true)
                 case .plan(let markdown, let planStreaming):
                     ProposedPlanCard(markdown: markdown, streaming: planStreaming)
+                        .disclosureScope("segment\(index)")
                 }
             }
         }

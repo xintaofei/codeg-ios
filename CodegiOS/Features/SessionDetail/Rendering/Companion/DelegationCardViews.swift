@@ -150,7 +150,9 @@ struct DelegationTaskCard: View {
 
     @Environment(\.activityLive) private var live
     @Environment(\.liveClocks) private var clocks
-    @State private var expanded = false
+    /// The panel's toggle, kept across the list recycling the row.
+    @DisclosureChoice("delegation") private var choice: Bool?
+    private var expanded: Bool { choice ?? false }
     @State private var sessionOpen = false
 
     var body: some View {
@@ -188,7 +190,7 @@ struct DelegationTaskCard: View {
                 .contentShape(Rectangle())
                 .onTapGesture {
                     guard hasDetail else { return }
-                    withAnimation(Theme.Motion.expand) { expanded.toggle() }
+                    withAnimation(Theme.Motion.expand) { choice = !expanded }
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(hasDetail ? .isButton : [])
@@ -207,9 +209,11 @@ struct DelegationTaskCard: View {
         }
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         .hairlineBorder(Theme.Radius.md)
-        // Waiting on the user's approval, it shows what it would hand over.
-        .onChange(of: awaiting, initial: true) { _, now in
-            if now, hasDetail { expanded = true }
+        // Waiting on the user's approval, it shows what it would hand over —
+        // as it starts waiting, or when drawn while it waits unless the
+        // reader already chose (a row the list recycled comes back as left).
+        .onChange(of: awaiting, initial: true) { was, now in
+            if now, hasDetail, was != now || choice == nil { choice = true }
         }
         .sheet(isPresented: $sessionOpen) {
             if let child = card.childConversationId {
@@ -366,7 +370,7 @@ struct DelegationTaskCard: View {
             if let task = card.task {
                 section("Task") {
                     // A task is often a whole brief: a screenful until asked for the rest.
-                    ClampedDetail {
+                    ClampedDetail(name: "task.more") {
                         Text(verbatim: task.trimmingCharacters(in: .whitespacesAndNewlines))
                             .font(.footnote)
                             .foregroundStyle(Theme.textPrimary)
@@ -385,7 +389,7 @@ struct DelegationTaskCard: View {
             if let reason = card.reason {
                 section("Why it was resumed") {
                     // The context passed into the child's continuation, as sent: plain text.
-                    ClampedDetail {
+                    ClampedDetail(name: "reason.more") {
                         Text(verbatim: reason)
                             .font(.footnote)
                             .foregroundStyle(Theme.textPrimary)
@@ -401,7 +405,7 @@ struct DelegationTaskCard: View {
                             .foregroundStyle(Theme.danger)
                             .textSelection(.enabled)
                     } else {
-                        ClampedDetail { MarkdownContent(raw: outcome) }
+                        ClampedDetail(name: "result.more") { MarkdownContent(raw: outcome) }
                     }
                 }
             }
@@ -428,8 +432,18 @@ struct DelegationTaskCard: View {
 private struct ClampedDetail<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
-    @State private var expanded = false
+    /// Show more, kept across the list recycling the row.
+    @DisclosureChoice private var choice: Bool?
+    private var expanded: Bool { choice ?? false }
     @State private var contentHeight: CGFloat = 0
+
+    /// - Parameter name: what its Show more is remembered as, within the
+    ///   card's row (a card holds several).
+    init(name: String, @ViewBuilder content: @escaping () -> Content) {
+        self.content = content
+        _choice = DisclosureChoice(name)
+    }
+
     private static var clampHeight: CGFloat { 220 }
 
     private var overflowing: Bool { contentHeight > Self.clampHeight }
@@ -443,7 +457,7 @@ private struct ClampedDetail<Content: View>: View {
                 .clipped()
             if overflowing {
                 Button {
-                    withAnimation(Theme.Motion.expand) { expanded.toggle() }
+                    withAnimation(Theme.Motion.expand) { choice = !expanded }
                 } label: {
                     Text(expanded ? "Show less" : "Show more")
                         .font(.caption.weight(.medium))
@@ -526,6 +540,8 @@ struct DelegationStatusGroupCard: View {
                     }
                     DelegationStatusRow(kind: kind, taskId: row.taskId, report: row.report,
                                         badge: row.badge, results: row.results)
+                        // Each task's row remembers its own toggle.
+                        .disclosureScope("task-\(row.id)")
                         .background(rowTint(allError: allError, status: row.badge.status))
                 }
             }
@@ -551,7 +567,9 @@ struct DelegationStatusRow: View {
     let badge: ResolvedBadge
     var results: [String?] = []
 
-    @State private var expanded = false
+    /// The row's toggle, kept across the list recycling the card.
+    @DisclosureChoice("row") private var choice: Bool?
+    private var expanded: Bool { choice ?? false }
     /// nil = follow the latest result; a number = an explicitly navigated page.
     @State private var pageIdx: Int?
 
@@ -628,7 +646,7 @@ struct DelegationStatusRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard expandable else { return }
-            withAnimation(Theme.Motion.expand) { expanded.toggle() }
+            withAnimation(Theme.Motion.expand) { choice = !expanded }
         }
     }
 
