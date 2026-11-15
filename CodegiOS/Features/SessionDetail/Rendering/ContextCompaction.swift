@@ -82,16 +82,33 @@ enum ContextCompaction {
         return output
     }
 
+    /// Identity of a compaction EVENT, or nil when the payload cannot name one
+    /// (web `compactionEventKey`): the token counts either side of the boundary
+    /// plus the time it took, in milliseconds. All three are required, and
+    /// that is the point: codex-acp sends a bare `{version: 1}` for every
+    /// compaction it performs, so a looser key would fold a session's separate
+    /// compactions into one — while two real compactions agreeing on all three
+    /// does not happen.
+    static func eventKey(_ meta: AnyJSON?) -> String? {
+        let payload = Self.payload(meta)
+        guard let pre = count(payload, "preTokens"), let post = count(payload, "postTokens"),
+              let duration = count(payload, "durationMs") else { return nil }
+        return "compaction:\(pre):\(post):\(duration)"
+    }
+
     /// A compaction call → what its divider draws. `failed`: the call's own
     /// lifecycle failed (web `output-error`); an `error` in the payload fails
-    /// it as well.
-    static func info(meta: AnyJSON?, output: String?, running: Bool, failed: Bool) -> CompactionInfo {
+    /// it as well. `callID`: the call's own id — the event's name wherever the
+    /// live stream and the transcript agree on one (``CompactionInfo/callID``).
+    static func info(meta: AnyJSON?, output: String?, running: Bool, failed: Bool,
+                     callID: String? = nil) -> CompactionInfo {
         let counts = Self.tokens(meta)
         let error = Self.error(meta)
         return CompactionInfo(before: counts.before, after: counts.after, running: running,
                               failed: failed || error != nil, durationMs: durationMs(meta),
                               error: error, trigger: trigger(meta),
-                              summary: summary(meta, output: output))
+                              summary: summary(meta, output: output),
+                              callID: callID, eventKey: eventKey(meta))
     }
 
     /// `durationMs` as a compact label — `3.2s`, or `45s` from ten seconds
@@ -153,4 +170,14 @@ struct CompactionInfo: Equatable, Sendable {
     /// The retained summary (``ContextCompaction/summary(_:output:)``). May
     /// still be streaming in while `running`.
     var summary: String?
+    /// The compaction call's id. One compaction reaches the thread twice — the
+    /// live call, and the transcript's divider — and codex names both by the
+    /// same id (its live `compactionId` is the item id its parser names the
+    /// divider by), which is how the two are drawn once
+    /// (`TranscriptTimeline.dedupeCompactions`).
+    var callID: String?
+    /// ``ContextCompaction/eventKey(_:)``: the event's identity by its figures,
+    /// where the two copies name it differently (claude's live id is its
+    /// `compacting` status message, its transcript's the boundary record).
+    var eventKey: String?
 }

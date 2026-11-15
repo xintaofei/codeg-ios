@@ -312,11 +312,22 @@ enum TranscriptTimeline {
                 }
                 i += 1
             case .assistant:
-                var j = i + 1
-                while j < turns.count, turns[j].role == .assistant { j += 1 }
-                let merged = merge(Array(turns[i..<j]))
                 let inRound = inFlightIdx.map { i > $0 } ?? false
                 let replyLiveness: ToolLiveness = inRound ? .round : liveness
+                // A compaction no reply goes on after is a divider between
+                // turns, not a step of the reply before it (web
+                // `hoistedCompaction`).
+                if Self.hoistsCompaction(turns, at: i) {
+                    nodes.append(contentsOf: Self.compactionDivider(turns[i], liveness: replyLiveness, agent: agent))
+                    // A divider stands between it and the reply above.
+                    tail = nil
+                    i += 1
+                    continue
+                }
+                // The reply runs on through its assistant turns and the empty
+                // placeholders between them (`replyEnd`).
+                let j = Self.replyEnd(turns, from: i)
+                let merged = merge(turns[i..<j].filter { $0.role == .assistant })
                 // A reply in the running round is still being written (a reader
                 // with no stream of its own); every other one is a record.
                 let parts = MessageRender.adaptTurn(merged, liveness: replyLiveness)
@@ -380,11 +391,25 @@ enum TranscriptTimeline {
     /// is unfolded; the live reply is the current one.
     static func appendingLive(_ live: LiveTurn, to tier: PersistedTier, agent: AgentType,
                               open: (String) -> Bool) -> [TimelineNode] {
-        let joining = tier.tail
+        // A `/compact` with nothing else said is a divider after the reply,
+        // as history will draw it (`hoistsCompaction`) — not a step of it.
+        let joining = tier.tail.flatMap { isLoneCompaction(live) ? nil : $0 }
         var all = joining.map { Array(tier.nodes[..<$0.nodeStart]) } ?? tier.nodes
         all.append(contentsOf: buildLive(live, agent: agent,
                                          replyOpen: open(joining?.ownerID ?? live.id), joining: joining))
         return all
+    }
+
+    /// The live turn's first stretch (up to a steered note) is a compaction
+    /// and nothing else. Short-circuits on anything longer, so a reply in
+    /// full flow is not adapted twice per pass.
+    private static func isLoneCompaction(_ live: LiveTurn) -> Bool {
+        let segments = live.segments
+        let end = segments.firstIndex { if case .steering = $0 { return true }; return false } ?? segments.count
+        guard end > 0, end <= 2 else { return false }
+        let parts = MessageRender.adaptLive(live, range: 0..<end)
+        guard parts.count == 1, case .compaction = parts[0] else { return false }
+        return true
     }
 
     // MARK: Live reply → nodes
@@ -406,9 +431,9 @@ enum TranscriptTimeline {
         var lead = joining?.parts ?? []
         for (idx, segment) in segments.enumerated() {
             guard case .steering(let message) = segment else { continue }
-            out.append(contentsOf: replyNodes(
+            out.append(contentsOf: liveReplyNodes(
                 parts: lead + MessageRender.adaptLive(live, range: start..<idx),
-                ownerID: ownerID, completed: true, durationMs: nil, agent: agent))
+                ownerID: ownerID, completed: true, agent: agent))
             lead = []
             let turn = MessageTurn(id: "steer-\(message.id)", role: .user,
                                    blocks: [.text(message.text)], timestamp: message.at)
@@ -422,9 +447,9 @@ enum TranscriptTimeline {
         let thinking = start == segments.count && live.isStreaming && live.errorMessage == nil
             ? TimelineNode(id: "\(ownerID)#thinking", content: .thinking, agent: agent) : nil
         if let thinking, lead.isEmpty { out.append(thinking) }
-        out.append(contentsOf: replyNodes(
+        out.append(contentsOf: liveReplyNodes(
             parts: lead + MessageRender.adaptLive(live, range: start..<segments.count),
-            ownerID: ownerID, completed: !live.isStreaming, durationMs: nil, agent: agent,
+            ownerID: ownerID, completed: !live.isStreaming, agent: agent,
             keepAnswer: live.isStreaming && replyOpen))
         if let thinking, !lead.isEmpty { out.append(thinking) }
         if let error = live.errorMessage {
@@ -432,6 +457,19 @@ enum TranscriptTimeline {
                                     content: .error(error, details: live.errorDetails), agent: agent))
         }
         return out
+    }
+
+    /// One stretch of the live turn as a reply — or, while a compaction is
+    /// all it holds, the divider history will draw for it (`hoistsCompaction`):
+    /// a `/compact` with nothing else said (yet) is no reply. Once the reply
+    /// goes on, the compaction is one of its steps.
+    private static func liveReplyNodes(parts: [RenderPart], ownerID: String, completed: Bool,
+                                       agent: AgentType, keepAnswer: Bool = false) -> [TimelineNode] {
+        if parts.count == 1, case .compaction(let info) = parts[0] {
+            return [compactionNode(info, id: "\(ownerID)#0", agent: agent)]
+        }
+        return replyNodes(parts: parts, ownerID: ownerID, completed: completed, durationMs: nil,
+                          agent: agent, keepAnswer: keepAnswer)
     }
 
     // MARK: Reply → activity nodes

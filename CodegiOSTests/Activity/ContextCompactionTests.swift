@@ -158,6 +158,51 @@ struct ContextCompactionTests {
         #expect(info.error == nil)
     }
 
+    // MARK: - identity (Android 52f2021, web `compactionEventKey`)
+
+    @Test("names a compaction event by all three of its figures, or not at all")
+    func namesACompactionEventByItsFigures() {
+        let versioned = Self.meta(
+            #"{"contextCompaction":{"version":1,"trigger":"auto","preTokens":180000,"postTokens":22000,"durationMs":5300}}"#)
+        #expect(ContextCompaction.eventKey(versioned) == "compaction:180000:22000:5300")
+        // codex's bare marker names no event: two of them must not fold into one.
+        #expect(ContextCompaction.eventKey(Self.meta(#"{"contextCompaction":{"version":1}}"#)) == nil)
+        #expect(ContextCompaction.eventKey(Self.meta(#"{"contextCompaction":{"version":1,"preTokens":9,"postTokens":4}}"#)) == nil)
+        // The boolean marker has no payload; grok's top-level counts alone name nothing.
+        #expect(ContextCompaction.eventKey(Self.meta(#"{"contextCompaction":true,"tokensBefore":9,"tokensAfter":4}"#)) == nil)
+        #expect(ContextCompaction.eventKey(Self.meta(#"{"preTokens":9,"postTokens":4,"durationMs":70}"#)) == nil)
+    }
+
+    @Test("a compaction carries its call's id and its event key, live and in history")
+    func aCompactionCarriesItsCallIDAndEventKey() {
+        let failed = ContextCompaction.info(
+            meta: Self.meta(#"{"contextCompaction":{"version":1,"error":"context too small"}}"#),
+            output: nil, running: false, failed: false, callID: "c1")
+        #expect(failed.failed)
+        #expect(failed.callID == "c1")
+        #expect(failed.eventKey == nil)
+
+        let meta = Self.meta(#"{"contextCompaction":{"version":1,"preTokens":9,"postTokens":4,"durationMs":70}}"#)
+        let turn = MessageTurn(id: "cmp", role: .assistant, blocks: [
+            .toolUse(id: "cmp-1", name: "context_compaction", inputPreview: nil, status: .unknown, meta: meta),
+            .toolResult(id: "cmp-1", outputPreview: "", isError: false, agentStats: nil),
+        ], timestamp: Date())
+        guard case .compaction(let persisted)? = MessageRender.adaptTurn(turn).first else {
+            Issue.record("expected a compaction part"); return
+        }
+        #expect(persisted.callID == "cmp-1")
+        #expect(persisted.eventKey == "compaction:9:4:70")
+
+        let live = LiveTurn()
+        live.upsertToolCall(id: "compacting-status", title: "Compacting", kind: "", status: "completed",
+                            rawInput: nil, rawOutput: nil, content: nil, meta: meta)
+        guard case .compaction(let streamed)? = MessageRender.adaptLive(live).first else {
+            Issue.record("expected a compaction part"); return
+        }
+        #expect(streamed.callID == "compacting-status")
+        #expect(streamed.eventKey == persisted.eventKey)
+    }
+
     // MARK: - display helpers
 
     @Test("formats the duration as the web does")
@@ -197,7 +242,8 @@ struct ContextCompactionTests {
         }
         #expect(info == CompactionInfo(before: 191322, after: 12034, running: false, failed: false,
                                        durationMs: 41000, error: nil, trigger: "automatic",
-                                       summary: "We kept the plan."))
+                                       summary: "We kept the plan.", callID: "cmp-history-1",
+                                       eventKey: "compaction:191322:12034:41000"))
     }
 
     @Test("a live compaction streams its summary and fails in place")

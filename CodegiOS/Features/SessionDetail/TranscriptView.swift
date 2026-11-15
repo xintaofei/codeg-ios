@@ -294,6 +294,9 @@ struct TranscriptView<Header: View>: View {
         } else {
             all = persisted.nodes
         }
+        // The live and transcript copies of one compaction, drawn once. On the
+        // joined tiers, so never part of the memo.
+        all = TranscriptTimeline.dedupeCompactions(all)
         let currentGoalID = TranscriptTimeline.latestGoalID(all)
         all = ReplyFolding.apply(all, store: replyFolds, live: rowsLive)
         // Terminate the rail at its endpoints, on the *combined* list. The top

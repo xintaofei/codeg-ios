@@ -403,7 +403,8 @@ enum MessageRender {
                 // can't be swept into a tool group).
                 if ContextCompaction.matches(meta) {
                     parts.append(.compaction(ContextCompaction.info(
-                        meta: meta, output: output, running: state == .running, failed: state == .error)))
+                        meta: meta, output: output, running: state == .running, failed: state == .error,
+                        callID: toolID)))
                     continue
                 }
                 parts.append(.tool(ToolCallVM(
@@ -521,7 +522,7 @@ enum MessageRender {
                 if ContextCompaction.matches(call.meta) {
                     parts.append(.compaction(ContextCompaction.info(
                         meta: call.meta, output: call.rawOutput, running: state == .running,
-                        failed: state == .error)))
+                        failed: state == .error, callID: call.id)))
                     continue
                 }
                 let toolName = ToolNameNormalizer.inferLiveToolName(
