@@ -119,6 +119,29 @@ final class SessionDetailViewModel {
     /// when nothing is windowed.
     private var loadedEnd: Int { (window?.offset ?? 0) + turns.count }
 
+    /// Global index of the first turn this screen folded into `turns` itself
+    /// (`promoteUnreconciled`): from there on `turns` is the stream's copy, not
+    /// the server's, and holds its own count of turns — so `loadedEnd` is no
+    /// longer where the next round lands on the server. Nil while every loaded
+    /// turn is the server's; cleared by every wholesale adoption, which the
+    /// settled re-read (`scheduleFoldedResync`) brings about.
+    @ObservationIgnored private var localRoundsFrom: Int?
+    /// The closing words of the latest folded reply (nil when it had no prose)
+    /// — what the settled re-read looks for before it takes the server's copy.
+    @ObservationIgnored private var foldedEvidence: String?
+    /// The settled re-read of folded rounds (`scheduleFoldedResync`). Owned
+    /// here, bound to the lifetime it was asked in, and cancelled by whatever
+    /// takes the transcript over: a turn stream opening, a fork, teardown.
+    private var foldedResyncTask: Task<Void, Never>?
+
+    /// Where the round about to be reconciled begins (see `ReplyReconcile`).
+    /// Read before anything of that round is folded in.
+    private var reconcileAnchor: ReplyReconcile.RoundAnchor {
+        guard let from = localRoundsFrom else { return .at(loadedEnd) }
+        let folded = turns.dropFirst(max(0, from - (window?.offset ?? 0)))
+        return .unplaced(from: from, prompt: ReplyReconcile.promptMatch(sent: pendingUserTurns.last, folded: folded))
+    }
+
     /// Older history exists above what is loaded, so the transcript should offer
     /// to page up. False on a legacy server (everything is already loaded).
     var hasOlderTurns: Bool { window?.hasOlder ?? false }
@@ -724,6 +747,9 @@ final class SessionDetailViewModel {
         windowNeedsReanchor = false
         window = TranscriptWindow(detail)
         inFlightUserTurnId = detail.inFlightUserTurnId
+        // The server's turns throughout, folded-in rounds replaced.
+        localRoundsFrom = nil
+        foldedEvidence = nil
     }
 
     /// Prepend one page of older history above the loaded window. Single-flight;
@@ -3311,13 +3337,25 @@ final class SessionDetailViewModel {
                 // collapsed far below the baseline, so the growth test cannot
                 // run — but "cannot judge" is not "accept": a freshly-anchored
                 // tail that still ends with the PREVIOUS turn's reply satisfies
-                // `transcriptHasReply` just as well, and adopting it would drop
+                // `holdsReply` just as well, and adopting it would drop
                 // the reply we streamed. Retry rather than guess. (See the
                 // matching note in `refreshAfterTurn` for why the window is
                 // deliberately left stranded rather than rebased here.)
+                //
+                // What streamed before the drop is part of what the agent
+                // wrote, so a read must hold that much too (`ReplyReconcile`).
+                // After a folded-in round the round can't be placed until the
+                // agent's writes have settled: a `connection_gone` lands here
+                // at once, possibly right at the turn's end, so only a retry
+                // (400ms on) judges it — as what follows the read's last user
+                // turn, which must be this round's prompt.
                 if !fetch.reanchored,
-                   detail.globalEnd > loadedEnd,
-                   Self.transcriptHasReply(detail.turns, localRoundFailed: live.failedLocally) {
+                   let roundStart = ReplyReconcile.roundStart(in: detail.turns, offset: detail.turnsOffset ?? 0,
+                                                              anchor: reconcileAnchor, loadedEnd: loadedEnd,
+                                                              settled: attempt > 0),
+                   ReplyReconcile.holdsReply(detail.turns, roundStart: roundStart,
+                                             localRoundFailed: live.failedLocally,
+                                             evidence: ReplyReconcile.evidence(of: live.closingProse)) {
                     isTurnActive = false
                     clearInteractivePrompts()
                     turns = detail.turns
@@ -3458,9 +3496,13 @@ final class SessionDetailViewModel {
         // empty (e.g. a no-op turn), there's nothing to protect — adopt whatever
         // the server returns on the first successful fetch.
         let mustPreserveReply = !live.isEmpty
+        // What a read must hold of the reply's closing words before it may
+        // replace it: one written up to the last tool call, but not the answer
+        // after it, is the race this guards against (`ReplyReconcile`).
+        let evidence = ReplyReconcile.evidence(of: live.closingProse)
         // Pre-turn baseline. A fetched transcript is only "ours" once it has grown
         // past this — otherwise a stale read that still ends with the *previous*
-        // turn's assistant reply would satisfy `transcriptHasReply` and we'd adopt
+        // turn's assistant reply would satisfy `holdsReply` and we'd adopt
         // it, dropping the reply we just streamed. `turns` isn't mutated elsewhere
         // between finalize and this reconcile.
         //
@@ -3468,6 +3510,12 @@ final class SessionDetailViewModel {
         // its slice, so `turns.count` is not comparable across responses (and a
         // page loaded during the retry loop grows `turns` without the transcript
         // having advanced at all — the global end is invariant under a prepend).
+        //
+        // And only while every loaded turn is the server's: after a round this
+        // screen folded in itself, the loaded count is the stream's, and the
+        // round is placed only from the second read on, once the agent's last
+        // write has had time to land (`ReplyReconcile.RoundAnchor`).
+        let anchor = reconcileAnchor
         let baselineEnd = loadedEnd
 
         for attempt in 0..<5 {
@@ -3495,12 +3543,12 @@ final class SessionDetailViewModel {
                     // turn: it must have grown past the baseline (so a stale read that
                     // merely ends with an older reply can't masquerade as ours) and —
                     // when there's a streamed reply to protect — end with a non-empty
-                    // assistant turn.
+                    // assistant turn that carries the reply's closing words.
                     //
                     // A re-anchored response proves NOTHING about this turn: the
                     // compaction rewrote the coordinates the baseline was captured
                     // in, and the fresh tail can just as easily end with the
-                    // PREVIOUS reply — which `transcriptHasReply` would wave
+                    // PREVIOUS reply — which `holdsReply` could wave
                     // through, and which for an empty live reply isn't even
                     // checked. Keep the live turn and retry; if the budget runs
                     // out, `promoteUnreconciled` below preserves the reply.
@@ -3511,9 +3559,12 @@ final class SessionDetailViewModel {
                     // left on retired coordinates for now and repaired below, once
                     // the turn has settled — leaving it retired is what used to
                     // freeze this screen for the rest of the visit.
-                    let advanced = !fetch.reanchored && detail.globalEnd > baselineEnd
-                    if advanced, !mustPreserveReply
-                        || Self.transcriptHasReply(detail.turns, localRoundFailed: live.failedLocally) {
+                    let roundStart = fetch.reanchored ? nil
+                        : ReplyReconcile.roundStart(in: detail.turns, offset: detail.turnsOffset ?? 0, anchor: anchor,
+                                                    loadedEnd: baselineEnd, settled: attempt > 0)
+                    if let roundStart, !mustPreserveReply
+                        || ReplyReconcile.holdsReply(detail.turns, roundStart: roundStart,
+                                                     localRoundFailed: live.failedLocally, evidence: evidence) {
                         turns = detail.turns
                         adoptTranscriptScope(detail)
                         pendingUserTurns.removeAll()
@@ -3547,6 +3598,59 @@ final class SessionDetailViewModel {
         // drain in the `defer` above requires — it runs next and re-anchors if a
         // rewrite retired the window.
         promoteUnreconciled(live)
+        // And take the server's copy back once it has settled, so the next
+        // round is placed exactly again.
+        scheduleFoldedResync()
+    }
+
+    /// Re-read the transcript a while after rounds were folded in, and take the
+    /// server's copy of them: until then `turns` is the stream's, and no later
+    /// round can be placed exactly (`reconcileAnchor`). Only while nothing of
+    /// this screen's owns the transcript (`foldedResyncTask`).
+    ///
+    /// The first look takes a read whose newest round holds the latest folded
+    /// reply's closing words; the last takes the server's copy as it stands,
+    /// as every idle re-read does — by then the agent has written whatever it
+    /// will, and one whose record words a reply differently from its stream
+    /// still converges.
+    private func scheduleFoldedResync() {
+        guard !isTornDown, localRoundsFrom != nil, conversationID != nil else { return }
+        let lifetime = lifecycle
+        foldedResyncTask?.cancel()
+        foldedResyncTask = Task { [weak self] in
+            for (delay, last) in [(Duration.seconds(2), false), (.seconds(6), true)] {
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled, let self else { return }
+                if await self.resyncFoldedRounds(lifetime: lifetime, last: last) { return }
+            }
+        }
+    }
+
+    /// One look of `scheduleFoldedResync`. True when nothing is left to do.
+    private func resyncFoldedRounds(lifetime: Int, last: Bool) async -> Bool {
+        // A fork re-points the row and reads its own transcript back, and
+        // refuses one that isn't there yet — so must this.
+        func idle() -> Bool {
+            lifetime == lifecycle && !Task.isCancelled && liveTurn == nil && !isInFlight && stream == nil
+                && pendingUserTurns.isEmpty && !isForking
+        }
+        guard localRoundsFrom != nil else { return true }
+        guard idle(), let id = conversationID,
+              case .fetched(let fetch)? = try? await fetchWindowedDetail(id: id),
+              idle(), let from = localRoundsFrom else { return false }
+        let detail = fetch.detail
+        summary = detail.summary
+        sessionStats = detail.sessionStats ?? sessionStats
+        // A rewritten transcript is taken as it stands, as the re-anchor
+        // would: `from` describes coordinates it no longer has.
+        if !last, !fetch.reanchored, let evidence = foldedEvidence {
+            let start = ReplyReconcile.lastRoundStart(in: detail.turns, offset: detail.turnsOffset ?? 0, from: from)
+            guard ReplyReconcile.holdsProse(detail.turns, from: start, evidence: evidence) else { return false }
+        }
+        turns = detail.turns
+        adoptTranscriptScope(detail)
+        requestScrollToBottom()
+        return true
     }
 
     /// Start the re-anchor recovery if one is owed and nothing else owns the
@@ -3635,42 +3739,20 @@ final class SessionDetailViewModel {
         // Only act while this is still the current live turn — if a newer turn has
         // taken over, it already owns (and preserved) the prior state.
         guard liveTurn === live else { return }
-        turns.append(contentsOf: pendingUserTurns)
-        pendingUserTurns.removeAll()
         // Only fold in an assistant turn that actually has renderable content. A
         // finalized turn can be non-empty *solely* because of an inline error /
         // "Cancelled." message (which `snapshotAsMessageTurns` can't represent as a
         // persisted block, since ContentBlock has no error case) — appending its
         // zero-block snapshot would render as "No content". Such a transient error
         // placeholder is simply dropped on the next send; the user turn is kept.
-        turns.append(contentsOf: live.snapshotAsMessageTurns())
+        let folded = pendingUserTurns + live.snapshotAsMessageTurns()
+        // From here on `turns` counts as the stream did, not as the server will.
+        if localRoundsFrom == nil, !folded.isEmpty { localRoundsFrom = loadedEnd }
+        if !folded.isEmpty { foldedEvidence = ReplyReconcile.evidence(of: live.closingProse) }
+        turns.append(contentsOf: folded)
+        pendingUserTurns.removeAll()
         liveTurn = nil
         requestScrollToBottom()
-    }
-
-    /// True when the latest persisted turn is an assistant reply that actually
-    /// carries renderable content — the signal that the server has committed the
-    /// reply we just streamed (vs. only the user turn, or an empty placeholder).
-    ///
-    /// It also holds when the transcript ends on a FAILED round's line (a
-    /// `turn_error` system turn) — but only if the round that just ended here
-    /// failed too. Otherwise that line is an EARLIER round's, and the transcript
-    /// has not reached this round at all. Mirrors the web's
-    /// `parseHoldsTheLatestRound`.
-    private static func transcriptHasReply(_ turns: [MessageTurn], localRoundFailed: Bool) -> Bool {
-        guard let last = turns.last else { return false }
-        if last.isTurnErrorTurn { return localRoundFailed }
-        guard last.role == .assistant else { return false }
-        return last.blocks.contains { block in
-            switch block {
-            case .text(let t), .thinking(let t):
-                return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            case .image, .toolUse, .toolResult, .turnError, .unknown:
-                return true
-            case .imageGeneration(let prompt, let image):
-                return image != nil || !(prompt ?? "").isEmpty
-            }
-        }
     }
 
     // MARK: - Cancel
@@ -3716,6 +3798,10 @@ final class SessionDetailViewModel {
         // Every stream open starts here, and so does teardown: either way the
         // idle watch yields. Turn ends restart it right after.
         watcher.stop()
+        // So does the settled re-read of folded rounds: the turn now streaming
+        // owns the transcript, and reconciles (or folds and re-asks) itself.
+        foldedResyncTask?.cancel()
+        foldedResyncTask = nil
         // Supersede the current consumer so its imminent `.closed`/`.detached`
         // frame is ignored (it must not end a turn we are deliberately closing).
         streamGeneration &+= 1
@@ -3752,6 +3838,8 @@ final class SessionDetailViewModel {
         reconcileTask = nil
         reanchorTask?.cancel()
         reanchorTask = nil
+        foldedResyncTask?.cancel()
+        foldedResyncTask = nil
         // A fork already sent runs to completion server-side whatever happens
         // here (the backend shields it); the screen that comes back re-reads it.
         forkTask?.cancel()
@@ -4042,6 +4130,9 @@ extension SessionDetailViewModel {
         isForking = true
         forkOutcome = nil
         notice = nil
+        // The fork takes the transcript over; what was folded is the old session's.
+        foldedResyncTask?.cancel()
+        foldedResyncTask = nil
         let lifetime = lifecycle
         forkTask?.cancel()
         forkTask = Task { [weak self] in
