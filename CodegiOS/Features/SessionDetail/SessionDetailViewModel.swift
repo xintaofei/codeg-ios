@@ -3364,6 +3364,10 @@ final class SessionDetailViewModel {
         // Replace the optimistic + live turns with the authoritative server copy.
         reconcileTask?.cancel()
         reconcileTask = Task { [weak self] in await self?.refreshAfterTurn(reconciling: live) }
+        // The Chats list keeps its own copy of each row's status, read when it
+        // last loaded: without a word from here, a turn watched to its end
+        // stays "running" there until a manual refresh.
+        notifyConversationsChanged()
         // The keep-planning turn just ended — deliver the revision notes as the
         // follow-up prompt Grok expects (it discards them on the reply itself).
         if let planFollowUp { send(overrideText: planFollowUp) }
@@ -3465,6 +3469,8 @@ final class SessionDetailViewModel {
         // The turn died rather than ended — sending the queue into the same
         // failure one message at a time helps nobody. It waits for the user.
         if !queue.isEmpty { queueHeld = true }
+        // The Chats list's copy of this row still says it is running.
+        notifyConversationsChanged()
     }
 
     // MARK: - Stream recovery (transient drops)
